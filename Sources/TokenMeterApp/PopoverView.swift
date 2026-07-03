@@ -10,7 +10,7 @@ struct PopoverView: View {
     let maxPanelHeight: CGFloat
     let onPreferredHeightChange: (CGFloat) -> Void
 
-    private let chromeHeight: CGFloat = 45
+    private let chromeHeight: CGFloat = 62
 
     private var panelHeight: CGFloat {
         guard !store.providerSnapshots.isEmpty else {
@@ -76,28 +76,35 @@ struct PopoverView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Text("TokenMeter")
-                .font(.system(size: 15, weight: .semibold))
-                .lineLimit(1)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Text("TokenMeter")
+                    .font(.system(size: 15, weight: .semibold))
+                    .lineLimit(1)
 
-            Spacer()
+                Spacer()
 
-            NotificationPermissionControl(store: store)
+                NotificationPermissionControl(store: store)
 
-            if store.isRefreshing {
-                ProgressView()
-                    .controlSize(.small)
+                if store.isRefreshing {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+
+                Text(providerCountText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .lineLimit(1)
             }
 
-            Text(providerCountText)
-                .font(.system(size: 11, weight: .medium))
+            Text(store.localIndexStatusText)
+                .font(.caption)
                 .foregroundStyle(.secondary)
-                .monospacedDigit()
                 .lineLimit(1)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
     }
 
     private var providerCountText: String {

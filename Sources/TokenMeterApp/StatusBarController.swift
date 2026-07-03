@@ -43,16 +43,18 @@ final class StatusBarController: NSObject {
     }
 
     private func bindStore() {
-        store.$providerSnapshots
+        Publishers.CombineLatest(store.$providerSnapshots, store.$settingsSnapshot)
             .receive(on: RunLoop.main)
-            .sink { [weak self] snapshots in
+            .sink { [weak self] snapshots, settingsSnapshot in
                 guard let self else {
                     return
                 }
 
+                let primaryProviderId = settingsSnapshot?.menuBarPrimaryProviderId
+                    ?? self.store.config.menuBar.primaryProviderId
                 let title = UsageFormatter.menuBarTitle(
                     for: snapshots,
-                    primaryProviderId: self.store.config.menuBar.primaryProviderId
+                    primaryProviderId: primaryProviderId
                 )
                 self.updateTitle(title)
             }
@@ -110,7 +112,7 @@ final class StatusBarController: NSObject {
             return 220
         }
 
-        let headerAndDivider: CGFloat = 45
+        let headerAndDivider: CGFloat = 62
         let listPadding: CGFloat = 24
         let cardSpacing = CGFloat(max(0, snapshots.count - 1)) * 10
         let cardHeights = snapshots.reduce(CGFloat(0)) { total, snapshot in
