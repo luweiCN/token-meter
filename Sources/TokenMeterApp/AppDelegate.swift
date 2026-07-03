@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var store: ProviderStore?
     private var statusBarController: StatusBarController?
     private var refreshTimer: Timer?
+    private var ipcServer: TokenMeterIPCServer?
     private let usageNotificationCenter = UsageNotificationCenter()
     private var cancellables: Set<AnyCancellable> = []
 
@@ -15,6 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.seedDefaultScanRoots()
         self.store = store
         self.statusBarController = StatusBarController(store: store)
+        let ipcServer = TokenMeterIPCServer(store: store)
+        try? ipcServer.start()
+        self.ipcServer = ipcServer
 
         Task {
             await store.refreshNotificationAuthorizationState()
@@ -27,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        ipcServer?.stop()
         refreshTimer?.invalidate()
         cancellables.removeAll()
     }
