@@ -353,7 +353,9 @@ public final class OpenCodeSessionAdapter {
 
     private func parseISODate(_ value: String?) -> Date? {
         guard let value else { return nil }
-        return isoFormatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractionalFormatter.date(from: value) ?? isoFormatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
 
     private func costMicros(_ cost: Double) -> Int64 {

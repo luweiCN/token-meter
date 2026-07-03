@@ -174,33 +174,51 @@ public final class LocalAgentScanner {
         let fingerprintChanged = existing?.sizeBytes != metadata.sizeBytes
             || existing?.mtimeNanoseconds != metadata.mtimeNanoseconds
 
-        let fileId = try upsertSourceFile(
-            rootId: root.id,
-            relativePath: relativePath,
-            canonicalPath: metadata.canonicalPath,
-            fileType: "sqlite_db",
-            metadata: metadata,
-            runId: runId,
-            parsed: true,
-            parseStatus: "ok",
-            parseError: nil
-        )
+        do {
+            let sourceDatabase = try SQLiteDatabase(path: databaseURL.path)
+            defer { try? sourceDatabase.close() }
+            let sessions = try OpenCodeSessionAdapter(sourceDatabase: sourceDatabase)
+                .changedSessions(after: root.lastSuccessfulCursor)
 
-        let sourceDatabase = try SQLiteDatabase(path: databaseURL.path)
-        defer { try? sourceDatabase.close() }
-        let sessions = try OpenCodeSessionAdapter(sourceDatabase: sourceDatabase)
-            .changedSessions(after: root.lastSuccessfulCursor)
-        let changed = fingerprintChanged || !sessions.isEmpty
-        if changed {
+            let fileId = try upsertSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: metadata.canonicalPath,
+                fileType: "sqlite_db",
+                metadata: metadata,
+                runId: runId,
+                parsed: true,
+                parseStatus: "ok",
+                parseError: nil
+            )
+
+            let changed = fingerprintChanged || !sessions.isEmpty
+            if changed {
+                progress.filesChanged = 1
+                progress.bytesRead = metadata.sizeBytes
+            }
+
+            for session in sessions {
+                try repository.upsert(session, scanRootId: root.id, sourceFileId: fileId, runId: runId)
+            }
+
+            progress.cursorAfter = latestCursor(in: sessions) ?? root.lastSuccessfulCursor
+        } catch {
             progress.filesChanged = 1
             progress.bytesRead = metadata.sizeBytes
+            _ = try? upsertSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: metadata.canonicalPath,
+                fileType: "sqlite_db",
+                metadata: metadata,
+                runId: runId,
+                parsed: false,
+                parseStatus: "failed",
+                parseError: sanitizedError(error)
+            )
+            throw error
         }
-
-        for session in sessions {
-            try repository.upsert(session, scanRootId: root.id, sourceFileId: fileId, runId: runId)
-        }
-
-        progress.cursorAfter = latestCursor(in: sessions) ?? root.lastSuccessfulCursor
     }
 
     private func jsonlFiles(under root: URL) throws -> [URL] {
@@ -455,8 +473,18 @@ public final class LocalAgentScanner {
     }
 
     private func latestCursor(in sessions: [ParsedAgentSession]) -> String? {
-        let latestDate = sessions.compactMap { $0.updatedAt ?? $0.startedAt }.max()
-        return latestDate.map(isoFormatter.string(from:))
+        guard let latestDate = sessions.compactMap({ $0.updatedAt ?? $0.startedAt }).max() else { return nil }
+        return preciseCursor(from: latestDate)
+    }
+
+    private func preciseCursor(from date: Date) -> String {
+        let milliseconds = Int64((date.timeIntervalSince1970 * 1000).rounded())
+        if milliseconds % 1000 == 0 {
+            return isoFormatter.string(from: date)
+        }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: Date(timeIntervalSince1970: Double(milliseconds) / 1000))
     }
 
     private func sanitizedError(_ error: Error) -> String {

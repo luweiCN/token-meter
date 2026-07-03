@@ -134,6 +134,71 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(try scalarInt(database, "SELECT files_changed AS value FROM scan_runs ORDER BY id DESC LIMIT 1"), 0)
     }
 
+    func testFailedOpenCodeDatabaseDoesNotMarkSourceFileParsed() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let openCodeURL = directory.appendingPathComponent("opencode.db")
+        try Data("not a sqlite database".utf8).write(to: openCodeURL)
+        let database = try migratedDatabase(rootKind: .opencodeSQLite, rootPath: openCodeURL.path)
+
+        do {
+            try await LocalAgentScanner(database: database).scanRoot(id: 1)
+            XCTFail("Expected corrupt OpenCode database to fail the scan")
+        } catch {
+            let sourceFile = try database.query("SELECT parse_status, parse_error, last_parsed_run_id FROM source_files LIMIT 1")[0]
+            XCTAssertEqual(sourceFile.string("parse_status"), "failed")
+            XCTAssertEqual(sourceFile.string("parse_error"), "database operation failed")
+            XCTAssertNil(sourceFile.int("last_parsed_run_id"))
+
+            let run = try database.query("SELECT status, files_seen, files_changed FROM scan_runs ORDER BY id DESC LIMIT 1")[0]
+            XCTAssertEqual(run.string("status"), "partial")
+            XCTAssertEqual(run.int("files_seen"), 1)
+            XCTAssertEqual(run.int("files_changed"), 1)
+        }
+    }
+
+    func testOpenCodeHighWaterCursorPreservesMilliseconds() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let openCodeURL = directory.appendingPathComponent("opencode.db")
+        let sourceDatabase = try SQLiteDatabase(path: openCodeURL.path)
+        try sourceDatabase.execute("""
+        CREATE TABLE message (
+          id TEXT PRIMARY KEY,
+          session_id TEXT,
+          data TEXT
+        )
+        """)
+        try sourceDatabase.execute(
+            "INSERT INTO message(id, session_id, data) VALUES (?, ?, ?)",
+            [
+                .text("msg-1"),
+                .text("opencode-session-ms"),
+                .text("""
+                {
+                  "id": "msg-1",
+                  "sessionID": "opencode-session-ms",
+                  "providerID": "anthropic",
+                  "modelID": "claude-sonnet",
+                  "time": { "created": 1783036800123 },
+                  "tokens": { "input": 10, "output": 20, "cache": { "read": 3, "write": 4 } },
+                  "cost": 0.001
+                }
+                """)
+            ]
+        )
+        try sourceDatabase.close()
+        let database = try migratedDatabase(rootKind: .opencodeSQLite, rootPath: openCodeURL.path)
+        let scanner = LocalAgentScanner(database: database)
+
+        try await scanner.scanRoot(id: 1)
+        XCTAssertEqual(try database.query("SELECT last_successful_cursor FROM scan_roots WHERE id = 1")[0].string("last_successful_cursor"), "2026-07-03T00:00:00.123Z")
+
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(try scalarInt(database, "SELECT files_changed AS value FROM scan_runs ORDER BY id DESC LIMIT 1"), 0)
+    }
+
     func testScanFailureRecordsPartialFileProgress() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
