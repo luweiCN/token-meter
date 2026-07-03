@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 export interface ScanRootSummary {
   id: number;
   kind: string;
-  rootPath: string;
+  rootPathLabel: string;
   displayName: string;
   enabled: boolean;
   scanMode: string;
@@ -42,7 +42,8 @@ export interface FailedFileSummary {
   updatedAt: string;
 }
 
-interface ScanRootRow extends Omit<ScanRootSummary, 'enabled'> {
+interface ScanRootRow extends Omit<ScanRootSummary, 'enabled' | 'rootPathLabel'> {
+  rootPath: string;
   enabled: 0 | 1;
 }
 
@@ -108,9 +109,18 @@ export class IndexStatusRepository {
       .all() as FailedFileSummary[];
 
     return {
-      roots: roots.map((root) => ({ ...root, enabled: root.enabled === 1 })),
+      roots: roots.map(({ rootPath, ...root }) => ({ ...root, rootPathLabel: redactedRootPath(rootPath), enabled: root.enabled === 1 })),
       runs,
       failedFiles
     };
   }
+}
+
+function redactedRootPath(rootPath: string) {
+  const homeMatch = rootPath.match(/^\/(Users|home)\/[^/]+(?<rest>\/.*)?$/);
+  if (homeMatch?.groups?.rest !== undefined) {
+    return `~${homeMatch.groups.rest}`;
+  }
+  if (homeMatch) return '~';
+  return rootPath.startsWith('/') ? rootPath.split('/').filter(Boolean).at(-1) ?? '/' : rootPath;
 }

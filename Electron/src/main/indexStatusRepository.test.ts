@@ -112,14 +112,14 @@ describe('IndexStatusRepository', () => {
     return new IndexStatusRepository(db);
   }
 
-  it('status returns scan roots and recent runs from SQLite facts', () => {
+  it('status returns scan roots without exposing absolute local root paths', () => {
     const status = openRepo().status();
 
     expect(status.roots).toEqual([
       {
         id: 1,
         kind: 'codex_jsonl',
-        rootPath: '/Users/test/.codex/sessions',
+        rootPathLabel: '~/.codex/sessions',
         displayName: 'Codex',
         enabled: true,
         scanMode: 'incremental',
@@ -131,7 +131,7 @@ describe('IndexStatusRepository', () => {
       {
         id: 2,
         kind: 'opencode_sqlite',
-        rootPath: '/Users/test/.local/share/opencode',
+        rootPathLabel: '~/.local/share/opencode',
         displayName: 'OpenCode',
         enabled: false,
         scanMode: 'disabled',
@@ -141,6 +141,10 @@ describe('IndexStatusRepository', () => {
         lastError: 'database operation failed'
       }
     ]);
+    for (const root of status.roots) {
+      expect(root).not.toHaveProperty('rootPath');
+    }
+    expect(JSON.stringify(status.roots)).not.toContain('/Users/test/');
     expect(status.runs).toEqual([
       expect.objectContaining({
         id: 11,
