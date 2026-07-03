@@ -367,7 +367,7 @@ final class OpenCodeSessionAdapterTests: XCTestCase {
             "INSERT INTO message(id, session_id, data) VALUES (?, ?, ?)",
             [
                 .text("msg-old"),
-                .text("session-owned-by-message"),
+                .null,
                 .text("""
                 {
                   "sessionID": "session-owned-by-message",

@@ -80,12 +80,21 @@ public final class OpenCodeSessionAdapter {
         guard try columnExists(table: "message", column: "session_id") else { return [] }
         let rows = try sourceDatabase.query(
             """
-            SELECT DISTINCT session_id
+            SELECT session_id,
+                   CASE WHEN json_valid(data) THEN json_extract(data, '$.sessionID') ELSE NULL END AS json_session_id
             FROM message
-            WHERE session_id IS NOT NULL AND session_id != ''
             """
         )
-        return Set(rows.compactMap { $0.string("session_id") })
+        var keys = Set<String>()
+        for row in rows {
+            if let sessionId = row.string("session_id"), !sessionId.isEmpty {
+                keys.insert(sessionId)
+            }
+            if let jsonSessionId = row.string("json_session_id"), !jsonSessionId.isEmpty {
+                keys.insert(jsonSessionId)
+            }
+        }
+        return keys
     }
 
     private func changedMessageSessions(after highWaterMark: String?) throws -> [ParsedAgentSession] {
