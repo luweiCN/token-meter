@@ -1,0 +1,29 @@
+{
+  "name": "token-meter-electron",
+  "private": true,
+  "type": "module",
+  "main": "dist-main/main/main.js",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "electron": "electron .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build && vite build --mode preload && tsc --ignoreConfig --outDir dist-main --rootDir src --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck --types node --strict --esModuleInterop --jsx react-jsx src/main/main.ts src/main/ipc.ts"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "better-sqlite3": "latest",
+    "electron": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "typescript": "latest",
+    "vite": "latest",
+    "vitest": "latest"
+  }
+}

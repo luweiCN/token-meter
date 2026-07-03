@@ -1,0 +1,30 @@
+:root {
+  color: oklch(24% 0.012 255);
+  background: oklch(97% 0.006 255);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+body { margin: 0; }
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+}
+
+.sidebar {
+  border-right: 1px solid oklch(88% 0.01 255);
+  padding: 24px;
+  background: oklch(94% 0.008 255);
+}
+
+.sidebar nav {
+  display: grid;
+  gap: 10px;
+  margin-top: 28px;
+}
+
+.content {
+  padding: 32px 40px;
+}
