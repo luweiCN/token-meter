@@ -112,6 +112,82 @@ final class LocalAgentUsageRepositoryTests: XCTestCase {
         XCTAssertEqual(rows[0].int("tokens_input"), 11)
         XCTAssertEqual(rows[0].int("tokens_output"), 22)
     }
+
+    func testDailyRollupUsesLatestSessionUsageWithoutInflatingSessionCount() throws {
+        let database = try migratedDatabase()
+        let repository = LocalAgentUsageRepository(database: database)
+        try repository.upsert(
+            makeSession(
+                usageSequence: 1,
+                sourceOffset: 42,
+                usage: ParsedSessionUsage(
+                    inputTokens: 10,
+                    outputTokens: 5,
+                    reasoningTokens: 2,
+                    cacheReadTokens: 3,
+                    cacheWriteTokens: 4,
+                    costUSDMicros: 1_234
+                )
+            ),
+            scanRootId: 1,
+            sourceFileId: nil,
+            runId: nil
+        )
+
+        try repository.upsert(
+            makeSession(
+                updatedAt: "2026-07-03T01:20:00Z",
+                usageSequence: 2,
+                sourceOffset: 84,
+                usage: ParsedSessionUsage(
+                    inputTokens: 30,
+                    outputTokens: 7,
+                    reasoningTokens: 3,
+                    cacheReadTokens: 4,
+                    cacheWriteTokens: 5,
+                    costUSDMicros: 4_321
+                )
+            ),
+            scanRootId: 1,
+            sourceFileId: nil,
+            runId: nil
+        )
+
+        let rows = try database.query(
+            """
+            SELECT d.usage_date,
+                   d.provider_id,
+                   d.project_id,
+                   d.source_kind,
+                   d.sessions_count,
+                   d.tokens_input,
+                   d.tokens_output,
+                   d.tokens_reasoning,
+                   d.tokens_cache_read,
+                   d.tokens_cache_write,
+                   d.total_cost_usd_micros,
+                   p.canonical_path
+            FROM provider_daily_usage d
+            JOIN projects p ON p.id = d.project_id
+            WHERE d.provider_id = ? AND d.source_kind = ?
+            """,
+            [.text("codex"), .text(SourceKind.codexJSONL.rawValue)]
+        )
+
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0].string("usage_date"), "2026-07-03")
+        XCTAssertEqual(rows[0].string("provider_id"), "codex")
+        XCTAssertNotNil(rows[0].int("project_id"))
+        XCTAssertEqual(rows[0].string("source_kind"), SourceKind.codexJSONL.rawValue)
+        XCTAssertEqual(rows[0].string("canonical_path"), "/repo")
+        XCTAssertEqual(rows[0].int("sessions_count"), 1)
+        XCTAssertEqual(rows[0].int("tokens_input"), 30)
+        XCTAssertEqual(rows[0].int("tokens_output"), 7)
+        XCTAssertEqual(rows[0].int("tokens_reasoning"), 3)
+        XCTAssertEqual(rows[0].int("tokens_cache_read"), 4)
+        XCTAssertEqual(rows[0].int("tokens_cache_write"), 5)
+        XCTAssertEqual(rows[0].int("total_cost_usd_micros"), 4_321)
+    }
 }
 
 private func migratedDatabase(sourceKind: SourceKind = .codexJSONL) throws -> SQLiteDatabase {

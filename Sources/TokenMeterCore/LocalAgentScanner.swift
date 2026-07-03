@@ -123,11 +123,35 @@ public final class LocalAgentScanner {
             return
         }
 
+        let previousState = existing?.parserState
+        let startOffset = jsonlStartOffset(existing: existing, metadata: metadata, previousState: previousState)
         progress.filesChanged += 1
-        progress.bytesRead += metadata.sizeBytes
 
         do {
-            let readResult = try JSONLStreamReader.readLines(from: file, startingAt: 0)
+            let readResult = try JSONLStreamReader.readLines(from: file, startingAt: startOffset)
+            progress.bytesRead += max(0, readResult.nextOffset - startOffset)
+
+            let didResume = startOffset > 0
+            let previousStateForParse = didResume ? previousState : nil
+            let parsedSession: ParsedAgentSession?
+            if readResult.lines.isEmpty {
+                parsedSession = nil
+            } else {
+                let parsed = try parser(for: root.kind).parse(lines: readResult.lines, sourceURL: file)
+                parsedSession = merge(
+                    parsed,
+                    with: previousStateForParse,
+                    sourceKind: root.kind,
+                    didResume: didResume,
+                    codexUsageIsCumulative: codexUsageIsCumulative(in: readResult.lines)
+                )
+            }
+
+            let nextState = jsonlParserState(
+                previous: previousStateForParse,
+                parsed: parsedSession,
+                nextOffset: readResult.nextOffset
+            )
             let fileId = try upsertSourceFile(
                 rootId: root.id,
                 relativePath: relativePath,
@@ -137,12 +161,12 @@ public final class LocalAgentScanner {
                 runId: runId,
                 parsed: true,
                 parseStatus: "ok",
-                parseError: nil
+                parseError: nil,
+                parserState: nextState
             )
 
-            if !readResult.lines.isEmpty {
-                let parsed = try parser(for: root.kind).parse(lines: readResult.lines, sourceURL: file)
-                try repository.upsert(parsed, scanRootId: root.id, sourceFileId: fileId, runId: runId)
+            if let parsedSession {
+                try repository.upsert(parsedSession, scanRootId: root.id, sourceFileId: fileId, runId: runId)
             }
 
             return
@@ -156,7 +180,8 @@ public final class LocalAgentScanner {
                 runId: runId,
                 parsed: false,
                 parseStatus: "failed",
-                parseError: sanitizedError(error)
+                parseError: sanitizedError(error),
+                parserState: previousState
             )
             throw error
         }
@@ -189,7 +214,8 @@ public final class LocalAgentScanner {
                 runId: runId,
                 parsed: true,
                 parseStatus: "ok",
-                parseError: nil
+                parseError: nil,
+                parserState: nil
             )
 
             let changed = fingerprintChanged || !sessions.isEmpty
@@ -215,7 +241,8 @@ public final class LocalAgentScanner {
                 runId: runId,
                 parsed: false,
                 parseStatus: "failed",
-                parseError: sanitizedError(error)
+                parseError: sanitizedError(error),
+                parserState: nil
             )
             throw error
         }
@@ -341,7 +368,7 @@ public final class LocalAgentScanner {
     private func existingSourceFile(rootId: Int64, relativePath: String) throws -> ExistingSourceFile? {
         guard let row = try database.query(
             """
-            SELECT id, size_bytes, mtime_ns, parse_status, last_parsed_run_id
+            SELECT id, size_bytes, mtime_ns, inode, dev, parser_state, parse_status, last_parsed_run_id
             FROM source_files
             WHERE scan_root_id = ? AND relative_path = ?
             """,
@@ -357,6 +384,9 @@ public final class LocalAgentScanner {
             id: id,
             sizeBytes: sizeBytes,
             mtimeNanoseconds: mtimeNanoseconds,
+            inode: row.int("inode"),
+            dev: row.int("dev"),
+            parserState: decodeParserState(row.string("parser_state")),
             parseStatus: parseStatus,
             lastParsedRunId: row.int("last_parsed_run_id")
         )
@@ -384,7 +414,8 @@ public final class LocalAgentScanner {
         runId: Int64,
         parsed: Bool,
         parseStatus: String,
-        parseError: String?
+        parseError: String?,
+        parserState: JSONLParserState?
     ) throws -> Int64 {
         try database.execute(
             """
@@ -402,8 +433,9 @@ public final class LocalAgentScanner {
                 last_parsed_run_id,
                 disappeared_at,
                 parse_status,
-                parse_error
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                parse_error,
+                parser_state
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
             ON CONFLICT(scan_root_id, relative_path) DO UPDATE SET
                 canonical_path = excluded.canonical_path,
                 file_type = excluded.file_type,
@@ -416,6 +448,7 @@ public final class LocalAgentScanner {
                 disappeared_at = NULL,
                 parse_status = excluded.parse_status,
                 parse_error = excluded.parse_error,
+                parser_state = excluded.parser_state,
                 updated_at = CURRENT_TIMESTAMP
             """,
             [
@@ -431,7 +464,8 @@ public final class LocalAgentScanner {
                 .int(runId),
                 parsed ? .int(runId) : .null,
                 .text(parseStatus),
-                sqliteText(parseError)
+                sqliteText(parseError),
+                sqliteText(encodeParserState(parserState))
             ]
         )
         return try database.query(
@@ -442,6 +476,121 @@ public final class LocalAgentScanner {
             """,
             [.int(rootId), .text(relativePath)]
         )[0].int("id") ?? 0
+    }
+
+    private func jsonlStartOffset(existing: ExistingSourceFile?, metadata: FileMetadata, previousState: JSONLParserState?) -> Int64 {
+        guard let existing,
+              existing.parseStatus == "ok",
+              let previousState,
+              previousState.lastOffset == existing.sizeBytes,
+              metadata.sizeBytes > existing.sizeBytes,
+              existing.inode == metadata.inode,
+              existing.dev == metadata.dev else {
+            return 0
+        }
+        return previousState.lastOffset
+    }
+
+    private func jsonlParserState(previous: JSONLParserState?, parsed: ParsedAgentSession?, nextOffset: Int64) -> JSONLParserState {
+        JSONLParserState(
+            lastOffset: nextOffset,
+            sessionKey: parsed?.sessionKey ?? previous?.sessionKey,
+            projectPath: parsed?.projectPath ?? previous?.projectPath,
+            modelName: retainedModelName(parsed: parsed, previous: previous),
+            cliVersion: parsed?.cliVersion ?? previous?.cliVersion,
+            startedAt: parsed?.startedAt ?? previous?.startedAt,
+            updatedAt: parsed?.updatedAt ?? previous?.updatedAt,
+            lastUsageSeq: parsed?.usage == nil ? (previous?.lastUsageSeq ?? 0) : parsed?.usageSequence ?? previous?.lastUsageSeq ?? 0,
+            lastUsage: parsed?.usage ?? previous?.lastUsage
+        )
+    }
+
+    private func merge(
+        _ parsed: ParsedAgentSession,
+        with state: JSONLParserState?,
+        sourceKind: SourceKind,
+        didResume: Bool,
+        codexUsageIsCumulative: Bool
+    ) -> ParsedAgentSession {
+        guard didResume, let state else { return parsed }
+        let usage = mergedUsage(parsed.usage, previous: state.lastUsage, sourceKind: sourceKind, codexUsageIsCumulative: codexUsageIsCumulative)
+        let usageSequence = usage == nil ? state.lastUsageSeq : state.lastUsageSeq + parsed.usageSequence
+        return ParsedAgentSession(
+            sourceKind: parsed.sourceKind,
+            sessionKey: state.sessionKey ?? parsed.sessionKey,
+            projectPath: parsed.projectPath ?? state.projectPath,
+            modelName: retainedModelName(parsed: parsed, previous: state),
+            cliVersion: parsed.cliVersion ?? state.cliVersion,
+            startedAt: parsed.startedAt ?? state.startedAt,
+            updatedAt: parsed.updatedAt ?? state.updatedAt,
+            usage: usage,
+            usageSequence: usageSequence,
+            sourceOffset: parsed.sourceOffset,
+            rawMeta: parsed.rawMeta
+        )
+    }
+    private func retainedModelName(parsed: ParsedAgentSession?, previous: JSONLParserState?) -> String? {
+        guard let parsed else { return previous?.modelName }
+        guard let parsedModel = parsed.modelName else { return previous?.modelName }
+        if parsed.sourceKind == .codexJSONL, parsedModel == "gpt-5" {
+            return previous?.modelName ?? parsedModel
+        }
+        return parsedModel
+    }
+
+
+    private func mergedUsage(
+        _ usage: ParsedSessionUsage?,
+        previous: ParsedSessionUsage?,
+        sourceKind: SourceKind,
+        codexUsageIsCumulative: Bool
+    ) -> ParsedSessionUsage? {
+        guard let usage else { return nil }
+        if codexUsageIsCumulative, sourceKind == .codexJSONL, usage == previous { return nil }
+        guard sourceKind == .claudeJSONL || sourceKind == .ompJSONL, let previous else { return usage }
+        return ParsedSessionUsage(
+            inputTokens: add(previous.inputTokens, usage.inputTokens),
+            outputTokens: add(previous.outputTokens, usage.outputTokens),
+            reasoningTokens: add(previous.reasoningTokens, usage.reasoningTokens),
+            cacheReadTokens: add(previous.cacheReadTokens, usage.cacheReadTokens),
+            cacheWriteTokens: add(previous.cacheWriteTokens, usage.cacheWriteTokens),
+            costUSDMicros: add(previous.costUSDMicros, usage.costUSDMicros)
+        )
+    }
+
+    private func codexUsageIsCumulative(in lines: [JSONLLine]) -> Bool {
+        var latestTokenCountIsCumulative = false
+        for line in lines {
+            guard let object = JSONDictionary.object(from: line.text),
+                  JSONDictionary.string(object, "type") == "event_msg",
+                  let payload = JSONDictionary.dictionary(object, "payload"),
+                  JSONDictionary.string(payload, "type") == "token_count",
+                  let info = JSONDictionary.dictionary(payload, "info") else {
+                continue
+            }
+            if JSONDictionary.dictionary(info, "total_token_usage") != nil {
+                latestTokenCountIsCumulative = true
+            } else if JSONDictionary.dictionary(info, "last_token_usage") != nil {
+                latestTokenCountIsCumulative = false
+            }
+        }
+        return latestTokenCountIsCumulative
+    }
+
+    private func add(_ lhs: Int64?, _ rhs: Int64?) -> Int64? {
+        guard lhs != nil || rhs != nil else { return nil }
+        return (lhs ?? 0) + (rhs ?? 0)
+    }
+
+    private func decodeParserState(_ json: String?) -> JSONLParserState? {
+        guard let json, let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(JSONLParserState.self, from: data)
+    }
+
+    private func encodeParserState(_ state: JSONLParserState?) -> String? {
+        guard let state,
+              let data = try? JSONEncoder().encode(state) else { return nil }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func fileMetadata(for url: URL) throws -> FileMetadata {
@@ -536,8 +685,23 @@ private struct ExistingSourceFile {
     let id: Int64
     let sizeBytes: Int64
     let mtimeNanoseconds: Int64
+    let inode: Int64?
+    let dev: Int64?
+    let parserState: JSONLParserState?
     let parseStatus: String
     let lastParsedRunId: Int64?
+}
+
+private struct JSONLParserState: Codable {
+    let lastOffset: Int64
+    let sessionKey: String?
+    let projectPath: String?
+    let modelName: String?
+    let cliVersion: String?
+    let startedAt: Date?
+    let updatedAt: Date?
+    let lastUsageSeq: Int
+    let lastUsage: ParsedSessionUsage?
 }
 
 private struct FileMetadata {

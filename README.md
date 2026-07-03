@@ -85,3 +85,20 @@ cp config/token-meter.example.json ~/.token-meter/config.json
 swift test
 swift build
 ```
+
+## 第二阶段开发
+
+Swift 菜单栏仍可单独运行：
+
+```bash
+swift run TokenMeterApp
+```
+
+Electron 主界面在 `Electron/` 下开发：
+
+```bash
+npm install --prefix Electron
+npm run dev --prefix Electron
+```
+
+隐私约束：TokenMeter SQLite 只保存 session 元数据、token usage、cost、扫描状态和设置，不保存 prompt、assistant response、tool output、reasoning、attachments 或凭据。
