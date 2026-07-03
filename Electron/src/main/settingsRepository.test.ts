@@ -93,6 +93,20 @@ describe('SettingsRepository', () => {
     });
   });
 
+  it('matches Swift ordering when provider menu ranks are null', () => {
+    const { db, repo } = openRepo();
+    db.prepare(
+      `INSERT INTO provider_config_overrides(provider_id, enabled, display_name, menu_rank, show_in_menu_bar, show_in_charts)
+       VALUES ('unranked', 1, 'Unranked', NULL, 1, 1)`
+    ).run();
+
+    expect(repo.get().providerOverrides.map((override) => override.providerId)).toEqual([
+      'unranked',
+      'codex',
+      'claude-code'
+    ]);
+  });
+
   it('rejects stale settings writes without mutating stored settings', () => {
     const { db, repo } = openRepo();
     const before = settingRows(db);
@@ -152,5 +166,16 @@ describe('SettingsRepository', () => {
     expect(() => repo.update({}, 3)).toThrow(/patch|change|empty/i);
 
     expect(repo.get().version).toBe(3);
+  });
+
+  it('rejects invalid renderer patch values without mutating stored settings', () => {
+    const { db, repo } = openRepo();
+    const before = settingRows(db);
+
+    expect(() => repo.update({ autoRefreshSeconds: 29 }, 3)).toThrow(/autoRefreshSeconds|30/);
+    expect(() => repo.update({ enabledAgentKinds: 'codex' } as never, 3)).toThrow(/enabledAgentKinds/);
+    expect(() => repo.update({ menuBarPrimaryProviderId: 42 } as never, 3)).toThrow(/menuBarPrimaryProviderId/);
+
+    expect(settingRows(db)).toEqual(before);
   });
 });

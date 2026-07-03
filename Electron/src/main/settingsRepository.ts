@@ -55,8 +55,9 @@ export class SettingsRepository {
     };
   }
 
-  update(patch: SettingsPatch, expectedVersion: number) {
-    if (!hasPatchChanges(patch)) {
+  update(patch: unknown, expectedVersion: number) {
+    const validatedPatch = validateSettingsPatch(patch);
+    if (!hasPatchChanges(validatedPatch)) {
       throw new Error('settings patch must change at least one setting');
     }
 
@@ -67,14 +68,14 @@ export class SettingsRepository {
       }
 
       const nextVersion = expectedVersion + 1;
-      if (patch.menuBarPrimaryProviderId !== undefined) {
-        this.setSetting('menuBar.primaryProviderId', JSON.stringify(patch.menuBarPrimaryProviderId), 'string', nextVersion);
+      if (validatedPatch.menuBarPrimaryProviderId !== undefined) {
+        this.setSetting('menuBar.primaryProviderId', JSON.stringify(validatedPatch.menuBarPrimaryProviderId), 'string', nextVersion);
       }
-      if (patch.autoRefreshSeconds !== undefined) {
-        this.setSetting('scan.autoRefreshSeconds', String(patch.autoRefreshSeconds), 'int', nextVersion);
+      if (validatedPatch.autoRefreshSeconds !== undefined) {
+        this.setSetting('scan.autoRefreshSeconds', String(validatedPatch.autoRefreshSeconds), 'int', nextVersion);
       }
-      if (patch.enabledAgentKinds !== undefined) {
-        this.setSetting('filters.enabledAgentKinds', JSON.stringify(patch.enabledAgentKinds), 'json', nextVersion);
+      if (validatedPatch.enabledAgentKinds !== undefined) {
+        this.setSetting('filters.enabledAgentKinds', JSON.stringify(validatedPatch.enabledAgentKinds), 'json', nextVersion);
       }
 
       return { requestedVersion: nextVersion, status: 'pending' };
@@ -114,7 +115,7 @@ export class SettingsRepository {
       .prepare(
         `SELECT provider_id, enabled, display_name, menu_rank, show_in_menu_bar, show_in_charts
          FROM provider_config_overrides
-         ORDER BY coalesce(menu_rank, 2147483647), provider_id`
+         ORDER BY menu_rank ASC, provider_id ASC`
       )
       .all() as ProviderOverrideRow[];
 
@@ -142,6 +143,37 @@ export class SettingsRepository {
       )
       .run(key, valueJson, valueType, version);
   }
+}
+
+function validateSettingsPatch(patch: unknown): SettingsPatch {
+  if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) {
+    throw new Error('settings patch must be an object');
+  }
+
+  const candidate = patch as Record<string, unknown>;
+  const validated: SettingsPatch = {};
+  if ('menuBarPrimaryProviderId' in candidate) {
+    if (typeof candidate.menuBarPrimaryProviderId !== 'string') {
+      throw new Error('menuBarPrimaryProviderId must be a string');
+    }
+    validated.menuBarPrimaryProviderId = candidate.menuBarPrimaryProviderId;
+  }
+
+  if ('autoRefreshSeconds' in candidate) {
+    if (!Number.isInteger(candidate.autoRefreshSeconds) || (candidate.autoRefreshSeconds as number) < 30) {
+      throw new Error('autoRefreshSeconds must be an integer >= 30');
+    }
+    validated.autoRefreshSeconds = candidate.autoRefreshSeconds as number;
+  }
+
+  if ('enabledAgentKinds' in candidate) {
+    if (!Array.isArray(candidate.enabledAgentKinds) || !candidate.enabledAgentKinds.every((item) => typeof item === 'string')) {
+      throw new Error('enabledAgentKinds must be an array of strings');
+    }
+    validated.enabledAgentKinds = candidate.enabledAgentKinds;
+  }
+
+  return validated;
 }
 
 function hasPatchChanges(patch: SettingsPatch) {
