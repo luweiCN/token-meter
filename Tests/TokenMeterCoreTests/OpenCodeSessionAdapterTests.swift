@@ -333,4 +333,56 @@ final class OpenCodeSessionAdapterTests: XCTestCase {
         XCTAssertEqual(sessions[0].usage?.costUSDMicros, 123_456)
         XCTAssertEqual(sessions[0].rawMeta, ["source": "opencode", "provider": "anthropic", "agent": "opencode"])
     }
+
+    func testDoesNotReturnLegacySessionWhenMessageTableOwnsSessionOutsideHighWaterWindow() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try database.execute("""
+        CREATE TABLE session (
+          id TEXT PRIMARY KEY,
+          directory TEXT,
+          model TEXT,
+          agent TEXT,
+          time_created TEXT,
+          time_updated TEXT,
+          tokens_input INTEGER,
+          tokens_output INTEGER,
+          tokens_reasoning INTEGER,
+          tokens_cache_read INTEGER,
+          tokens_cache_write INTEGER,
+          cost REAL
+        )
+        """)
+        try database.execute("""
+        CREATE TABLE message (
+          id TEXT PRIMARY KEY,
+          session_id TEXT,
+          data TEXT
+        )
+        """)
+        try database.execute("""
+        INSERT INTO session(id, directory, model, agent, time_created, time_updated, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, cost)
+        VALUES ('session-owned-by-message', '/legacy', 'legacy-model', 'legacy-agent', '2026-07-03T00:00:00Z', '2026-07-03T00:10:00Z', 1, 2, 3, 4, 5, 0.000001)
+        """)
+        try database.execute(
+            "INSERT INTO message(id, session_id, data) VALUES (?, ?, ?)",
+            [
+                .text("msg-old"),
+                .text("session-owned-by-message"),
+                .text("""
+                {
+                  "sessionID": "session-owned-by-message",
+                  "providerID": "anthropic",
+                  "modelID": "message-model",
+                  "time": { "created": 1783036800000 },
+                  "tokens": { "input": 100, "output": 200, "cache": { "read": 30, "write": 40 } },
+                  "cost": 0.123456
+                }
+                """)
+            ]
+        )
+
+        let sessions = try OpenCodeSessionAdapter(sourceDatabase: database).changedSessions(after: "1783036850000")
+
+        XCTAssertEqual(sessions, [])
+    }
 }

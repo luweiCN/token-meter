@@ -13,6 +13,7 @@ public final class OpenCodeSessionAdapter {
         var messageSessionKeys = Set<String>()
 
         if try tableExists("message") {
+            messageSessionKeys = try allMessageSessionKeys()
             let messageSessions = try changedMessageSessions(after: highWaterMark)
             sessions.append(contentsOf: messageSessions)
             messageSessionKeys.formUnion(messageSessions.map(\.sessionKey))
@@ -73,6 +74,18 @@ public final class OpenCodeSessionAdapter {
                 rawMeta: rawMeta(provider: nil, agent: agent)
             )
         }
+    }
+
+    private func allMessageSessionKeys() throws -> Set<String> {
+        guard try columnExists(table: "message", column: "session_id") else { return [] }
+        let rows = try sourceDatabase.query(
+            """
+            SELECT DISTINCT session_id
+            FROM message
+            WHERE session_id IS NOT NULL AND session_id != ''
+            """
+        )
+        return Set(rows.compactMap { $0.string("session_id") })
     }
 
     private func changedMessageSessions(after highWaterMark: String?) throws -> [ParsedAgentSession] {
