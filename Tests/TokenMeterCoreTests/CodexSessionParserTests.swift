@@ -86,4 +86,53 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.usage?.cacheReadTokens, 40)
         XCTAssertEqual(parsed.usage?.reasoningTokens, 6)
     }
+
+    func testReadsModelFromTokenCountPayloadAndInfoMetadata() throws {
+        let lines = [
+            JSONLLine(text: #"{"type":"session_meta","payload":{"id":"session-model","cwd":"/repo"}}"#, offset: 0, nextOffset: 1),
+            JSONLLine(text: #"{"type":"event_msg","payload":{"type":"token_count","model_name":"gpt-from-payload","metadata":{"model":"gpt-from-payload-metadata"},"info":{"model":"gpt-from-info","metadata":{"model":"gpt-from-info-metadata"},"last_token_usage":{"input_tokens":10,"output_tokens":2}}}}"#, offset: 1, nextOffset: 2)
+        ]
+
+        let parsed = try CodexSessionParser().parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/codex.jsonl"))
+
+        XCTAssertEqual(parsed.modelName, "gpt-from-payload")
+    }
+
+    func testFallsBackToSourceFileNameWhenSessionMetadataOmitsId() throws {
+        let lines = [
+            JSONLLine(text: #"{"type":"turn_context","payload":{"model":"gpt-5","cwd":"/repo"}}"#, offset: 0, nextOffset: 1),
+            JSONLLine(text: #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1,"output_tokens":2}}}}"#, offset: 1, nextOffset: 2)
+        ]
+
+        let parsed = try CodexSessionParser().parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/session-from-path.jsonl"))
+
+        XCTAssertEqual(parsed.sessionKey, "session-from-path")
+    }
+
+    func testSkipsDuplicateCumulativeSnapshotEvenWhenLastUsageExists() throws {
+        let lines = [
+            JSONLLine(text: #"{"type":"session_meta","payload":{"id":"session-duplicate","cwd":"/repo"}}"#, offset: 0, nextOffset: 1),
+            JSONLLine(text: #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":20},"total_token_usage":{"input_tokens":100,"output_tokens":20}}}}"#, offset: 1, nextOffset: 2),
+            JSONLLine(text: #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":20},"total_token_usage":{"input_tokens":100,"output_tokens":20}}}}"#, offset: 2, nextOffset: 3)
+        ]
+
+        let parsed = try CodexSessionParser().parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/codex.jsonl"))
+
+        XCTAssertEqual(parsed.usageSequence, 1)
+        XCTAssertEqual(parsed.sourceOffset, 1)
+    }
+
+    func testParsesFractionalSecondTimestamps() throws {
+        let lines = [
+            JSONLLine(text: #"{"type":"session_meta","payload":{"id":"session-time","timestamp":"2026-05-13T09:00:00.000Z","cwd":"/repo"}}"#, offset: 0, nextOffset: 1),
+            JSONLLine(text: #"{"type":"event_msg","timestamp":"2026-05-13T09:01:02.123Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1,"output_tokens":2}}}}"#, offset: 1, nextOffset: 2)
+        ]
+
+        let parsed = try CodexSessionParser().parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/codex.jsonl"))
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        XCTAssertEqual(parsed.startedAt, formatter.date(from: "2026-05-13T09:00:00.000Z"))
+        XCTAssertEqual(parsed.updatedAt, formatter.date(from: "2026-05-13T09:01:02.123Z"))
+    }
 }

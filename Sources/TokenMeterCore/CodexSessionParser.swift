@@ -13,13 +13,13 @@ public struct CodexSessionParser: LocalAgentSessionParser {
         var usageSequence = 0
         var usageOffset: Int64?
         var previousTotalUsage: CodexTokenUsage?
-        let dateFormatter = ISO8601DateFormatter()
+        let dateFormatters = makeDateFormatters()
 
         for line in lines {
             guard let object = JSONDictionary.object(from: line.text) else { continue }
             let type = JSONDictionary.string(object, "type")
 
-            if let timestamp = timestamp(in: object, dateFormatter: dateFormatter) {
+            if let timestamp = timestamp(in: object, dateFormatters: dateFormatters) {
                 updatedAt = timestamp
                 if startedAt == nil {
                     startedAt = timestamp
@@ -32,7 +32,7 @@ public struct CodexSessionParser: LocalAgentSessionParser {
                 sessionKey = firstString(in: payload, keys: ["id", "session_id", "sessionId"]) ?? sessionKey
                 projectPath = firstString(in: payload, keys: ["cwd", "project_path", "projectPath"]) ?? projectPath
                 modelName = firstString(in: payload, keys: ["model", "model_name", "modelName"]) ?? modelName
-                if let timestamp = timestamp(in: payload, dateFormatter: dateFormatter) {
+                if let timestamp = timestamp(in: payload, dateFormatters: dateFormatters) {
                     startedAt = timestamp
                     updatedAt = timestamp
                 }
@@ -48,8 +48,18 @@ public struct CodexSessionParser: LocalAgentSessionParser {
                       let info = JSONDictionary.dictionary(payload, "info") else {
                     continue
                 }
+                modelName = firstModel(in: payload, info: info) ?? modelName
+
 
                 let totalUsage = JSONDictionary.dictionary(info, "total_token_usage").map(CodexTokenUsage.init)
+                if let totalUsage {
+                    let totalDelta = totalUsage.delta(from: previousTotalUsage)
+                    guard totalDelta.hasAnyTokens else {
+                        previousTotalUsage = totalUsage
+                        continue
+                    }
+                }
+
                 let usageForLine: CodexTokenUsage?
                 if let lastUsageObject = JSONDictionary.dictionary(info, "last_token_usage") {
                     usageForLine = CodexTokenUsage(lastUsageObject)
@@ -73,12 +83,12 @@ public struct CodexSessionParser: LocalAgentSessionParser {
             }
         }
 
-        guard let sessionKey else { throw LocalAgentParserError.missingSessionKey }
+        let resolvedSessionKey = sessionKey ?? fallbackSessionKey(from: sourceURL)
         return ParsedAgentSession(
             sourceKind: .codexJSONL,
-            sessionKey: sessionKey,
+            sessionKey: resolvedSessionKey,
             projectPath: projectPath,
-            modelName: modelName,
+            modelName: modelName ?? (usage == nil ? nil : "gpt-5"),
             cliVersion: nil,
             startedAt: startedAt,
             updatedAt: updatedAt,
@@ -89,9 +99,9 @@ public struct CodexSessionParser: LocalAgentSessionParser {
         )
     }
 
-    private func timestamp(in object: [String: Any], dateFormatter: ISO8601DateFormatter) -> Date? {
-        firstString(in: object, keys: ["timestamp", "created_at", "createdAt"])
-            .flatMap(dateFormatter.date(from:))
+    private func timestamp(in object: [String: Any], dateFormatters: [ISO8601DateFormatter]) -> Date? {
+        guard let value = firstString(in: object, keys: ["timestamp", "created_at", "createdAt"]) else { return nil }
+        return dateFormatters.lazy.compactMap { $0.date(from: value) }.first
     }
 
     private func firstString(in object: [String: Any], keys: [String]) -> String? {
@@ -101,6 +111,25 @@ public struct CodexSessionParser: LocalAgentSessionParser {
             }
         }
         return nil
+    }
+
+    private func firstModel(in payload: [String: Any], info: [String: Any]) -> String? {
+        firstString(in: payload, keys: ["model", "model_name", "modelName"])
+            ?? JSONDictionary.dictionary(payload, "metadata").flatMap { firstString(in: $0, keys: ["model", "model_name", "modelName"]) }
+            ?? firstString(in: info, keys: ["model", "model_name", "modelName"])
+            ?? JSONDictionary.dictionary(info, "metadata").flatMap { firstString(in: $0, keys: ["model", "model_name", "modelName"]) }
+    }
+
+    private func fallbackSessionKey(from sourceURL: URL) -> String {
+        let lastPathComponent = sourceURL.deletingPathExtension().lastPathComponent
+        if !lastPathComponent.isEmpty { return lastPathComponent }
+        return sourceURL.path
+    }
+
+    private func makeDateFormatters() -> [ISO8601DateFormatter] {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return [fractional, ISO8601DateFormatter()]
     }
 }
 
@@ -163,6 +192,16 @@ private struct CodexTokenUsage {
             cacheWriteTokens: tokens.cacheWriteTokens,
             costUSDMicros: nil
         )
+    }
+
+    var hasAnyTokens: Bool {
+        let tokens = tokensWithTotalFallback
+        return (tokens.inputTokens ?? 0) > 0
+            || (tokens.outputTokens ?? 0) > 0
+            || (tokens.reasoningTokens ?? 0) > 0
+            || (tokens.cacheReadTokens ?? 0) > 0
+            || (tokens.cacheWriteTokens ?? 0) > 0
+            || (tokens.totalTokens ?? 0) > 0
     }
 
     func delta(from previous: CodexTokenUsage?) -> CodexTokenUsage {
