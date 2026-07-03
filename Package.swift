@@ -19,8 +19,18 @@ let package = Package(
     ],
     dependencies: [],
     targets: [
+        .systemLibrary(
+            name: "CSQLite",
+            providers: [
+                .brew(["sqlite"])
+            ]
+        ),
         .target(
-            name: "TokenMeterCore"
+            name: "TokenMeterCore",
+            dependencies: ["CSQLite"],
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
         ),
         .executableTarget(
             name: "TokenMeterApp",
