@@ -24,6 +24,12 @@ public struct SQLiteRow: Equatable {
         if case let .text(value)? = values[column] { return value }
         return nil
     }
+
+    public func double(_ column: String) -> Double? {
+        if case let .double(value)? = values[column] { return value }
+        if case let .int(value)? = values[column] { return Double(value) }
+        return nil
+    }
 }
 
 public final class SQLiteDatabase {
