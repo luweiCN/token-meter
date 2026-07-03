@@ -44,6 +44,10 @@ let package = Package(
         .testTarget(
             name: "TokenMeterCoreTests",
             dependencies: ["TokenMeterCore"]
+        ),
+        .testTarget(
+            name: "TokenMeterAppTests",
+            dependencies: ["TokenMeterApp", "TokenMeterCore"]
         )
     ]
 )
