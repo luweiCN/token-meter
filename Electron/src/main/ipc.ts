@@ -1,11 +1,25 @@
 import { ipcMain } from 'electron';
 
+import { openTokenMeterDatabase } from './database.js';
+import { SettingsRepository } from './settingsRepository.js';
+import { notifySwift } from './tokenMeterSocketClient.js';
+
 export function registerIpcHandlers() {
-  ipcMain.handle('settings:get', async () => ({ version: 0, providerOverrides: [] }));
-  ipcMain.handle('settings:update', async (_event, _patch, _expectedVersion) => ({ requestedVersion: 1, status: 'pending' }));
+  const settings = new SettingsRepository(openTokenMeterDatabase());
+
+  ipcMain.handle('settings:get', async () => settings.get());
+  ipcMain.handle('settings:update', async (_event, patch, expectedVersion) => {
+    const result = settings.update(patch, expectedVersion);
+    try {
+      await notifySwift('settingsChanged', { version: String(result.requestedVersion) });
+      return { ...result, status: 'applied' };
+    } catch {
+      return result;
+    }
+  });
   ipcMain.handle('dashboard:overview', async () => ({ providers: [], totalTokens: 0 }));
   ipcMain.handle('dashboard:dailyUsage', async () => []);
   ipcMain.handle('sessions:query', async () => ({ items: [], total: 0 }));
   ipcMain.handle('index:status', async () => ({ runs: [], roots: [] }));
-  ipcMain.handle('index:fullReindex', async () => ({ status: 'queued' }));
+  ipcMain.handle('index:fullReindex', async () => notifySwift('scanNow'));
 }

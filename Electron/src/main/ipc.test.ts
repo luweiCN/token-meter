@@ -2,7 +2,7 @@ import type { BrowserWindowConstructorOptions, IpcMain } from 'electron';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 type IpcHandle = IpcMain['handle'];
 
@@ -20,6 +20,38 @@ const mockElectron = vi.hoisted(() => ({
   exposedApis: [] as ExposedApi[],
   ipcHandlers: [] as RegisteredIpcHandler[],
   windowOptions: [] as BrowserWindowConstructorOptions[]
+}));
+
+const mockDatabase = vi.hoisted(() => ({
+  instance: { label: 'token-meter-test-db' }
+}));
+
+const mockSettingsRepository = vi.hoisted(() => ({
+  constructor: vi.fn(),
+  get: vi.fn(),
+  update: vi.fn()
+}));
+
+const mockSwiftClient = vi.hoisted(() => ({
+  notifySwift: vi.fn()
+}));
+
+vi.mock('./database.js', () => ({
+  openTokenMeterDatabase: vi.fn(() => mockDatabase.instance)
+}));
+
+vi.mock('./settingsRepository.js', () => ({
+  SettingsRepository: vi.fn(function SettingsRepositoryMock(database: unknown) {
+    mockSettingsRepository.constructor(database);
+    return {
+      get: mockSettingsRepository.get,
+      update: mockSettingsRepository.update
+    };
+  })
+}));
+
+vi.mock('./tokenMeterSocketClient.js', () => ({
+  notifySwift: mockSwiftClient.notifySwift
 }));
 
 vi.mock('electron', () => ({
@@ -72,10 +104,29 @@ const allowedPreloadApiShape: Record<string, string[]> = {
   settings: ['get', 'update']
 };
 
-describe('Electron secure scaffold', () => {
-  it('registerIpcHandlers registers only the renderer IPC channel whitelist', () => {
-    mockElectron.ipcHandlers.length = 0;
+function registerAndFindHandler(channel: string) {
+  registerIpcHandlers();
+  const handler = mockElectron.ipcHandlers.find((entry) => entry.channel === channel);
+  expect(handler).toBeDefined();
+  return handler?.listener as Parameters<IpcHandle>[1];
+}
 
+describe('Electron secure scaffold', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockElectron.ipcHandlers.length = 0;
+    mockElectron.windowOptions.length = 0;
+    mockSettingsRepository.get.mockReturnValue({
+      version: 3,
+      menuBarPrimaryProviderId: 'codex',
+      autoRefreshSeconds: 300,
+      enabledAgentKinds: ['claudeCode', 'codex'],
+      providerOverrides: []
+    });
+    mockSettingsRepository.update.mockReturnValue({ requestedVersion: 4, status: 'pending' });
+  });
+
+  it('registerIpcHandlers registers only the renderer IPC channel whitelist', () => {
     registerIpcHandlers();
 
     const registeredChannels = mockElectron.ipcHandlers.map((entry) => entry.channel);
@@ -140,5 +191,32 @@ describe('Electron secure scaffold', () => {
     for (const [capability, pattern] of Object.entries(forbiddenPreloadImports)) {
       expect(preloadSource, `${capability} must not be reachable from preload or renderer API`).not.toMatch(pattern);
     }
+  });
+
+  it('settings:update writes through SettingsRepository and reports applied after Swift acknowledges the change', async () => {
+    const patch = {
+      menuBarPrimaryProviderId: 'claude-code',
+      autoRefreshSeconds: 60,
+      enabledAgentKinds: ['claudeCode', 'omp']
+    };
+    mockSwiftClient.notifySwift.mockResolvedValue({ ok: true, result: { status: 'settingsApplied' } });
+    const updateHandler = registerAndFindHandler('settings:update');
+
+    await expect(updateHandler({} as never, patch, 3)).resolves.toEqual({ requestedVersion: 4, status: 'applied' });
+
+    expect(mockSettingsRepository.constructor).toHaveBeenCalledWith(mockDatabase.instance);
+    expect(mockSettingsRepository.update).toHaveBeenCalledWith(patch, 3);
+    expect(mockSwiftClient.notifySwift).toHaveBeenCalledWith('settingsChanged', { version: '4' });
+  });
+
+  it('settings:update still returns the pending repository result when Swift notification fails', async () => {
+    const patch = { autoRefreshSeconds: 60 };
+    mockSwiftClient.notifySwift.mockRejectedValue(new Error('Swift IPC unavailable'));
+    const updateHandler = registerAndFindHandler('settings:update');
+
+    await expect(updateHandler({} as never, patch, 3)).resolves.toEqual({ requestedVersion: 4, status: 'pending' });
+
+    expect(mockSettingsRepository.update).toHaveBeenCalledWith(patch, 3);
+    expect(mockSwiftClient.notifySwift).toHaveBeenCalledWith('settingsChanged', { version: '4' });
   });
 });
