@@ -61,10 +61,10 @@ public struct CodexSessionParser: LocalAgentSessionParser {
                 }
 
                 let usageForLine: CodexTokenUsage?
-                if let lastUsageObject = JSONDictionary.dictionary(info, "last_token_usage") {
+                if let totalUsage {
+                    usageForLine = totalUsage
+                } else if let lastUsageObject = JSONDictionary.dictionary(info, "last_token_usage") {
                     usageForLine = CodexTokenUsage(lastUsageObject)
-                } else if let totalUsage {
-                    usageForLine = totalUsage.delta(from: previousTotalUsage)
                 } else {
                     usageForLine = nil
                 }

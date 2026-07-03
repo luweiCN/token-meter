@@ -26,7 +26,7 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.rawMeta, ["source": "codex"])
     }
 
-    func testUsesLastTokenUsageBeforeCumulativeTotals() throws {
+    func testUsesCumulativeTotalsAsLatestSessionUsageWhenPresent() throws {
         let lines = [
             JSONLLine(text: #"{"type":"session_meta","payload":{"id":"session-last","cwd":"/repo"}}"#, offset: 0, nextOffset: 1),
             JSONLLine(text: #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":25,"output_tokens":5,"cached_input_tokens":3,"reasoning_output_tokens":2},"total_token_usage":{"input_tokens":125,"output_tokens":55,"cached_input_tokens":30,"reasoning_output_tokens":12}}}}"#, offset: 1, nextOffset: 2)
@@ -34,15 +34,15 @@ final class CodexSessionParserTests: XCTestCase {
 
         let parsed = try CodexSessionParser().parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/codex.jsonl"))
 
-        XCTAssertEqual(parsed.usage?.inputTokens, 25)
-        XCTAssertEqual(parsed.usage?.outputTokens, 5)
-        XCTAssertEqual(parsed.usage?.cacheReadTokens, 3)
-        XCTAssertEqual(parsed.usage?.reasoningTokens, 2)
+        XCTAssertEqual(parsed.usage?.inputTokens, 125)
+        XCTAssertEqual(parsed.usage?.outputTokens, 55)
+        XCTAssertEqual(parsed.usage?.cacheReadTokens, 30)
+        XCTAssertEqual(parsed.usage?.reasoningTokens, 12)
         XCTAssertEqual(parsed.usageSequence, 1)
         XCTAssertEqual(parsed.sourceOffset, 1)
     }
 
-    func testComputesDeltaWhenOnlyCumulativeTotalsArePresent() throws {
+    func testUsesLatestCumulativeTotalsWhenOnlyCumulativeTotalsArePresent() throws {
         let lines = [
             JSONLLine(text: #"{"type":"session_meta","payload":{"id":"session-delta","cwd":"/repo"}}"#, offset: 0, nextOffset: 1),
             JSONLLine(text: #"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":20}}}}"#, offset: 1, nextOffset: 2),
@@ -51,8 +51,8 @@ final class CodexSessionParserTests: XCTestCase {
 
         let parsed = try CodexSessionParser().parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/codex.jsonl"))
 
-        XCTAssertEqual(parsed.usage?.inputTokens, 50)
-        XCTAssertEqual(parsed.usage?.outputTokens, 10)
+        XCTAssertEqual(parsed.usage?.inputTokens, 150)
+        XCTAssertEqual(parsed.usage?.outputTokens, 30)
         XCTAssertEqual(parsed.usageSequence, 2)
         XCTAssertEqual(parsed.sourceOffset, 2)
     }
