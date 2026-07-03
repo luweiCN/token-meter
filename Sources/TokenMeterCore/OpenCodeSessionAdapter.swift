@@ -101,7 +101,7 @@ public final class OpenCodeSessionAdapter {
             )
         }
 
-        var sessions: [ParsedAgentSession] = []
+        var sessionsByKey: [String: ParsedAgentSession] = [:]
         var seenMessageIds = Set<String>()
         for row in rows {
             guard let data = row.string("data"),
@@ -109,8 +109,13 @@ public final class OpenCodeSessionAdapter {
                   seenMessageIds.insert(parsed.messageId).inserted else {
                 continue
             }
-            sessions.append(parsed.session)
+            sessionsByKey[parsed.session.sessionKey] = mergeMessageSession(
+                sessionsByKey[parsed.session.sessionKey],
+                with: parsed.session
+            )
         }
+
+        let sessions = Array(sessionsByKey.values)
 
         return sessions.sorted { lhs, rhs in
             let lhsDate = lhs.updatedAt ?? lhs.startedAt ?? Date.distantPast
@@ -147,7 +152,7 @@ public final class OpenCodeSessionAdapter {
         let updatedMilliseconds = row.double("time_updated") ?? createdMilliseconds
         let createdAt = createdMilliseconds.map { Date(timeIntervalSince1970: $0 / 1000) }
         let updatedAt = updatedMilliseconds.map { Date(timeIntervalSince1970: $0 / 1000) }
-        let sequence = createdMilliseconds.map { Int64($0.rounded()) } ?? updatedMilliseconds.map { Int64($0.rounded()) } ?? 1
+        let sequence = updatedMilliseconds.map { Int64($0.rounded()) } ?? createdMilliseconds.map { Int64($0.rounded()) } ?? 1
         let provider = stringValue(dictionary["providerID"])
         let model = stringValue(dictionary["modelID"])
 
@@ -168,6 +173,63 @@ public final class OpenCodeSessionAdapter {
                 rawMeta: rawMeta(provider: provider, agent: "opencode")
             )
         )
+    }
+
+    private func mergeMessageSession(_ current: ParsedAgentSession?, with next: ParsedAgentSession) -> ParsedAgentSession {
+        guard let current else { return next }
+        let latest = isLater(next, than: current) ? next : current
+        return ParsedAgentSession(
+            sourceKind: .opencodeSQLite,
+            sessionKey: current.sessionKey,
+            projectPath: current.projectPath ?? next.projectPath,
+            modelName: latest.modelName ?? current.modelName ?? next.modelName,
+            cliVersion: nil,
+            startedAt: earliest(current.startedAt, next.startedAt),
+            updatedAt: latest.updatedAt ?? current.updatedAt ?? next.updatedAt,
+            usage: mergeUsage(current.usage, next.usage),
+            usageSequence: max(current.usageSequence, next.usageSequence),
+            sourceOffset: nil,
+            rawMeta: latest.rawMeta
+        )
+    }
+
+    private func mergeUsage(_ lhs: ParsedSessionUsage?, _ rhs: ParsedSessionUsage?) -> ParsedSessionUsage? {
+        guard lhs != nil || rhs != nil else { return nil }
+        return ParsedSessionUsage(
+            inputTokens: sum(lhs?.inputTokens, rhs?.inputTokens),
+            outputTokens: sum(lhs?.outputTokens, rhs?.outputTokens),
+            reasoningTokens: sum(lhs?.reasoningTokens, rhs?.reasoningTokens),
+            cacheReadTokens: sum(lhs?.cacheReadTokens, rhs?.cacheReadTokens),
+            cacheWriteTokens: sum(lhs?.cacheWriteTokens, rhs?.cacheWriteTokens),
+            costUSDMicros: sum(lhs?.costUSDMicros, rhs?.costUSDMicros)
+        )
+    }
+
+    private func sum(_ lhs: Int64?, _ rhs: Int64?) -> Int64? {
+        guard lhs != nil || rhs != nil else { return nil }
+        return (lhs ?? 0) + (rhs ?? 0)
+    }
+
+    private func earliest(_ lhs: Date?, _ rhs: Date?) -> Date? {
+        switch (lhs, rhs) {
+        case let (lhs?, rhs?):
+            return min(lhs, rhs)
+        case let (lhs?, nil):
+            return lhs
+        case let (nil, rhs?):
+            return rhs
+        case (nil, nil):
+            return nil
+        }
+    }
+
+    private func isLater(_ lhs: ParsedAgentSession, than rhs: ParsedAgentSession) -> Bool {
+        let lhsDate = lhs.updatedAt ?? lhs.startedAt ?? Date.distantPast
+        let rhsDate = rhs.updatedAt ?? rhs.startedAt ?? Date.distantPast
+        if lhsDate == rhsDate {
+            return lhs.usageSequence >= rhs.usageSequence
+        }
+        return lhsDate > rhsDate
     }
 
     private func tableExists(_ tableName: String) throws -> Bool {

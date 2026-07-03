@@ -210,6 +210,70 @@ final class OpenCodeSessionAdapterTests: XCTestCase {
         XCTAssertEqual(sessions[0].updatedAt, Date(timeIntervalSince1970: 1_783_036_900))
     }
 
+    func testAggregatesMultipleMessageRowsPerSession() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try database.execute("""
+        CREATE TABLE message (
+          id TEXT PRIMARY KEY,
+          session_id TEXT,
+          time_updated INTEGER,
+          data TEXT
+        )
+        """)
+        try database.execute(
+            "INSERT INTO message(id, session_id, time_updated, data) VALUES (?, ?, ?, ?)",
+            [
+                .text("msg-1"),
+                .text("session-aggregate"),
+                .int(1_783_036_800_000),
+                .text("""
+                {
+                  "id": "msg-1",
+                  "sessionID": "session-aggregate",
+                  "providerID": "anthropic",
+                  "modelID": "claude-sonnet-4",
+                  "time": { "created": 1783036800000 },
+                  "tokens": { "input": 10, "output": 20, "cache": { "read": 3, "write": 4 } },
+                  "cost": 0.001001
+                }
+                """)
+            ]
+        )
+        try database.execute(
+            "INSERT INTO message(id, session_id, time_updated, data) VALUES (?, ?, ?, ?)",
+            [
+                .text("msg-2"),
+                .text("session-aggregate"),
+                .int(1_783_036_900_000),
+                .text("""
+                {
+                  "id": "msg-2",
+                  "sessionID": "session-aggregate",
+                  "providerID": "anthropic",
+                  "modelID": "claude-sonnet-4",
+                  "time": { "created": 1783036810000 },
+                  "tokens": { "input": 5, "output": 7, "cache": { "read": 1, "write": 2 } },
+                  "cost": 0.002002
+                }
+                """)
+            ]
+        )
+
+        let sessions = try OpenCodeSessionAdapter(sourceDatabase: database).changedSessions(after: nil)
+
+        XCTAssertEqual(sessions.count, 1)
+        XCTAssertEqual(sessions[0].sessionKey, "session-aggregate")
+        XCTAssertEqual(sessions[0].startedAt, Date(timeIntervalSince1970: 1_783_036_800))
+        XCTAssertEqual(sessions[0].updatedAt, Date(timeIntervalSince1970: 1_783_036_900))
+        XCTAssertEqual(sessions[0].usage?.inputTokens, 15)
+        XCTAssertEqual(sessions[0].usage?.outputTokens, 27)
+        XCTAssertEqual(sessions[0].usage?.cacheReadTokens, 4)
+        XCTAssertEqual(sessions[0].usage?.cacheWriteTokens, 6)
+        XCTAssertEqual(sessions[0].usage?.costUSDMicros, 3_003)
+        XCTAssertEqual(sessions[0].usageSequence, 1_783_036_900_000)
+        XCTAssertEqual(sessions[0].rawMeta, ["source": "opencode", "provider": "anthropic", "agent": "opencode"])
+    }
+
     func testPrefersMessageTableWhenBothTablesHaveSameSession() throws {
         let database = try SQLiteDatabase(path: ":memory:")
         try database.execute("""
