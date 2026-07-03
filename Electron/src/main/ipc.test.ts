@@ -32,6 +32,21 @@ const mockSettingsRepository = vi.hoisted(() => ({
   update: vi.fn()
 }));
 
+const mockDashboardRepository = vi.hoisted(() => ({
+  constructor: vi.fn(),
+  dailyUsage: vi.fn()
+}));
+
+const mockSessionsRepository = vi.hoisted(() => ({
+  constructor: vi.fn(),
+  query: vi.fn()
+}));
+
+const mockIndexStatusRepository = vi.hoisted(() => ({
+  constructor: vi.fn(),
+  status: vi.fn()
+}));
+
 const mockSwiftClient = vi.hoisted(() => ({
   notifySwift: vi.fn()
 }));
@@ -46,6 +61,33 @@ vi.mock('./settingsRepository.js', () => ({
     return {
       get: mockSettingsRepository.get,
       update: mockSettingsRepository.update
+    };
+  })
+}));
+
+vi.mock('./dashboardRepository.js', () => ({
+  DashboardRepository: vi.fn(function DashboardRepositoryMock(database: unknown) {
+    mockDashboardRepository.constructor(database);
+    return {
+      dailyUsage: mockDashboardRepository.dailyUsage
+    };
+  })
+}));
+
+vi.mock('./sessionsRepository.js', () => ({
+  SessionsRepository: vi.fn(function SessionsRepositoryMock(database: unknown) {
+    mockSessionsRepository.constructor(database);
+    return {
+      query: mockSessionsRepository.query
+    };
+  })
+}));
+
+vi.mock('./indexStatusRepository.js', () => ({
+  IndexStatusRepository: vi.fn(function IndexStatusRepositoryMock(database: unknown) {
+    mockIndexStatusRepository.constructor(database);
+    return {
+      status: mockIndexStatusRepository.status
     };
   })
 }));
@@ -124,6 +166,11 @@ describe('Electron secure scaffold', () => {
       providerOverrides: []
     });
     mockSettingsRepository.update.mockReturnValue({ requestedVersion: 4, status: 'pending' });
+    mockDashboardRepository.dailyUsage.mockReturnValue([
+      { usageDate: '2026-07-03', providerId: 'codex', sourceKind: 'codex_jsonl', tokensTotal: 185 }
+    ]);
+    mockSessionsRepository.query.mockReturnValue({ items: [{ sessionKey: 'codex-session' }], total: 1 });
+    mockIndexStatusRepository.status.mockReturnValue({ roots: [{ id: 1, displayName: 'Codex' }], runs: [], failedFiles: [] });
   });
 
   it('registerIpcHandlers registers only the renderer IPC channel whitelist', () => {
@@ -218,5 +265,40 @@ describe('Electron secure scaffold', () => {
 
     expect(mockSettingsRepository.update).toHaveBeenCalledWith(patch, 3);
     expect(mockSwiftClient.notifySwift).toHaveBeenCalledWith('settingsChanged', { version: '4' });
+  });
+
+  it('dashboard:dailyUsage reads through DashboardRepository with renderer filter args', async () => {
+    const filter = { from: '2026-07-01', to: '2026-07-04', providerId: 'codex', projectId: 10 };
+    const dailyUsageHandler = registerAndFindHandler('dashboard:dailyUsage');
+
+    await expect(dailyUsageHandler({} as never, filter)).resolves.toEqual([
+      { usageDate: '2026-07-03', providerId: 'codex', sourceKind: 'codex_jsonl', tokensTotal: 185 }
+    ]);
+
+    expect(mockDashboardRepository.constructor).toHaveBeenCalledWith(mockDatabase.instance);
+    expect(mockDashboardRepository.dailyUsage).toHaveBeenCalledWith(filter);
+  });
+
+  it('sessions:query reads through SessionsRepository with renderer filter args', async () => {
+    const filter = { providerId: 'codex', limit: 25, offset: 50 };
+    const sessionsHandler = registerAndFindHandler('sessions:query');
+
+    await expect(sessionsHandler({} as never, filter)).resolves.toEqual({ items: [{ sessionKey: 'codex-session' }], total: 1 });
+
+    expect(mockSessionsRepository.constructor).toHaveBeenCalledWith(mockDatabase.instance);
+    expect(mockSessionsRepository.query).toHaveBeenCalledWith(filter);
+  });
+
+  it('index:status reads through IndexStatusRepository without renderer-supplied arguments', async () => {
+    const indexStatusHandler = registerAndFindHandler('index:status');
+
+    await expect(indexStatusHandler({} as never, { ignored: true })).resolves.toEqual({
+      roots: [{ id: 1, displayName: 'Codex' }],
+      runs: [],
+      failedFiles: []
+    });
+
+    expect(mockIndexStatusRepository.constructor).toHaveBeenCalledWith(mockDatabase.instance);
+    expect(mockIndexStatusRepository.status).toHaveBeenCalledWith();
   });
 });
