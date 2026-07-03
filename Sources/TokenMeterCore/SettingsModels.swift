@@ -68,6 +68,10 @@ public struct SettingsPatch: Codable, Equatable {
         self.autoRefreshSeconds = autoRefreshSeconds
         self.enabledAgentKinds = enabledAgentKinds
     }
+
+    var hasChanges: Bool {
+        menuBarPrimaryProviderId != nil || autoRefreshSeconds != nil || enabledAgentKinds != nil
+    }
 }
 
 public struct SettingsApplyRequest: Codable, Equatable {
@@ -83,4 +87,5 @@ public struct SettingsApplyRequest: Codable, Equatable {
 public enum SettingsStoreError: Error, Equatable {
     case staleVersion(expected: Int, actual: Int)
     case invalidValue(String)
+    case invalidStoredValue(String)
 }

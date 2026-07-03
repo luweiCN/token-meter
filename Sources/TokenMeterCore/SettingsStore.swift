@@ -17,7 +17,7 @@ public final class SettingsStore {
         do {
             try set("menuBar.primaryProviderId", value: .text(config.menuBar.primaryProviderId ?? ""), version: 1, updatedBy: .importer)
             try set("scan.autoRefreshSeconds", value: .int(300), version: 1, updatedBy: .importer)
-            try set("filters.enabledAgentKinds", value: .text(jsonString(["claudeCode", "codex", "opencode", "omp"])), version: 1, updatedBy: .importer)
+            try setJSON("filters.enabledAgentKinds", json: jsonString(["claudeCode", "codex", "opencode", "omp"]), version: 1, updatedBy: .importer)
             for (index, provider) in config.providers.enumerated() {
                 try database.execute(
                     """
@@ -51,7 +51,7 @@ public final class SettingsStore {
         let version = Int(try database.query("SELECT coalesce(max(version), 0) AS version FROM settings")[0].int("version") ?? 0)
         let primaryProviderId = try settingString("menuBar.primaryProviderId")
         let autoRefreshSeconds = Int(try settingInt("scan.autoRefreshSeconds") ?? 300)
-        let enabledAgentKinds = decodeStringArray(try settingString("filters.enabledAgentKinds") ?? "[]")
+        let enabledAgentKinds = try settingStringArray("filters.enabledAgentKinds") ?? []
         let providerRows = try database.query(
             """
             SELECT provider_id, enabled, display_name, menu_rank, show_in_menu_bar, show_in_charts
@@ -84,14 +84,17 @@ public final class SettingsStore {
         expectedVersion: Int,
         updatedBy: SettingsUpdatedBy
     ) throws -> SettingsApplyRequest {
-        let currentVersion = try settingsVersion()
-        guard currentVersion == expectedVersion else {
-            throw SettingsStoreError.staleVersion(expected: expectedVersion, actual: currentVersion)
+        guard patch.hasChanges else {
+            throw SettingsStoreError.invalidValue("settings patch must change at least one setting")
         }
         let nextVersion = expectedVersion + 1
 
         try database.execute("BEGIN IMMEDIATE")
         do {
+            let currentVersion = try settingsVersion()
+            guard currentVersion == expectedVersion else {
+                throw SettingsStoreError.staleVersion(expected: expectedVersion, actual: currentVersion)
+            }
             if let primaryProviderId = patch.menuBarPrimaryProviderId {
                 try set("menuBar.primaryProviderId", value: .text(primaryProviderId), version: nextVersion, updatedBy: updatedBy)
             }
@@ -102,7 +105,7 @@ public final class SettingsStore {
                 try set("scan.autoRefreshSeconds", value: .int(Int64(autoRefreshSeconds)), version: nextVersion, updatedBy: updatedBy)
             }
             if let enabledAgentKinds = patch.enabledAgentKinds {
-                try set("filters.enabledAgentKinds", value: .text(jsonString(enabledAgentKinds)), version: nextVersion, updatedBy: updatedBy)
+                try setJSON("filters.enabledAgentKinds", json: jsonString(enabledAgentKinds), version: nextVersion, updatedBy: updatedBy)
             }
             try database.execute("COMMIT")
         } catch {
@@ -143,6 +146,16 @@ public final class SettingsStore {
         )
     }
 
+    private func setJSON(_ key: String, json: String, version: Int, updatedBy: SettingsUpdatedBy) throws {
+        try database.execute(
+            """
+            INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [.text(key), .text(json), .text("json"), .int(Int64(version)), .text(updatedBy.rawValue)]
+        )
+    }
+
     private func settingString(_ key: String) throws -> String? {
         guard let row = try database.query(
             "SELECT value_json, value_type FROM settings WHERE key = ?",
@@ -158,6 +171,19 @@ public final class SettingsStore {
             [.text(key)]
         ).first else { return nil }
         return row.string("value_json").flatMap(Int64.init)
+    }
+
+    private func settingStringArray(_ key: String) throws -> [String]? {
+        guard let row = try database.query(
+            "SELECT value_json, value_type FROM settings WHERE key = ?",
+            [.text(key)]
+        ).first else { return nil }
+        guard row.string("value_type") == "json", let value = row.string("value_json") else { return nil }
+        do {
+            return try decoder.decode([String].self, from: Data(value.utf8))
+        } catch {
+            throw SettingsStoreError.invalidStoredValue(key)
+        }
     }
 
     private func jsonString<T: Encodable>(_ value: T) -> String {
