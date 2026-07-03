@@ -37,11 +37,14 @@ final class TokenMeterIPCServer {
 
         let parameters = NWParameters.tcp
         parameters.allowLocalEndpointReuse = true
-        guard let listenerPort = NWEndpoint.Port(rawValue: port) else {
+        guard let listenerPort = NWEndpoint.Port(rawValue: port),
+              let loopbackAddress = IPv4Address("127.0.0.1")
+        else {
             throw TokenMeterIPCServerError.invalidPort(port)
         }
+        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(loopbackAddress), port: listenerPort)
 
-        let listener = try NWListener(using: parameters, on: listenerPort)
+        let listener = try NWListener(using: parameters)
         listener.newConnectionHandler = { [weak self] connection in
             Task { @MainActor in
                 self?.handle(connection)
