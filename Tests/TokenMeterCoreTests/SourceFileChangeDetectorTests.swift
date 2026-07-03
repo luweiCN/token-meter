@@ -43,6 +43,25 @@ final class SourceFileChangeDetectorTests: XCTestCase {
         )
     }
 
+    func testTreatsGrowthWithoutTailHashAsRewrite() {
+        let previous = SourceFileFingerprint(
+            dev: 1,
+            inode: 10,
+            sizeBytes: 100,
+            mtimeNanoseconds: 1_000,
+            tailHash: nil
+        )
+        let current = SourceFileFingerprint(
+            dev: 1,
+            inode: 10,
+            sizeBytes: 150,
+            mtimeNanoseconds: 2_000,
+            tailHash: nil
+        )
+
+        XCTAssertEqual(SourceFileChangeDetector.change(previous: previous, current: current), .rewritten)
+    }
+
     func testClassifiesMovedWhenIdentityChangesButTailMatches() {
         let previous = SourceFileFingerprint(
             dev: 1,

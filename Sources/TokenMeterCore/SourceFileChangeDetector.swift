@@ -19,6 +19,7 @@ public enum SourceFileChangeDetector {
         }
 
         if current.sizeBytes >= previous.sizeBytes,
+           previous.tailHash != nil,
            previous.tailHash == current.tailHash {
             return .appended
         }
