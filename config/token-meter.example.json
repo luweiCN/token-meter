@@ -1,0 +1,45 @@
+{
+  "menuBar": {
+    "primaryProviderId": "codex"
+  },
+  "providers": [
+    {
+      "id": "codex",
+      "type": "codex",
+      "displayName": "Codex",
+      "enabled": true
+    },
+    {
+      "id": "claude-code",
+      "type": "claudeCode",
+      "displayName": "Claude Code",
+      "enabled": true
+    },
+    {
+      "id": "opencode-go",
+      "type": "opencodeGo",
+      "displayName": "OpenCode Go",
+      "enabled": false
+    },
+    {
+      "id": "zhipu",
+      "type": "zhipu",
+      "displayName": "智谱",
+      "enabled": true,
+      "endpoint": "https://bigmodel.cn/api/monitor/usage/quota/limit",
+      "credential": {
+        "environmentVariable": "ZHIPU_API_KEY"
+      }
+    },
+    {
+      "id": "zhipu-http",
+      "type": "zhipu",
+      "displayName": "智谱 HTTP",
+      "enabled": false,
+      "endpoint": "https://bigmodel.cn/api/monitor/usage/quota/limit",
+      "credential": {
+        "environmentVariable": "ZHIPU_API_KEY"
+      }
+    }
+  ]
+}

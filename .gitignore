@@ -1,0 +1,10 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+build/
+
+*.xcuserdata/
+*.xcworkspace/xcuserdata/
+
+config/token-meter.local.json
