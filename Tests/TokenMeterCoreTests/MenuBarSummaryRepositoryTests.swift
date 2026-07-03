@@ -55,6 +55,53 @@ final class MenuBarSummaryRepositoryTests: XCTestCase {
         XCTAssertEqual(summary?.totalTokens, 34)
     }
 
+    func testReadsLatestObservedUsageWhenSessionTimestampIsMissing() throws {
+        let database = try migratedMenuSummaryDatabase()
+        let usageRepository = LocalAgentUsageRepository(database: database)
+        try usageRepository.upsert(
+            makeMenuSummarySession(
+                sessionKey: "old-with-session-time",
+                modelName: "old-model",
+                updatedAt: "2000-01-01T00:00:00Z",
+                inputTokens: 1,
+                outputTokens: 2
+            ),
+            scanRootId: 1,
+            sourceFileId: nil,
+            runId: nil
+        )
+        try usageRepository.upsert(
+            ParsedAgentSession(
+                sourceKind: .codexJSONL,
+                sessionKey: "new-without-session-time",
+                projectPath: "/repo",
+                modelName: "observed-model",
+                cliVersion: nil,
+                startedAt: nil,
+                updatedAt: nil,
+                usage: ParsedSessionUsage(
+                    inputTokens: 40,
+                    outputTokens: 2,
+                    reasoningTokens: nil,
+                    cacheReadTokens: nil,
+                    cacheWriteTokens: nil,
+                    costUSDMicros: nil
+                ),
+                usageSequence: 1,
+                sourceOffset: 4242,
+                rawMeta: [:]
+            ),
+            scanRootId: 1,
+            sourceFileId: nil,
+            runId: nil
+        )
+
+        let summary = try MenuBarSummaryRepository(database: database).primarySummary(providerId: "codex")
+
+        XCTAssertEqual(summary?.modelName, "observed-model")
+        XCTAssertEqual(summary?.totalTokens, 42)
+    }
+
     func testDoesNotReturnClosedSessionSummary() throws {
         let database = try migratedMenuSummaryDatabase()
         let usageRepository = LocalAgentUsageRepository(database: database)

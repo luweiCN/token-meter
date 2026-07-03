@@ -25,7 +25,7 @@ public final class MenuBarSummaryRepository {
             JOIN session_usage_latest latest ON latest.session_id = s.id
             JOIN session_usage u ON u.id = latest.session_usage_id
             WHERE s.provider_id = ? AND s.status = 'active'
-            ORDER BY s.session_updated_at DESC, u.observed_at DESC, u.id DESC
+            ORDER BY u.observed_at DESC, s.session_updated_at DESC, u.id DESC
             LIMIT 1
             """,
             [.text(providerId)]

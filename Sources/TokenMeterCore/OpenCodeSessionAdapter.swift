@@ -99,28 +99,20 @@ public final class OpenCodeSessionAdapter {
 
     private func changedMessageSessions(after highWaterMark: String?) throws -> [ParsedAgentSession] {
         let hasUpdatedColumn = try columnExists(table: "message", column: "time_updated")
-        let rows: [SQLiteRow]
-        if hasUpdatedColumn {
-            let usesNumericTimestamp = try columnUsesNumericAffinity(table: "message", column: "time_updated")
-            rows = try sourceDatabase.query(
-                """
-                SELECT id, session_id, time_updated, data
-                FROM message
-                WHERE (? IS NULL OR time_updated > ?)
-                ORDER BY time_updated ASC, id ASC
-                """,
-                highWaterParameters(highWaterMark, numeric: usesNumericTimestamp)
-            )
-        } else {
-            rows = try sourceDatabase.query(
-                """
-                SELECT id, session_id, json_extract(data, '$.time.created') AS time_updated, data
-                FROM message
-                WHERE (? IS NULL OR json_extract(data, '$.time.created') > ?)
-                ORDER BY json_extract(data, '$.time.created') ASC, id ASC
-                """,
-                highWaterParameters(highWaterMark, numeric: true)
-            )
+        let changedRows = try changedMessageRows(after: highWaterMark, hasUpdatedColumn: hasUpdatedColumn)
+
+        var changedSessionKeys = Set<String>()
+        for row in changedRows {
+            guard let data = row.string("data"),
+                  let parsed = parseMessageRow(row: row, data: data) else {
+                continue
+            }
+            changedSessionKeys.insert(parsed.session.sessionKey)
+        }
+
+        var rows: [SQLiteRow] = []
+        for sessionKey in changedSessionKeys.sorted() {
+            rows.append(contentsOf: try messageRows(for: sessionKey, hasUpdatedColumn: hasUpdatedColumn))
         }
 
         var sessionsByKey: [String: ParsedAgentSession] = [:]
@@ -147,6 +139,46 @@ public final class OpenCodeSessionAdapter {
             }
             return lhsDate < rhsDate
         }
+    }
+
+    private func changedMessageRows(after highWaterMark: String?, hasUpdatedColumn: Bool) throws -> [SQLiteRow] {
+        if hasUpdatedColumn {
+            let usesNumericTimestamp = try columnUsesNumericAffinity(table: "message", column: "time_updated")
+            return try sourceDatabase.query(
+                """
+                SELECT id, session_id, time_updated, data
+                FROM message
+                WHERE (? IS NULL OR time_updated > ?)
+                ORDER BY time_updated ASC, id ASC
+                """,
+                highWaterParameters(highWaterMark, numeric: usesNumericTimestamp)
+            )
+        }
+
+        return try sourceDatabase.query(
+            """
+            SELECT id, session_id, json_extract(data, '$.time.created') AS time_updated, data
+            FROM message
+            WHERE (? IS NULL OR json_extract(data, '$.time.created') > ?)
+            ORDER BY json_extract(data, '$.time.created') ASC, id ASC
+            """,
+            highWaterParameters(highWaterMark, numeric: true)
+        )
+    }
+
+    private func messageRows(for sessionKey: String, hasUpdatedColumn: Bool) throws -> [SQLiteRow] {
+        let updatedColumn = hasUpdatedColumn ? "time_updated" : "json_extract(data, '$.time.created') AS time_updated"
+        let updatedOrder = hasUpdatedColumn ? "time_updated" : "json_extract(data, '$.time.created')"
+        return try sourceDatabase.query(
+            """
+            SELECT id, session_id, \(updatedColumn), data
+            FROM message
+            WHERE session_id = ?
+               OR (json_valid(data) AND json_extract(data, '$.sessionID') = ?)
+            ORDER BY \(updatedOrder) ASC, id ASC
+            """,
+            [.text(sessionKey), .text(sessionKey)]
+        )
     }
 
     private func parseMessageRow(row: SQLiteRow, data: String) -> ParsedMessageSession? {
