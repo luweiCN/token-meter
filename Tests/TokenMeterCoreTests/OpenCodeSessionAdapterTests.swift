@@ -125,6 +125,91 @@ final class OpenCodeSessionAdapterTests: XCTestCase {
         })
     }
 
+    func testUsesMessageUpdatedTimeForHighWaterFiltering() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try database.execute("""
+        CREATE TABLE message (
+          id TEXT PRIMARY KEY,
+          session_id TEXT,
+          time_updated INTEGER,
+          data TEXT
+        )
+        """)
+        try database.execute(
+            "INSERT INTO message(id, session_id, time_updated, data) VALUES (?, ?, ?, ?)",
+            [
+                .text("msg-backfilled"),
+                .text("session-backfilled"),
+                .int(1_783_036_900_000),
+                .text("""
+                {
+                  "id": "msg-backfilled",
+                  "sessionID": "session-backfilled",
+                  "providerID": "anthropic",
+                  "modelID": "claude-sonnet-4",
+                  "time": { "created": 1783036800000 },
+                  "tokens": { "input": 15, "output": 25, "cache": { "read": 7, "write": 3 } },
+                  "cost": 0.004321
+                }
+                """)
+            ]
+        )
+
+        let sessions = try OpenCodeSessionAdapter(sourceDatabase: database).changedSessions(after: "1783036850000")
+
+        XCTAssertEqual(sessions.count, 1)
+        XCTAssertEqual(sessions[0].sessionKey, "session-backfilled")
+        XCTAssertEqual(sessions[0].startedAt, Date(timeIntervalSince1970: 1_783_036_800))
+        XCTAssertEqual(sessions[0].updatedAt, Date(timeIntervalSince1970: 1_783_036_900))
+    }
+
+    func testReadsLegacySessionIntegerMillisecondTimestamps() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try database.execute("""
+        CREATE TABLE session (
+          id TEXT PRIMARY KEY,
+          directory TEXT,
+          model TEXT,
+          agent TEXT,
+          time_created INTEGER,
+          time_updated INTEGER,
+          tokens_input INTEGER,
+          tokens_output INTEGER,
+          tokens_reasoning INTEGER,
+          tokens_cache_read INTEGER,
+          tokens_cache_write INTEGER,
+          cost REAL
+        )
+        """)
+        try database.execute(
+            """
+            INSERT INTO session(id, directory, model, agent, time_created, time_updated, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, cost)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                .text("s-int"),
+                .text("/repo"),
+                .text("claude-sonnet"),
+                .text("build"),
+                .int(1_783_036_800_000),
+                .int(1_783_036_900_000),
+                .int(10),
+                .int(20),
+                .int(3),
+                .int(4),
+                .int(5),
+                .double(0.012345)
+            ]
+        )
+
+        let sessions = try OpenCodeSessionAdapter(sourceDatabase: database).changedSessions(after: "2026-07-03T00:00:50Z")
+
+        XCTAssertEqual(sessions.count, 1)
+        XCTAssertEqual(sessions[0].sessionKey, "s-int")
+        XCTAssertEqual(sessions[0].startedAt, Date(timeIntervalSince1970: 1_783_036_800))
+        XCTAssertEqual(sessions[0].updatedAt, Date(timeIntervalSince1970: 1_783_036_900))
+    }
+
     func testPrefersMessageTableWhenBothTablesHaveSameSession() throws {
         let database = try SQLiteDatabase(path: ":memory:")
         try database.execute("""

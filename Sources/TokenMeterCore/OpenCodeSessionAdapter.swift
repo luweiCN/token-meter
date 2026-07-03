@@ -37,6 +37,7 @@ public final class OpenCodeSessionAdapter {
     }
 
     private func changedLegacySessions(after highWaterMark: String?) throws -> [ParsedAgentSession] {
+        let usesNumericTimestamp = try columnUsesNumericAffinity(table: "session", column: "time_updated")
         let rows = try sourceDatabase.query(
             """
             SELECT id, directory, model, agent, time_created, time_updated,
@@ -45,7 +46,7 @@ public final class OpenCodeSessionAdapter {
             WHERE (? IS NULL OR time_updated > ?)
             ORDER BY time_updated ASC
             """,
-            highWaterParameters(highWaterMark)
+            highWaterParameters(highWaterMark, numeric: usesNumericTimestamp)
         )
 
         return rows.compactMap { row in
@@ -57,8 +58,8 @@ public final class OpenCodeSessionAdapter {
                 projectPath: row.string("directory"),
                 modelName: row.string("model"),
                 cliVersion: nil,
-                startedAt: parseISODate(row.string("time_created")),
-                updatedAt: parseISODate(row.string("time_updated")),
+                startedAt: parseOpenCodeDate(row, column: "time_created"),
+                updatedAt: parseOpenCodeDate(row, column: "time_updated"),
                 usage: ParsedSessionUsage(
                     inputTokens: row.int("tokens_input"),
                     outputTokens: row.int("tokens_output"),
@@ -75,20 +76,36 @@ public final class OpenCodeSessionAdapter {
     }
 
     private func changedMessageSessions(after highWaterMark: String?) throws -> [ParsedAgentSession] {
-        let rows = try sourceDatabase.query(
-            """
-            SELECT id, session_id, data
-            FROM message
-            ORDER BY id ASC
-            """
-        )
+        let hasUpdatedColumn = try columnExists(table: "message", column: "time_updated")
+        let rows: [SQLiteRow]
+        if hasUpdatedColumn {
+            let usesNumericTimestamp = try columnUsesNumericAffinity(table: "message", column: "time_updated")
+            rows = try sourceDatabase.query(
+                """
+                SELECT id, session_id, time_updated, data
+                FROM message
+                WHERE (? IS NULL OR time_updated > ?)
+                ORDER BY time_updated ASC, id ASC
+                """,
+                highWaterParameters(highWaterMark, numeric: usesNumericTimestamp)
+            )
+        } else {
+            rows = try sourceDatabase.query(
+                """
+                SELECT id, session_id, json_extract(data, '$.time.created') AS time_updated, data
+                FROM message
+                WHERE (? IS NULL OR json_extract(data, '$.time.created') > ?)
+                ORDER BY json_extract(data, '$.time.created') ASC, id ASC
+                """,
+                highWaterParameters(highWaterMark, numeric: true)
+            )
+        }
 
         var sessions: [ParsedAgentSession] = []
         var seenMessageIds = Set<String>()
         for row in rows {
             guard let data = row.string("data"),
                   let parsed = parseMessageRow(row: row, data: data),
-                  isChanged(milliseconds: parsed.createdMilliseconds, after: highWaterMark),
                   seenMessageIds.insert(parsed.messageId).inserted else {
                 continue
             }
@@ -127,8 +144,10 @@ public final class OpenCodeSessionAdapter {
         guard usage.totalTokens > 0 else { return nil }
 
         let createdMilliseconds = doubleValue((dictionary["time"] as? [String: Any])?["created"])
+        let updatedMilliseconds = row.double("time_updated") ?? createdMilliseconds
         let createdAt = createdMilliseconds.map { Date(timeIntervalSince1970: $0 / 1000) }
-        let sequence = createdMilliseconds.map { Int64($0.rounded()) } ?? 1
+        let updatedAt = updatedMilliseconds.map { Date(timeIntervalSince1970: $0 / 1000) }
+        let sequence = createdMilliseconds.map { Int64($0.rounded()) } ?? updatedMilliseconds.map { Int64($0.rounded()) } ?? 1
         let provider = stringValue(dictionary["providerID"])
         let model = stringValue(dictionary["modelID"])
 
@@ -142,7 +161,7 @@ public final class OpenCodeSessionAdapter {
                 modelName: model,
                 cliVersion: nil,
                 startedAt: createdAt,
-                updatedAt: createdAt,
+                updatedAt: updatedAt,
                 usage: usage,
                 usageSequence: max(Int(sequence), 1),
                 sourceOffset: nil,
@@ -159,17 +178,22 @@ public final class OpenCodeSessionAdapter {
         return !rows.isEmpty
     }
 
-    private func highWaterParameters(_ highWaterMark: String?) -> [SQLiteValue] {
-        if let highWaterMark {
-            return [.text(highWaterMark), .text(highWaterMark)]
+    private func highWaterParameters(_ highWaterMark: String?, numeric: Bool) -> [SQLiteValue] {
+        guard let highWaterMark else {
+            return [.null, .null]
         }
-        return [.null, .null]
+        if numeric {
+            let milliseconds = highWaterMilliseconds(highWaterMark) ?? 0
+            return [.double(milliseconds), .double(milliseconds)]
+        }
+        return [.text(highWaterMark), .text(highWaterMark)]
     }
 
-    private func isChanged(milliseconds: Double?, after highWaterMark: String?) -> Bool {
-        guard let highWaterMark else { return true }
-        guard let milliseconds else { return false }
-        return milliseconds > (Double(highWaterMark) ?? 0)
+    private func highWaterMilliseconds(_ highWaterMark: String) -> Double? {
+        if let milliseconds = Double(highWaterMark) {
+            return milliseconds
+        }
+        return parseISODate(highWaterMark).map { $0.timeIntervalSince1970 * 1000 }
     }
 
     private func rawMeta(provider: String?, agent: String?) -> [String: String] {
@@ -181,6 +205,34 @@ public final class OpenCodeSessionAdapter {
             meta["agent"] = agent
         }
         return meta
+    }
+
+    private func columnExists(table: String, column: String) throws -> Bool {
+        try columnType(table: table, column: column) != nil
+    }
+
+    private func columnUsesNumericAffinity(table: String, column: String) throws -> Bool {
+        guard let type = try columnType(table: table, column: column)?.uppercased() else {
+            return false
+        }
+        return type.contains("INT")
+            || type.contains("REAL")
+            || type.contains("FLOA")
+            || type.contains("DOUB")
+            || type.contains("NUM")
+    }
+
+    private func columnType(table: String, column: String) throws -> String? {
+        try sourceDatabase.query("PRAGMA table_info(\(table))")
+            .first { $0.string("name") == column }?
+            .string("type")
+    }
+
+    private func parseOpenCodeDate(_ row: SQLiteRow, column: String) -> Date? {
+        if let milliseconds = row.double(column) {
+            return Date(timeIntervalSince1970: milliseconds / 1000)
+        }
+        return parseISODate(row.string(column))
     }
 
     private func parseISODate(_ value: String?) -> Date? {
