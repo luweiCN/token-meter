@@ -122,8 +122,8 @@ private struct OmpParsedUsage {
         let parsedInput = OmpParsedUsage.firstInt64(in: object, keys: ["inputTokens", "input_tokens", "input"])
         outputTokens = OmpParsedUsage.firstInt64(in: object, keys: ["outputTokens", "output_tokens", "output"])
         reasoningTokens = OmpParsedUsage.firstInt64(in: object, keys: ["reasoningTokens", "reasoning_tokens", "reasoning"])
-        cacheReadTokens = OmpParsedUsage.firstInt64(in: object, keys: ["cacheReadTokens", "cache_read_tokens", "cache_read_input_tokens"])
-        cacheWriteTokens = OmpParsedUsage.firstInt64(in: object, keys: ["cacheWriteTokens", "cache_write_tokens", "cache_creation_input_tokens"])
+        cacheReadTokens = OmpParsedUsage.firstInt64(in: object, keys: ["cacheReadTokens", "cacheRead", "cache_read_tokens", "cache_read_input_tokens"])
+        cacheWriteTokens = OmpParsedUsage.firstInt64(in: object, keys: ["cacheWriteTokens", "cacheWrite", "cache_write_tokens", "cache_creation_input_tokens"])
         costUSDMicros = OmpParsedUsage.costUSDMicros(in: object)
 
         if parsedInput == nil,

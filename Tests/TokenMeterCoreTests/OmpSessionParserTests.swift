@@ -46,6 +46,21 @@ final class OmpSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.usage?.costUSDMicros, 123)
     }
 
+    func testParsesCacheReadAndCacheWriteAliasesFromRealSessionLogs() throws {
+        let lines = [
+            JSONLLine(text: #"{"type":"session","id":"omp-real","cwd":"/repo"}"#, offset: 0, nextOffset: 1),
+            JSONLLine(text: #"{"type":"message","message":{"usage":{"input":10,"output":20,"cacheRead":4,"cacheWrite":5,"cost":{"total":0.000123}},"content":"SECRET"}}"#, offset: 1, nextOffset: 2)
+        ]
+
+        let parsed = try OmpSessionParser().parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/omp.jsonl"))
+
+        XCTAssertEqual(parsed.usage?.inputTokens, 10)
+        XCTAssertEqual(parsed.usage?.outputTokens, 20)
+        XCTAssertEqual(parsed.usage?.cacheReadTokens, 4)
+        XCTAssertEqual(parsed.usage?.cacheWriteTokens, 5)
+        XCTAssertEqual(parsed.usage?.costUSDMicros, 123)
+    }
+
     func testUsesTotalTokensAsInputFallbackWhenUsageHasNoBreakdown() throws {
         let lines = [
             JSONLLine(text: #"{"type":"session","id":"omp-total","cwd":"/repo"}"#, offset: 0, nextOffset: 1),
