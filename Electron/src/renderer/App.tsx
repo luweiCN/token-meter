@@ -1,24 +1,27 @@
+import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
+
+import { Layout, type RouteName } from './components/Layout.js';
+import { Dashboard } from './routes/Dashboard.js';
+import { IndexStatus } from './routes/IndexStatus.js';
+import { Sessions } from './routes/Sessions.js';
+import { Settings } from './routes/Settings.js';
 import './styles.css';
 
-function App() {
+export function AppShell() {
+  const [route, setRoute] = useState<RouteName>('dashboard');
+
   return (
-    <main className="app-shell">
-      <aside className="sidebar">
-        <strong>TokenMeter</strong>
-        <nav>
-          <a>Dashboard</a>
-          <a>Sessions</a>
-          <a>Index Status</a>
-          <a>Settings</a>
-        </nav>
-      </aside>
-      <section className="content">
-        <h1>本地 token 使用</h1>
-        <p>连接 Swift 常驻层后显示 provider、agent、project 和 session 数据。</p>
-      </section>
-    </main>
+    <Layout route={route} onRoute={setRoute}>
+      {route === 'dashboard' && <Dashboard />}
+      {route === 'sessions' && <Sessions />}
+      {route === 'index' && <IndexStatus />}
+      {route === 'settings' && <Settings />}
+    </Layout>
   );
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+const root = document.getElementById('root');
+if (root !== null) {
+  createRoot(root).render(<AppShell />);
+}

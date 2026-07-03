@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: true,
-    restoreMocks: true
+    restoreMocks: true,
+    setupFiles: ['./src/test/setupRenderer.ts']
   }
 });
