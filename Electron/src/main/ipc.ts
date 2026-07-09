@@ -42,7 +42,6 @@ export function registerIpcHandlers() {
     }
   });
   ipcMain.handle('dashboard:overview', async () => dashboard.overview());
-  ipcMain.handle('dashboard:dailyUsage', async (_event, filter) => dashboard.dailyUsage(filter));
   ipcMain.handle('sessions:query', async (_event, filter) => sessions.query(filter));
   ipcMain.handle('index:status', async () => indexStatus.status());
   // 全量重扫走流式路径：Swift 端要跑几分钟才写第一个字节，旧的 notifySwift('scanNow') 会在 2 秒

@@ -34,7 +34,7 @@ const mockSettingsRepository = vi.hoisted(() => ({
 
 const mockDashboardRepository = vi.hoisted(() => ({
   constructor: vi.fn(),
-  dailyUsage: vi.fn()
+  overview: vi.fn()
 }));
 
 const mockSessionsRepository = vi.hoisted(() => ({
@@ -70,7 +70,7 @@ vi.mock('./dashboardRepository.js', () => ({
   DashboardRepository: vi.fn(function DashboardRepositoryMock(database: unknown) {
     mockDashboardRepository.constructor(database);
     return {
-      dailyUsage: mockDashboardRepository.dailyUsage
+      overview: mockDashboardRepository.overview
     };
   })
 }));
@@ -141,7 +141,6 @@ import { createWindow } from './main.js';
 import '../preload.js';
 
 const allowedIpcChannels: Record<string, true> = {
-  'dashboard:dailyUsage': true,
   'dashboard:overview': true,
   'index:fullReindex': true,
   'index:status': true,
@@ -151,7 +150,7 @@ const allowedIpcChannels: Record<string, true> = {
 };
 
 const allowedPreloadApiShape: Record<string, string[]> = {
-  dashboard: ['queryDailyUsage', 'queryOverview'],
+  dashboard: ['queryOverview'],
   index: ['onScanProgress', 'startFullReindex', 'status'],
   sessions: ['query'],
   settings: ['get', 'update']
@@ -177,9 +176,6 @@ describe('Electron secure scaffold', () => {
       providerOverrides: []
     });
     mockSettingsRepository.update.mockReturnValue({ requestedVersion: 4, status: 'pending' });
-    mockDashboardRepository.dailyUsage.mockReturnValue([
-      { usageDate: '2026-07-03', providerId: 'codex', sourceKind: 'codex_jsonl', tokensTotal: 185 }
-    ]);
     mockSessionsRepository.query.mockReturnValue({ items: [{ sessionKey: 'codex-session' }], total: 1 });
     mockIndexStatusRepository.status.mockReturnValue({ roots: [{ id: 1, displayName: 'Codex' }], runs: [], failedFiles: [] });
   });
@@ -320,18 +316,6 @@ describe('Electron secure scaffold', () => {
     });
 
     expect(mockSwiftClient.notifySwift).not.toHaveBeenCalled();
-  });
-
-  it('dashboard:dailyUsage reads through DashboardRepository with renderer filter args', async () => {
-    const filter = { from: '2026-07-01', to: '2026-07-04', providerId: 'codex', projectId: 10 };
-    const dailyUsageHandler = registerAndFindHandler('dashboard:dailyUsage');
-
-    await expect(dailyUsageHandler({} as never, filter)).resolves.toEqual([
-      { usageDate: '2026-07-03', providerId: 'codex', sourceKind: 'codex_jsonl', tokensTotal: 185 }
-    ]);
-
-    expect(mockDashboardRepository.constructor).toHaveBeenCalledWith(mockDatabase.instance);
-    expect(mockDashboardRepository.dailyUsage).toHaveBeenCalledWith(filter);
   });
 
   it('sessions:query reads through SessionsRepository with renderer filter args', async () => {

@@ -54,27 +54,17 @@ export interface DashboardOverview {
   totalTokens: number;
   activeModelCount: number;
   totalCostUsdMicros: number;
+  costUnknownEvents: number;
   modelBreakdown: DashboardModelBreakdownRow[];
   providerBreakdown: DashboardProviderBreakdownRow[];
   dailyTrend: DashboardDailyTrendRow[];
 }
 
 
-export interface DailyUsageFilter {
-  from: string;
-  to: string;
-  providerId?: string;
-  projectId?: number;
-}
-
 export interface SessionsFilter {
   limit?: number;
   offset?: number;
   providerId?: string;
-}
-export interface DailyUsagePoint {
-  usageDate: string;
-  tokensTotal: number;
 }
 
 export interface SessionQueryResult {
@@ -139,7 +129,6 @@ declare global {
       };
       dashboard: {
         queryOverview(): Promise<DashboardOverview>;
-        queryDailyUsage(filter: DailyUsageFilter): Promise<DailyUsagePoint[]>;
       };
       sessions: {
         query(filter: SessionsFilter): Promise<SessionQueryResult>;

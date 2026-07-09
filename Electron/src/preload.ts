@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { DailyUsageFilter, SessionsFilter, SettingsPatch } from './renderer/api.js';
+import type { SessionsFilter, SettingsPatch } from './renderer/api.js';
 
 
 contextBridge.exposeInMainWorld('tokenMeter', {
@@ -8,8 +8,7 @@ contextBridge.exposeInMainWorld('tokenMeter', {
     update: (patch: SettingsPatch, expectedVersion: number) => ipcRenderer.invoke('settings:update', patch, expectedVersion)
   },
   dashboard: {
-    queryOverview: () => ipcRenderer.invoke('dashboard:overview'),
-    queryDailyUsage: (filter: DailyUsageFilter) => ipcRenderer.invoke('dashboard:dailyUsage', filter)
+    queryOverview: () => ipcRenderer.invoke('dashboard:overview')
   },
   sessions: {
     query: (filter: SessionsFilter) => ipcRenderer.invoke('sessions:query', filter)
