@@ -87,7 +87,7 @@ public final class OmpUsageEventParser: UsageEventParser {
         }
     }
 
-    public func finish(sourceURL: URL) throws -> (session: ParsedSession, state: ParserState) {
+    public func finish(sourceURL: URL) throws -> (session: ParsedSession?, state: ParserState) {
         let resolvedSessionKey = sessionKey ?? sourceURL.deletingPathExtension().lastPathComponent
         guard !resolvedSessionKey.isEmpty else { throw LocalAgentParserError.missingSessionKey }
 

@@ -183,9 +183,6 @@ public final class LocalAgentScanner {
 
         let parser = try makeParser(for: root.kind, resuming: resumeState)
         var sawLine = false
-        // Claude 有大量非 session 的辅助文件（skill 注入、hook 日志），它们没有 sessionId 也没有 usage。
-        // 用便宜的子串探测区分"辅助文件"(跳过)与"缺 sessionId 的真会话文件"(失败)。
-        var sawClaudeUsage = false
 
         let readResult: JSONLReadResult
         do {
@@ -195,9 +192,6 @@ public final class LocalAgentScanner {
                 markers: markers(for: root.kind)
             ) { line in
                 sawLine = true
-                if root.kind == .claudeJSONL, !sawClaudeUsage, line.text.contains("\"usage\"") {
-                    sawClaudeUsage = true
-                }
                 parser.consume(line)
             }
         } catch {
@@ -255,24 +249,9 @@ public final class LocalAgentScanner {
             return false
         }
 
-        let outcome: (session: ParsedSession, state: ParserState)
+        let outcome: (session: ParsedSession?, state: ParserState)
         do {
             outcome = try parser.finish(sourceURL: file)
-        } catch LocalAgentParserError.missingSessionKey where root.kind == .claudeJSONL && !sawClaudeUsage {
-            // Claude 辅助文件：无 sessionId 且无 usage，不是会话——记 ok 并跳过，不把整根拖成 partial。
-            _ = try upsertSourceFile(
-                rootId: root.id,
-                relativePath: relativePath,
-                canonicalPath: metadata.canonicalPath,
-                fileType: "jsonl_session",
-                metadata: metadata,
-                runId: runId,
-                parsed: true,
-                parseStatus: "ok",
-                parseError: nil,
-                parserState: resumed(resumeState ?? ParserState(), stoppedAt: readResult.nextOffset)
-            )
-            return false
         } catch {
             _ = try? upsertSourceFile(
                 rootId: root.id,
@@ -287,6 +266,24 @@ public final class LocalAgentScanner {
                 parserState: existing?.parserState
             )
             throw error
+        }
+
+        // parser 判定这不是一个会话文件（如 Claude 辅助文件：无 sessionId 且从未见过 usage 对象）：
+        // 无事件可写，记 ok 并跳过，不把整根拖成 partial。
+        guard let session = outcome.session else {
+            _ = try upsertSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: metadata.canonicalPath,
+                fileType: "jsonl_session",
+                metadata: metadata,
+                runId: runId,
+                parsed: true,
+                parseStatus: "ok",
+                parseError: nil,
+                parserState: resumed(outcome.state, stoppedAt: readResult.nextOffset)
+            )
+            return false
         }
 
         // 残行（最后一行没有换行符收尾）：解析剩余事件仍写入，但标 partial，让整根变 partial。
@@ -305,7 +302,7 @@ public final class LocalAgentScanner {
 
         // step 2：写事件（各自事务提交）。
         do {
-            try writer.write(outcome.session, scanRootId: root.id, sourceFileId: fileId, runId: runId)
+            try writer.write(session, scanRootId: root.id, sourceFileId: fileId, runId: runId)
         } catch {
             _ = try? upsertSourceFile(
                 rootId: root.id,

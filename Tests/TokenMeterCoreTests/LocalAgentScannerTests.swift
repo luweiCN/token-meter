@@ -607,6 +607,56 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertNotNil(auxiliary.int("last_parsed_run_id"))
     }
 
+    func testClaudeAuxiliaryFileMentioningUsageInProseIsNotAFailure() async throws {
+        // 一行合法 JSON，没有 sessionId，正文里含字面量 "usage"（这里是某条 hook 日志的字符串值），
+        // 但它没有挂在 message 下的 usage 对象——不是会话文件。
+        // 旧实现用便宜的子串探测把它误判成"缺 sessionId 的坏会话文件"、抛错、把 root 拖成 partial；
+        // 新实现由 parser 从解析后的字典判定它是辅助文件，返回空会话、静默跳过。
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let auxLine = #"{"event":"skill_injection","hookEvent":"UserPromptSubmit","note":"usage","timestamp":"2026-07-03T18:44:03Z"}"#
+        try writeJSONL(auxLine + "\n", to: directory.appendingPathComponent("aux-usage-in-prose.jsonl"))
+
+        let database = try migratedDatabase(rootKind: .claudeJSONL, rootPath: directory.path)
+        do {
+            try await LocalAgentScanner(database: database).scanRoot(id: 1)
+        } catch {
+            // 旧实现会在这里抛错；捕获后靠下面的断言暴露它把 root 拖成了 partial。
+        }
+
+        let run = try database.query("SELECT status, error_summary FROM scan_runs ORDER BY id DESC LIMIT 1")[0]
+        XCTAssertEqual(run.string("status"), "ok", "正文里字面量提到 usage 的辅助文件不得把 root 拖成 partial")
+        XCTAssertNil(run.string("error_summary"))
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM source_files WHERE parse_status = 'failed'"), 0)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 0)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM agent_sessions"), 0)
+    }
+
+    func testClaudeSessionFileWithUsageButNoSessionIdStillFails() async throws {
+        // 真正坏掉的会话文件：有挂在 message 下的 usage 对象、带真实 token，但缺 sessionId。
+        // 放宽辅助文件判定后，它绝不能被静默吞掉——必须仍然解析失败、把 root 标为 partial、
+        // 且一条用量都不落库，否则这台会计工具会丢掉真实用量却一声不响。
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try writeJSONL(claudeJSONLMissingSessionKey(inputTokens: 11, outputTokens: 22), to: directory.appendingPathComponent("broken-session.jsonl"))
+
+        let database = try migratedDatabase(rootKind: .claudeJSONL, rootPath: directory.path)
+        var threw = false
+        do {
+            try await LocalAgentScanner(database: database).scanRoot(id: 1)
+        } catch {
+            threw = true
+        }
+        XCTAssertTrue(threw, "缺 sessionId 但有 usage 的坏会话文件必须让扫描失败")
+
+        let run = try database.query("SELECT status FROM scan_runs ORDER BY id DESC LIMIT 1")[0]
+        XCTAssertEqual(run.string("status"), "partial", "坏会话文件必须把 root 标为 partial")
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM source_files WHERE parse_status = 'failed'"), 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 0, "坏会话文件的用量绝不能被写入")
+    }
+
     func testMalformedMiddleLineIsSkippedAndValidUsageStillIndexed() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

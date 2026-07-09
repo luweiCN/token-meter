@@ -8,12 +8,19 @@ import Foundation
 public protocol UsageEventParser: AnyObject {
     init(resuming state: ParserState?)
     func consume(_ line: JSONLLine)
-    func finish(sourceURL: URL) throws -> (session: ParsedSession, state: ParserState)
+    /// `session == nil` 表示"这个文件不是一个会话文件"（例如 Claude 的辅助文件：无 sessionId、
+    /// 也从未见过挂在 message 下的 usage 对象）。这与"是会话但零事件"（session 非 nil、events 为空，
+    /// 如 Codex 无 token_count 的文件）是两回事：前者无 sessionKey 可言，无法构造 ParsedSession。
+    /// 真正坏掉的会话文件（有 usage 却缺 sessionId）仍然抛 `missingSessionKey`，绝不静默返回 nil。
+    func finish(sourceURL: URL) throws -> (session: ParsedSession?, state: ParserState)
 }
 
 public extension UsageEventParser {
     /// 测试便利方法，一次性喂完所有行。
     /// **生产路径不得使用**：必须走 JSONLStreamReader 的 onLine 回调。
+    ///
+    /// 便利方法只服务于"这些行构成一个会话"的用例，因此把 `finish` 的可选 session 解包成非可选；
+    /// 若 parser 判定不是会话（返回 nil），按缺 session key 抛错，与旧行为一致。
     static func parse(
         lines: [JSONLLine],
         sourceURL: URL,
@@ -21,6 +28,8 @@ public extension UsageEventParser {
     ) throws -> (session: ParsedSession, state: ParserState) {
         let parser = Self(resuming: state)
         for line in lines { parser.consume(line) }
-        return try parser.finish(sourceURL: sourceURL)
+        let result = try parser.finish(sourceURL: sourceURL)
+        guard let session = result.session else { throw LocalAgentParserError.missingSessionKey }
+        return (session, result.state)
     }
 }

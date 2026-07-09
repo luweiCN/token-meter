@@ -8,6 +8,10 @@ public final class ClaudeCodeUsageEventParser: UsageEventParser {
     private var updatedAt: Date?
     private var events: [UsageEvent] = []
     private var eventSeq: Int
+    /// 是否见过挂在 message 下的、真正解析成字典的 usage 对象。用来在缺 sessionId 时区分
+    /// 辅助文件（从未见过 usage → 跳过）与坏会话文件（见过 usage → 失败）。
+    /// 只认解析后的字典，绝不认原始行里的 "usage" 子串——那正是本次要修掉的过度敏感。
+    private var sawUsageField = false
     private let dateFormatters = ClaudeCodeUsageEventParser.makeDateFormatters()
 
     public init(resuming state: ParserState?) {
@@ -34,10 +38,15 @@ public final class ClaudeCodeUsageEventParser: UsageEventParser {
         }
 
         guard let message = JSONDictionary.dictionary(object, "message"),
-              let usageObject = JSONDictionary.dictionary(message, "usage"),
-              let observedAt = timestamp else {
+              let usageObject = JSONDictionary.dictionary(message, "usage") else {
             return
         }
+        // 见到 usage 对象即记下（在 timestamp / role / token 判定之前），fail-closed：
+        // 哪怕它缺时间戳或 token 为零而不产生事件，也算"这是会话文件"，缺 sessionId 就该失败，
+        // 而不是被当辅助文件静默跳过。用事件是否为空来判会失守这条边界。
+        sawUsageField = true
+
+        guard let observedAt = timestamp else { return }
 
         let type = firstString(in: object, keys: ["type"])
         let role = firstString(in: message, keys: ["role"])
@@ -71,8 +80,25 @@ public final class ClaudeCodeUsageEventParser: UsageEventParser {
         )
     }
 
-    public func finish(sourceURL: URL) throws -> (session: ParsedSession, state: ParserState) {
-        guard let sessionKey else { throw LocalAgentParserError.missingSessionKey }
+    public func finish(sourceURL: URL) throws -> (session: ParsedSession?, state: ParserState) {
+        guard let sessionKey else {
+            // 无 sessionId 时靠"是否见过 usage 对象"分流：
+            // 见过 → 真会话却缺 key → 坏文件，抛错（不能静默吞掉真实用量）。
+            // 没见过 → 辅助文件（skill 注入 / hook 日志）→ 返回 nil session，静默跳过、不拖 partial。
+            if sawUsageField { throw LocalAgentParserError.missingSessionKey }
+            return (
+                nil,
+                ParserState(
+                    lastEventSeq: eventSeq,
+                    lastCumulative: nil,
+                    sessionKey: nil,
+                    projectPath: projectPath,
+                    cliVersion: cliVersion,
+                    startedAt: startedAt,
+                    updatedAt: updatedAt
+                )
+            )
+        }
 
         let session = ParsedSession(
             sourceKind: .claudeJSONL,

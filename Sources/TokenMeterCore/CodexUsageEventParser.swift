@@ -92,7 +92,7 @@ public final class CodexUsageEventParser: UsageEventParser {
         }
     }
 
-    public func finish(sourceURL: URL) throws -> (session: ParsedSession, state: ParserState) {
+    public func finish(sourceURL: URL) throws -> (session: ParsedSession?, state: ParserState) {
         guard let sessionKey else { throw LocalAgentParserError.missingSessionKey }
 
         let session = ParsedSession(
