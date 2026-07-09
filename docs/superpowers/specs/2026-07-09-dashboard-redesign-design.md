@@ -509,7 +509,11 @@ schema v2；`LocalAgentSessionParser` 接口改为输出 `[UsageEvent]`；改造
 - **成本写入时计算**，pricing 更新后需手动触发「重算成本」。选择理由是查询频率远高于 pricing 更新频率。
 - **`cost_source = 'unknown'` 时成本记 NULL**，UI 需处理「部分成本未知」的汇总展示，不能静默按 0 累加。
 - **手写图表组件**的工作量与渲染细节风险（tooltip 定位、坐标轴刻度、响应式重绘）由我们承担，换取零依赖与最低常驻内存。若实现中发现复杂度失控，退路是引入 uPlot。
-- **subagent 归属**：本设计将 subagent 转录中的记录计入其父 session（因其 `sessionId` 字段即父 session UUID），标记 `is_sidechain = 1`。不做 turn 级归属。
+- **subagent 归属：两家语义相反，各自照实处理。**
+  - **Claude Code** 的 subagent 转录（`<父sessionId>/subagents/agent-*.jsonl`）里，`sessionId` 字段就是**父 session 的 UUID**。这些事件计入父 session，标记 `is_sidechain = 1`；一个逻辑 session 因此对应多个源文件——这正是 `usage_events.source_file_id` 存在的理由。
+  - **omp** 的子 agent 转录（`<项目>/<时间戳>_<父UUID>/<名字>.jsonl`）里，`session` 行带的是**它自己的 UUID**，与父目录名中的 UUID 在 20/20 个抽样里无一相同。每个 omp 子 agent 是独立 session。
+
+  把任一方的假设套到另一方，都会让用量归错会话。不做 turn 级归属。
 - **Codex `service_tier` 倍率未实现**，本机配置未启用该字段，无法验证。
 - **每个 parser 各自构造 `ISO8601DateFormatter`**，实测约 171 µs / 次，12,447 个 Claude 文件合计约 2.13 秒。改成 `static let` 能省掉，但 Apple 从未在文档里承诺 `ISO8601DateFormatter` 对并发 `date(from:)` 是线程安全的（`DateFormatter` 有此承诺，它没有）。全量重扫本身是分钟级，2 秒占比不足 2%——不为一个具体的小收益换一个抽象的并发风险。若将来改成并行扫描，这个决定不必回头看。
 - **subagent 的 `agentId` / `attributionAgent` 字段未被采集。** 它们能支持「按子 agent 归因成本」，但 Phase 1 不需要。真要做时，parser 加两个字段即可。
