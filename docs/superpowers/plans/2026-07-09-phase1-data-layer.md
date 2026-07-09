@@ -417,9 +417,15 @@ git commit -m "feat: add model name normalizer"
 
 ---
 
-## Task 3: schema v2 与破坏性迁移
+## Task 3: schema v2（只做加法）
 
-旧数据的日期归属与模型归属本来就是错的，不做数据迁移：检测到 v1 就 drop 掉受影响的表并清空扫描游标，强制一次全量重扫。
+旧数据的日期归属与模型归属本来就是错的，**不迁移旧数据**。但也**不在本任务里删表**。
+
+原因：`LocalAgentUsageRepository` 与 `LocalAgentScanner` 要到 Task 11 / Task 14 才切换到新表。如果 Task 3 就 DROP 掉 `session_usage` / `session_usage_latest` / `provider_daily_usage`，那么 Task 3 到 Task 10 这八个任务期间旧代码会往不存在的表里写，`swift test` 全程飘红，每个任务都失去「跑测试确认没搞砸」的能力。
+
+因此 v2 只做加法：新表与旧表并存，旧代码继续绿着跑。**Task 18** 在 scanner 切换完成、旧表彻底无人写入之后，才把它们删掉并清空扫描游标。
+
+`v1` 里全是 `CREATE TABLE IF NOT EXISTS`，所以 migrator 可以顺序执行 `v1` 再执行 `v2Additions`：全新库两段都跑，v1 老库只跑第二段。
 
 **Files:**
 - Modify: `Sources/TokenMeterCore/TokenMeterDatabaseSchema.swift`
@@ -446,7 +452,7 @@ git commit -m "feat: add model name normalizer"
         XCTAssertTrue(tables.contains("model_pricing"))
     }
 
-    func testMigrationFromV1DropsLegacyUsageTablesAndClearsScanCursors() throws {
+    func testMigrationFromV1AddsNewTablesAndKeepsLegacyOnes() throws {
         let database = try SQLiteDatabase(path: ":memory:")
         try database.execute(TokenMeterDatabaseSchema.v1)
         try database.execute(
@@ -460,16 +466,31 @@ git commit -m "feat: add model name normalizer"
 
         let tables = try database.query("SELECT name FROM sqlite_master WHERE type = 'table'")
             .compactMap { $0.string("name") }
-        XCTAssertFalse(tables.contains("session_usage"))
-        XCTAssertFalse(tables.contains("session_usage_latest"))
-        XCTAssertFalse(tables.contains("provider_daily_usage"))
-        XCTAssertTrue(tables.contains("usage_events"))
 
-        // scan_roots 是配置，必须保留；但游标要清空以触发全量重扫
+        // 新表出现
+        XCTAssertTrue(tables.contains("usage_events"))
+        XCTAssertTrue(tables.contains("daily_rollup"))
+        XCTAssertTrue(tables.contains("session_rollup"))
+        XCTAssertTrue(tables.contains("model_pricing"))
+
+        // 旧表保留：LocalAgentUsageRepository 与 LocalAgentScanner 要到 Task 11 / 14
+        // 才切换过去。提前删表会让 Task 3-10 期间的测试全线飘红。Task 18 负责清理。
+        XCTAssertTrue(tables.contains("session_usage"))
+        XCTAssertTrue(tables.contains("session_usage_latest"))
+        XCTAssertTrue(tables.contains("provider_daily_usage"))
+
+        // 扫描游标此刻不动：切换完成前重扫没有意义。Task 18 清空它。
         let roots = try database.query("SELECT root_path, last_successful_cursor FROM scan_roots")
         XCTAssertEqual(roots.count, 1)
-        XCTAssertEqual(roots[0].string("root_path"), "/tmp/claude")
-        XCTAssertNil(roots[0].string("last_successful_cursor"))
+        XCTAssertEqual(roots[0].string("last_successful_cursor"), "cursor-123")
+    }
+
+    func testMigrationIsIdempotent() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try TokenMeterDatabaseMigrator.migrate(database)
+        try TokenMeterDatabaseMigrator.migrate(database)
+
+        XCTAssertEqual(try database.query("PRAGMA user_version")[0].int("user_version"), 2)
     }
 
     func testUsageEventsTotalTokensGeneratedColumnExcludesReasoning() throws {
@@ -515,145 +536,14 @@ Expected: FAIL，`XCTAssertEqual failed: ("1") is not equal to ("2")`
 
 - [ ] **Step 3: 实现**
 
-在 `Sources/TokenMeterCore/TokenMeterDatabaseSchema.swift` 中把 `currentVersion` 改为 `2`，保留 `v1` 常量（迁移测试需要它构造旧库），并新增：
+在 `Sources/TokenMeterCore/TokenMeterDatabaseSchema.swift` 中把 `currentVersion` 改为 `2`，**保留 `v1` 常量原样不动**（迁移测试需要它构造旧库，且它全是 `CREATE TABLE IF NOT EXISTS`），新增 `v2Additions`：
 
 ```swift
-    public static let dropV1Tables = """
-    DROP TABLE IF EXISTS provider_daily_usage;
-    DROP TABLE IF EXISTS session_usage_latest;
-    DROP TABLE IF EXISTS session_usage;
-    DROP TABLE IF EXISTS agent_sessions;
-    DROP TABLE IF EXISTS source_files;
-    DROP TABLE IF EXISTS scan_runs;
-    UPDATE scan_roots SET
-      last_successful_cursor = NULL,
-      last_scan_started_at = NULL,
-      last_scan_finished_at = NULL,
-      last_error = NULL;
-    """
-
-    public static let v2 = """
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      version INTEGER PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value_json TEXT NOT NULL,
-      value_type TEXT NOT NULL CHECK (value_type IN ('string', 'int', 'bool', 'json')),
-      version INTEGER NOT NULL,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_by TEXT NOT NULL CHECK (updated_by IN ('swift', 'electron', 'migrator', 'importer'))
-    );
-
-    CREATE TABLE IF NOT EXISTS provider_config_overrides (
-      provider_id TEXT PRIMARY KEY,
-      enabled INTEGER CHECK (enabled IN (0,1)),
-      display_name TEXT,
-      menu_rank INTEGER,
-      show_in_menu_bar INTEGER CHECK (show_in_menu_bar IN (0,1)),
-      show_in_charts INTEGER CHECK (show_in_charts IN (0,1)),
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS scan_roots (
-      id INTEGER PRIMARY KEY,
-      kind TEXT NOT NULL CHECK (kind IN ('claude_jsonl', 'codex_jsonl', 'omp_jsonl', 'opencode_sqlite')),
-      root_path TEXT NOT NULL,
-      display_name TEXT NOT NULL,
-      enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
-      scan_mode TEXT NOT NULL DEFAULT 'incremental' CHECK (scan_mode IN ('incremental', 'full', 'disabled')),
-      file_glob TEXT,
-      source_db_path TEXT,
-      stable_source_key TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      last_scan_started_at TEXT,
-      last_scan_finished_at TEXT,
-      last_successful_cursor TEXT,
-      last_error TEXT,
-      UNIQUE(kind, root_path),
-      UNIQUE(stable_source_key)
-    );
-
-    CREATE TABLE IF NOT EXISTS scan_runs (
-      id INTEGER PRIMARY KEY,
-      scan_root_id INTEGER REFERENCES scan_roots(id) ON DELETE CASCADE,
-      run_kind TEXT NOT NULL CHECK (run_kind IN ('discover', 'incremental', 'full', 'repair')),
-      started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      finished_at TEXT,
-      status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'ok', 'partial', 'failed')),
-      files_seen INTEGER NOT NULL DEFAULT 0,
-      files_changed INTEGER NOT NULL DEFAULT 0,
-      files_deleted INTEGER NOT NULL DEFAULT 0,
-      sessions_added INTEGER NOT NULL DEFAULT 0,
-      sessions_updated INTEGER NOT NULL DEFAULT 0,
-      sessions_deleted INTEGER NOT NULL DEFAULT 0,
-      usage_rows_added INTEGER NOT NULL DEFAULT 0,
-      bytes_read INTEGER NOT NULL DEFAULT 0,
-      cursor_before TEXT,
-      cursor_after TEXT,
-      error_summary TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS source_files (
-      id INTEGER PRIMARY KEY,
-      scan_root_id INTEGER NOT NULL REFERENCES scan_roots(id) ON DELETE CASCADE,
-      relative_path TEXT NOT NULL,
-      canonical_path TEXT NOT NULL,
-      file_type TEXT NOT NULL CHECK (file_type IN ('jsonl_session', 'sqlite_db')),
-      size_bytes INTEGER NOT NULL,
-      mtime_ns INTEGER NOT NULL,
-      inode INTEGER,
-      dev INTEGER,
-      content_fingerprint TEXT,
-      parser_state TEXT,
-      first_seen_run_id INTEGER REFERENCES scan_runs(id) ON DELETE SET NULL,
-      last_seen_run_id INTEGER REFERENCES scan_runs(id) ON DELETE SET NULL,
-      last_parsed_run_id INTEGER REFERENCES scan_runs(id) ON DELETE SET NULL,
-      disappeared_at TEXT,
-      parse_status TEXT NOT NULL DEFAULT 'pending' CHECK (parse_status IN ('pending', 'ok', 'partial', 'failed')),
-      parse_error TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(scan_root_id, relative_path),
-      UNIQUE(scan_root_id, canonical_path)
-    );
-
-    CREATE TABLE IF NOT EXISTS projects (
-      id INTEGER PRIMARY KEY,
-      project_key TEXT NOT NULL UNIQUE,
-      canonical_path TEXT NOT NULL,
-      display_name TEXT NOT NULL,
-      first_seen_at TEXT NOT NULL,
-      last_seen_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS agent_sessions (
-      id INTEGER PRIMARY KEY,
-      source_kind TEXT NOT NULL,
-      source_session_key TEXT NOT NULL,
-      scan_root_id INTEGER NOT NULL REFERENCES scan_roots(id) ON DELETE CASCADE,
-      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
-      provider_id TEXT,
-      agent_name TEXT,
-      cli_version TEXT,
-      session_started_at TEXT,
-      session_updated_at TEXT,
-      cwd_path TEXT,
-      title TEXT,
-      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'closed', 'deleted', 'orphaned')),
-      source_revision TEXT NOT NULL,
-      first_seen_run_id INTEGER REFERENCES scan_runs(id) ON DELETE SET NULL,
-      last_seen_run_id INTEGER REFERENCES scan_runs(id) ON DELETE SET NULL,
-      last_indexed_run_id INTEGER REFERENCES scan_runs(id) ON DELETE SET NULL,
-      deleted_at TEXT,
-      raw_meta_json TEXT,
-      UNIQUE(source_kind, source_session_key)
-    );
-
+    /// v2 只做加法：新增四张表，不触碰 v1 的任何表。
+    /// v1 全是 CREATE TABLE IF NOT EXISTS，migrator 顺序执行两段即可：
+    /// 全新库跑 v1 + v2Additions，v1 老库只跑 v2Additions。
+    /// 旧表的删除与扫描游标清空由 Task 18 负责，那时 scanner 已切换完毕。
+    public static let v2Additions = """
     CREATE TABLE IF NOT EXISTS usage_events (
       id INTEGER PRIMARY KEY,
       session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
@@ -733,8 +623,6 @@ Expected: FAIL，`XCTAssertEqual failed: ("1") is not equal to ("2")`
       snapshot_version TEXT
     );
 
-    CREATE INDEX IF NOT EXISTS idx_settings_updated ON settings(updated_at DESC);
-
     INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (2, 'phase3_message_level_usage');
     PRAGMA user_version = 2;
     """
@@ -757,15 +645,12 @@ public enum TokenMeterDatabaseMigrator {
         }
         guard currentVersion < TokenMeterDatabaseSchema.currentVersion else { return }
 
-        if currentVersion >= 1 {
-            // v1 的用量数据按错误的日期与模型归属，没有迁移价值，直接丢弃并重扫。
-            // DROP 期间关闭外键检查：表的删除顺序不必满足依赖关系。
-            try database.execute("PRAGMA foreign_keys = OFF")
-            defer { try? database.execute("PRAGMA foreign_keys = ON") }
-            try database.execute(TokenMeterDatabaseSchema.dropV1Tables)
+        // v1 全是 CREATE TABLE IF NOT EXISTS，重复执行安全。
+        // 全新库两段都跑；v1 老库跳过第一段，只补上新表。
+        if currentVersion < 1 {
+            try database.execute(TokenMeterDatabaseSchema.v1)
         }
-
-        try database.execute(TokenMeterDatabaseSchema.v2)
+        try database.execute(TokenMeterDatabaseSchema.v2Additions)
     }
 }
 
@@ -779,11 +664,16 @@ public enum TokenMeterDatabaseMigratorError: Error, Equatable {
 Run: `swift test --filter TokenMeterDatabaseMigratorTests`
 Expected: 全部通过。若 `testUsageEventsTotalTokensGeneratedColumnExcludesReasoning` 返回 1070 而非 1050，说明生成列错误地加上了 `tokens_reasoning`。
 
+再跑一次完整套件：
+
+Run: `swift test`
+Expected: 全绿。**这是本任务最重要的验收**——因为 v2 只做加法，`LocalAgentUsageRepository` 和 `LocalAgentScanner` 的既有测试必须一个不少地继续通过。任何一个变红，都说明动了不该动的表。
+
 - [ ] **Step 5: 提交**
 
 ```bash
 git add Sources/TokenMeterCore/TokenMeterDatabaseSchema.swift Sources/TokenMeterCore/TokenMeterDatabaseMigrator.swift Tests/TokenMeterCoreTests/TokenMeterDatabaseMigratorTests.swift
-git commit -m "feat: add schema v2 with message-level usage_events"
+git commit -m "feat: add schema v2 tables alongside v1"
 ```
 
 ---
@@ -3802,6 +3692,139 @@ Expected: `✅ 对账通过`
 ```bash
 git add scripts/reconcile-with-ccusage.sh docs/superpowers/plans/2026-07-09-phase1-data-layer.md
 git commit -m "test: add ccusage reconciliation script"
+```
+
+---
+
+## Task 18: 清理 v1 遗留表（schema v3）
+
+到这一步为止：Task 11 让 writer 只写 `usage_events`，Task 14 让 scanner 只调 writer，Task 16 让 Electron 只查 rollup 表。三张 v1 用量表已经**无人读、无人写**。现在才能安全删掉它们。
+
+排在 Task 16 之后不是随意的：在此之前 `dashboardRepository.ts` 仍在查 `provider_daily_usage`，提前删表会让 Electron 测试全红。
+
+**升级路径说明：** v1 用户迁移到 v2/v3 后 `usage_events` 是空表。不在迁移里自动重扫——12.8 GB 要跑几分钟，不该在应用启动时静默发生。由 Task 15 的「全量重扫」按钮显式触发。
+
+**Files:**
+- Modify: `Sources/TokenMeterCore/TokenMeterDatabaseSchema.swift`
+- Modify: `Sources/TokenMeterCore/TokenMeterDatabaseMigrator.swift`
+- Test: `Tests/TokenMeterCoreTests/TokenMeterDatabaseMigratorTests.swift`
+
+- [ ] **Step 1: 写失败的测试**
+
+```swift
+    func testMigrationToV3DropsLegacyUsageTables() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try TokenMeterDatabaseMigrator.migrate(database)
+
+        XCTAssertEqual(try database.query("PRAGMA user_version")[0].int("user_version"), 3)
+
+        let tables = try database.query("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .compactMap { $0.string("name") }
+        XCTAssertFalse(tables.contains("session_usage"))
+        XCTAssertFalse(tables.contains("session_usage_latest"))
+        XCTAssertFalse(tables.contains("provider_daily_usage"))
+
+        // 新表必须还在
+        XCTAssertTrue(tables.contains("usage_events"))
+        XCTAssertTrue(tables.contains("daily_rollup"))
+        XCTAssertTrue(tables.contains("session_rollup"))
+    }
+
+    func testMigrationToV3DropsRedundantSessionColumns() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try TokenMeterDatabaseMigrator.migrate(database)
+
+        let columns = try database.query("PRAGMA table_info(agent_sessions)")
+            .compactMap { $0.string("name") }
+
+        // model_name 已下沉到 usage_events；留着会误导下一个读代码的人
+        XCTAssertFalse(columns.contains("model_name"))
+        XCTAssertFalse(columns.contains("source_file_id"))
+        XCTAssertFalse(columns.contains("total_cost_usd_micros"))
+
+        // 会话元信息保留
+        XCTAssertTrue(columns.contains("source_session_key"))
+        XCTAssertTrue(columns.contains("project_id"))
+        XCTAssertTrue(columns.contains("provider_id"))
+    }
+
+    func testV1DatabaseMigratesAllTheWayToV3() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try database.execute(TokenMeterDatabaseSchema.v1)
+
+        try TokenMeterDatabaseMigrator.migrate(database)
+
+        XCTAssertEqual(try database.query("PRAGMA user_version")[0].int("user_version"), 3)
+        let tables = try database.query("SELECT name FROM sqlite_master WHERE type = 'table'")
+            .compactMap { $0.string("name") }
+        XCTAssertFalse(tables.contains("session_usage"))
+        XCTAssertTrue(tables.contains("usage_events"))
+    }
+```
+
+同时**删除** Task 3 加的 `testMigrationFromV1AddsNewTablesAndKeepsLegacyOnes`：它断言旧表保留，那是 v2 的过渡态，v3 之后不再成立。
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `swift test --filter TokenMeterDatabaseMigratorTests`
+Expected: FAIL，`XCTAssertEqual failed: ("2") is not equal to ("3")`
+
+- [ ] **Step 3: 实现**
+
+`TokenMeterDatabaseSchema.swift`：`currentVersion` 改为 `3`，新增
+
+```swift
+    /// v3：删除 v1 的用量表与 agent_sessions 上已下沉的列。
+    /// 此时 writer 只写 usage_events，scanner 只调 writer，Electron 只查 rollup 表。
+    public static let v3Cleanup = """
+    DROP TABLE IF EXISTS provider_daily_usage;
+    DROP TABLE IF EXISTS session_usage_latest;
+    DROP TABLE IF EXISTS session_usage;
+
+    -- DROP COLUMN 不能删除被索引引用的列，先摘掉索引
+    DROP INDEX IF EXISTS idx_sessions_source_file;
+
+    ALTER TABLE agent_sessions DROP COLUMN source_file_id;
+    ALTER TABLE agent_sessions DROP COLUMN model_name;
+    ALTER TABLE agent_sessions DROP COLUMN model_provider;
+    ALTER TABLE agent_sessions DROP COLUMN message_count;
+    ALTER TABLE agent_sessions DROP COLUMN event_count;
+    ALTER TABLE agent_sessions DROP COLUMN total_cost_usd_micros;
+    ALTER TABLE agent_sessions DROP COLUMN worktree_path;
+    ALTER TABLE agent_sessions DROP COLUMN session_closed_at;
+
+    INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (3, 'phase3_drop_v1_usage_tables');
+    PRAGMA user_version = 3;
+    """
+```
+
+`ALTER TABLE ... DROP COLUMN` 需要 SQLite 3.35+。本机链接的是 3.51.0，实测可用。
+
+`TokenMeterDatabaseMigrator.migrate` 追加第三段：
+
+```swift
+        if currentVersion < 1 {
+            try database.execute(TokenMeterDatabaseSchema.v1)
+        }
+        if currentVersion < 2 {
+            try database.execute(TokenMeterDatabaseSchema.v2Additions)
+        }
+        try database.execute(TokenMeterDatabaseSchema.v3Cleanup)
+```
+
+- [ ] **Step 4: 全套验证**
+
+Run: `swift test`
+Expected: 全绿。任何引用 `session_usage` 的残留测试都会在这里暴露——那正是本任务要清掉的。
+
+Run: `cd Electron && npx vitest run`
+Expected: 全绿。Task 16 已把查询切到 rollup 表。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add Sources/TokenMeterCore/TokenMeterDatabaseSchema.swift Sources/TokenMeterCore/TokenMeterDatabaseMigrator.swift Tests/TokenMeterCoreTests/TokenMeterDatabaseMigratorTests.swift
+git commit -m "refactor: drop v1 usage tables and redundant session columns"
 ```
 
 ---
