@@ -3556,42 +3556,16 @@ Task 14 的代码审查留下三条已确认、但当时刻意不修的问题。
 - Modify: `Sources/TokenMeterCore/ClaudeCodeUsageEventParser.swift`
 - Test: `Tests/TokenMeterCoreTests/LocalAgentScannerTests.swift`
 
-### 一、零事件文件每次扫描都被完整重读
+### 一、~~零事件文件每次扫描都被完整重读~~ 已在 `56f6bde` 完成
 
-跳过条件（`LocalAgentScanner.swift:147-155`）要求 `writer.lastSourceOffset(sourceFileId:) != nil`，即"这个文件在 `usage_events` 里有行"。这一条是为 v1→v2 升级加的：v1 老库把 `source_files` 全标成 `ok`，只看 `ok` 会跳过一切，导致升级后一条事件都不落。
+跳过判据已从 `lastSourceOffset != nil` 换成 `parserState != nil`，随指纹惰性化一并落地。`parser_state` 精确表达"v2 的 scanner 完整解析过这个文件"，同时兼作 v1→v2 升级判据（v1 行的旧格式解不成 v2 的 `ParserState`，`decodeParserState` 返回 nil）。
 
-但它把"没有事件"和"没解析过"混为一谈。本机 19,211 个 2026-04-16 之前的 codex 文件永远不会有事件（见 spec §9.3.2），于是每次扫描都被完整重读——实测第二遍仍要 29.2 s。
+实测（真实 codex 根，第二遍空扫）：
 
-**改用 `parser_state IS NOT NULL` 作为判据。** 它精确表达的是"v2 的 scanner 完整解析过这个文件"：
-
-| 行的来源 | `parser_state` | 期望 | 新判据 |
-|---|---|---|---|
-| v1 遗留 | NULL（v1 从不写它，已 grep 确认全仓只有 v2 的 scanner 写） | 重扫 | 不跳过 ✓ |
-| v2 已解析，有事件 | 非 NULL | 跳过 | 跳过 ✓ |
-| v2 已解析，零事件 | 非 NULL | 跳过 | 跳过 ✓ |
-
-`parse_status == "ok"` 仍然是与条件的一部分，所以 `failed` 行（保留旧 `parser_state`）不会被误跳过。
-
-- [ ] **Step 1: 先写测试**
-
-```swift
-    func testZeroEventFileIsSkippedOnSecondScan() throws {
-        // 一个合法但不含任何用量的 jsonl。第二遍扫描 filesChanged 必须为 0。
-        // 旧判据（lastSourceOffset != nil）下它永远为 1。
-    }
-
-    func testV1LegacyRowIsStillRescanned() throws {
-        // 手工插入一个 parse_status='ok' 且 parser_state IS NULL 的 source_files 行，
-        // 模拟 v1 老库。扫描必须重读它并落下事件。
-        // 这是把判据从 lastSourceOffset 换成 parser_state 时唯一可能砸掉的性质。
-    }
-```
-
-第一个测试在改动前必须红，第二个在改动前后都必须绿。**两个都跑，都贴输出。**
-
-- [ ] **Step 2: 改判据，去掉那次 `lastSourceOffset` 查询**
-
-跳过条件不再需要查 `usage_events`，每个文件省一次 SQL。把 `:144` 那段注释改成描述新判据，并写明为什么 `parser_state` 能同时承担"升级检测"与"零事件收敛"两件事。
+| | 指纹 open 次数 | `files_changed` | 耗时 |
+|---|---:|---:|---:|
+| 改前 | ~19,971 | 19,211 | 40.2 s |
+| 改后 | **0** | **0** | **3.2 s** |
 
 ### 二、`autoreleasepool` 包住整个文件，而不是每一行
 
