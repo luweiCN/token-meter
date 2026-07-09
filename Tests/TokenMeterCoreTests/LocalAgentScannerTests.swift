@@ -37,7 +37,10 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(try scalarInt(database, "SELECT files_changed AS value FROM scan_runs ORDER BY id DESC LIMIT 1"), 0)
     }
 
-    func testResumesFromLastSourceOffsetPerFile() async throws {
+    func testResumeContinuesCumulativeDiffFromParserState() async throws {
+        // 续读时 Codex 的累计差分必须从 parser_state.lastCumulative 接着算，而不是从零重来。
+        // （这条不靠 +1 那个 bug——它守的是"累计基线跨续读被恢复"这个另外的不变量：
+        //  若不恢复，第二条会把整份累计值当增量，凭空翻倍。）
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("rollout.jsonl")
@@ -48,40 +51,15 @@ final class LocalAgentScannerTests: XCTestCase {
         try await scanner.scanRoot(id: 1)
         XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1)
 
-        // 追加一行后重扫，只应新增一条事件，且 event_seq 从 parser_state 续上（1 -> 2）。
+        // 累计值推进到 {3,4}。恢复基线 {1,2} → 第二条增量 {2,2}；不恢复则会当成 {3,4}。
         try appendJSONL(codexTokenCount(inputTokens: 3, outputTokens: 4, timestamp: "2026-07-08T02:00:00Z"), to: file)
         try await scanner.scanRoot(id: 1)
 
         XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 2)
-        let seqs = try database.query("SELECT event_seq FROM usage_events ORDER BY event_seq")
-            .compactMap { $0.int("event_seq") }
-        XCTAssertEqual(seqs, [1, 2])
+        let rows = try database.query("SELECT event_seq, tokens_input FROM usage_events ORDER BY event_seq")
+        XCTAssertEqual(rows.compactMap { $0.int("event_seq") }, [1, 2])
+        XCTAssertEqual(rows.compactMap { $0.int("tokens_input") }, [1, 2], "第二条 input 必须是 3-1=2，证明累计基线从 parser_state 恢复")
         XCTAssertEqual(try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"), 7)
-    }
-
-    func testResumeDoesNotReconsumeTheLastLine() async throws {
-        // 续读起点必须是上次读取停下的位置，而不是 max(source_offset) + 1。
-        // 后者落在最后一行的内部，靠「半行 JSON 解析失败」侥幸不出错。
-        // 这里最后一行没有前导空白，用 last_token_usage（每条都发事件，不被累计差分吞掉），
-        // 断言续读后正好两条、互不重复。
-        let directory = try temporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let file = directory.appendingPathComponent("rollout.jsonl")
-        let initialJSONL = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"resume-tail\",\"cwd\":\"/repo\"}}\n" +
-            "{\"type\":\"event_msg\",\"timestamp\":\"2026-07-08T01:00:00Z\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":5,\"output_tokens\":3}}}}\n"
-        try writeJSONL(initialJSONL, to: file)
-        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
-        let scanner = LocalAgentScanner(database: database)
-
-        try await scanner.scanRoot(id: 1)
-        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1)
-
-        try appendJSONL("{\"type\":\"event_msg\",\"timestamp\":\"2026-07-08T02:00:00Z\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":7,\"output_tokens\":2}}}}", to: file)
-        try await scanner.scanRoot(id: 1)
-
-        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 2)
-        let inputs = try database.query("SELECT tokens_input FROM usage_events ORDER BY event_seq").compactMap { $0.int("tokens_input") }
-        XCTAssertEqual(inputs, [5, 7], "上一行不得被重复消费")
     }
 
     func testResumeIsCorrectWhenALineHasLeadingWhitespace() async throws {
