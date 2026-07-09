@@ -119,6 +119,25 @@ final class OmpUsageEventParserTests: XCTestCase {
         XCTAssertEqual(session.projectPath, "/repo", "必须从 session 行的 cwd 取项目路径")
     }
 
+    func testSessionInitDoesNotClobberTheSessionId() throws {
+        // 943/1002 个真实 omp 文件是子 agent 文件：先一行 session（UUID + cwd），
+        // 再一行 session_init（8 位短 spawn id、无 cwd）。若两者共用一个 case 分支，
+        // 后者会把 sessionKey 从 UUID 覆盖成短串。
+        let lines = [
+            line(#"{"type":"session","version":3,"id":"019f247b-3a29-7000-9fcd-9677ee2fec1e","timestamp":"2026-07-08T01:00:00Z","cwd":"/repo"}"#, offset: 0),
+            line(#"{"type":"session_init","id":"8baf4900"}"#, offset: 1),
+            line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","model":"m","usage":{"input":1}}}"#, offset: 2)
+        ]
+
+        let (session, _) = try OmpUsageEventParser.parse(
+            lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/o.jsonl"), resuming: nil
+        )
+
+        XCTAssertEqual(session.sessionKey, "019f247b-3a29-7000-9fcd-9677ee2fec1e",
+                       "session_init 的短 spawn id 不得覆盖 session 行的 UUID")
+        XCTAssertEqual(session.projectPath, "/repo")
+    }
+
     func testFallsBackToFileNameForSessionKey() throws {
         let lines = [
             line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","model":"m","usage":{"input":1}}}"#, offset: 0)
