@@ -524,7 +524,36 @@ codex 事件既无 `messageId` 也无 `requestId`，所以 `UsageEvent.dedupeKey
 
 **一个方法论教训。** 我曾用一个"独立的" Python 脚本复现了 parser 在 `~/.codex/sessions` 上的输出——125,851 事件、17,501,293,111 token，一位不差——并据此断言 parser 没有问题。但那个脚本和 parser 一样逐行累加 `last_token_usage`，**它对这个缺陷并不独立**。两个共享同一盲点的实现互相印证，什么都证明不了。真正独立的第三方（ccusage）一比就出来了。挑选交叉验证的对象时，要问的不是"它是不是另一份代码"，而是"它会不会犯同一个错"。
 
-#### 9.3.4 codex 的 token 数据从 2026-04-16 才存在
+#### 9.3.4 Claude 多算约 17.9%：缺 `requestId` 的事件从不参与去重
+
+`UsageEvent.dedupeKey` 要求 `messageId` 与 `requestId` **同时**存在，否则为 nil。而 `UsageEventDeduplicator` 的第一遍循环把所有 nil 键的事件直接塞进 `passthrough`——它们再也不会参与任何去重。
+
+本机真实数据里，**54,929 个 Claude 事件有 `messageId` 却没有 `requestId`**，合计 4,501,777,798 token：
+
+| 文件类型 | 链路 | 事件数 | token |
+|---|---|---:|---:|
+| subagent | sidechain | 47,108 | 3,335,218,310 |
+| 顶层 | main | 7,821 | 1,166,559,488 |
+
+于是同一条 assistant 响应，在一处带 `requestId`、在另一处不带时，我们会计两次。一次 API 调用只计费一次。
+
+| 口径 | claude token |
+|---|---:|
+| 现状（缺 requestId 的从不去重） | 12,166,805,198 |
+| 按 `messageId` 去重 | 10,338,357,758 |
+| ccusage | 10,244,861,237 |
+
+**修法：Claude 的 `dedupeKey` 只用 `messageId`，`requestId` 不参与。** 三条实测支撑它是安全的：
+
+1. **0 个 `messageId` 出现在多个 `requestId` 下**（原注释已记录）。`requestId` 对去重毫无贡献，只会因为时有时无而破坏匹配。
+2. **0 个 `messageId` 跨越多个 `sessionId`**（41,482 个重复的 messageId 全在单个 session 内）。因此既有的 `UNIQUE(session_id, dedupe_key)` 足够，不需要全局唯一。这与 §11 记录的"subagent 转录里的 `sessionId` 就是父 session 的 UUID"互为印证。
+3. **0 个 `messageId` 同时出现在顶层文件与 subagent 文件里。** 重复只发生在同类文件内部（resume / fork 复制）。所以去重不会把 subagent 的真实用量误删——去重后 subagent 仍保留 3,832,820,456 token。
+
+`UsageEventDeduplicator` 的规则二（退化到只按 `messageId` 匹配，非 sidechain 胜过 sidechain）原本就是为这种情况写的。它失效的原因是位置：它跑在第二遍循环里，只处理**已经有 `dedupeKey`** 的事件，而缺 `requestId` 的事件在第一遍就被踢出去了。**我们为一个不存在的问题（一个 messageId 配多个 requestId）写了防御，却漏掉了真正存在的问题（requestId 时有时无）。**
+
+修完后仍比 ccusage 多 93,496,521（0.91%），原因待查，留给 Task 17。
+
+#### 9.3.5 codex 的 token 数据从 2026-04-16 才存在
 
 本机 19,971 个 codex rollout 文件里，**96.7% 完全不含 `token_count` 行**（随机抽样 300 个，290 个为零）。按文件名日期分组后边界是干净的：2026-02 与 2026-03 的文件无一例外没有 token 记录，2026-05 之后无一例外都有，交界在 **2026-04-16**（当日 15 个有、1 个无）。
 
@@ -637,7 +666,7 @@ Task 14 的代码审查用变异测试（把不变量对应的那一行改坏，
 
 一次"什么都没变"的增量扫描，代价必须与**变化的**文件数成正比，而不是与文件总数成正比。这条被破坏过一次：为续读安全加的指纹一度放在 `fileMetadata` 里，于是每个文件在跳过判据生效之前就被 open + 读 4 KB + 哈希。
 
-跳过判据最终是 `parse_status = 'ok'` ∧ size 未变 ∧ `mtime_ns` 未变 ∧ `parser_state IS NOT NULL`。最后一项一石二鸟：它精确表达"v2 的 scanner 完整解析过这个文件"，因而既能识别 v1 遗留行（旧格式解不成 v2 的 `ParserState`）要重扫，又让 19,211 个零事件的 codex 文件（§9.3.4）终于能被跳过——旧判据用"`usage_events` 里有没有这个文件的行"，把"没有事件"和"没解析过"混为一谈。
+跳过判据最终是 `parse_status = 'ok'` ∧ size 未变 ∧ `mtime_ns` 未变 ∧ `parser_state IS NOT NULL`。最后一项一石二鸟：它精确表达"v2 的 scanner 完整解析过这个文件"，因而既能识别 v1 遗留行（旧格式解不成 v2 的 `ParserState`）要重扫，又让 19,211 个零事件的 codex 文件（§9.3.5）终于能被跳过——旧判据用"`usage_events` 里有没有这个文件的行"，把"没有事件"和"没解析过"混为一谈。
 
 真实 codex 根，第二遍空扫：
 
