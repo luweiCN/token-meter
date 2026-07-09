@@ -526,9 +526,24 @@ schema v2；`LocalAgentSessionParser` 接口改为输出 `[UsageEvent]`；改造
 
 ### Phase 3 — 新 agent
 
-按已定型的 adapter 接口新增：Gemini CLI、pi-agent、Kilo、Qwen、OpenClaw。这五个在本机均有真实数据可供验证。
+按已定型的 adapter 接口新增：Gemini CLI、pi-agent、Kilo、Qwen、OpenClaw。
 
-验收：每个 adapter 有基于真实样本的单测；扫描后在 UI 中可见且数字合理。
+**本机数据可用性实测（2026-07-09，以 `ccusage <agent> daily --json` 的天数为准）：**
+
+| agent | 目录 | 体积 | 可读出的天数 |
+|---|---|---:|---:|
+| pi-agent | `~/.pi` | 15 GB | 6 |
+| Kilo | `~/.config/kilo` | 57 MB | 1 |
+| Gemini CLI | `~/.gemini` | 3.6 MB | 3 |
+| Qwen | `~/.qwen` | 40 KB | **0** |
+| OpenClaw | `~/.openclaw` | 36 KB | **0** |
+
+两件事因此改变：
+
+1. **Qwen 与 OpenClaw 无法用真实数据验证。** 目录存在但不含任何用量记录。它们的 adapter 只能靠合成 fixture，而合成 fixture 的假设与实现出自同一处，正是最容易同时错的地方（omp 的 `session_meta` 就是这么错的）。这两个 adapter 应当排在最后，并在 spec 中显式标注"未经真实数据验证"，直到本机产生数据为止。宁可晚交付，也不要交付一个看起来能跑、数字却没人核对过的 adapter。
+2. **pi-agent 一个源就有 15 GB**，超过当前四个源之和（12.8 GB）。全量扫描耗时预计从 177 s 增至 400 s 上下。这让 Task 15 的进度反馈从"锦上添花"变成必需品，也意味着 pi 的 adapter 必须严格流式——任何"先把文件读进内存"的写法都会在这里爆掉。
+
+验收：每个有真实数据的 adapter 都有基于真实样本的单测；扫描后在 UI 中可见且数字合理。Qwen 与 OpenClaw 的验收标准降级为"单测通过且不会在扫描中抛异常"，并记入已知风险。
 
 ## 10.1 Phase 1 实测记录（Task 14 后）
 
