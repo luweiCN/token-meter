@@ -1719,12 +1719,20 @@ public enum UsageEventDeduplicator {
         return (Array(byMessageId.values) + passthrough).sorted { $0.eventSeq < $1.eventSeq }
     }
 
+    /// 定义一个**全序**，使上面的 fold 与字典迭代顺序无关。
+    ///
+    /// 少了 eventSeq 这一级，完全并列（同 isSidechain、同 observedAt）时
+    /// 胜者取决于 Swift 每进程随机的哈希种子。靠 `.sorted()` 掩盖这种依赖
+    /// 是可行的，但要求每个读代码的人记住「这里不能删排序」；把序补全则不需要。
     private static func shouldReplace(_ existing: UsageEvent, with candidate: UsageEvent) -> Bool {
-        // 非 sidechain 永远胜过 sidechain
+        // 非 sidechain 永远胜过 sidechain：sidechain 是副本，非 sidechain 是原件
         if existing.isSidechain != candidate.isSidechain {
             return existing.isSidechain && !candidate.isSidechain
         }
-        return candidate.observedAt < existing.observedAt
+        if candidate.observedAt != existing.observedAt {
+            return candidate.observedAt < existing.observedAt
+        }
+        return candidate.eventSeq < existing.eventSeq
     }
 }
 ```
