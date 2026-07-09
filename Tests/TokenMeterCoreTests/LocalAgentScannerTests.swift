@@ -900,6 +900,68 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1, "更短的改写后，旧内容的尾部事件不得残留")
         XCTAssertEqual(try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"), 5)
     }
+
+    func testMalformedFingerprintNeverResumes() async throws {
+        // 各种畸形/边界的 content_fingerprint 都必须 fail closed：全量重读、清掉陈旧事件，不续读。
+        // 核心是负长度：Int("-5") 能解析，currentSize >= -5 恒真，hashPrefix(length:-5) 走空串分支，
+        // 于是 "-N:<空串哈希>" 会对**任何**新内容返回 true（带旧身份续读）。其余是回归锁。
+        let emptyHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" // SHA256("")
+        let cases: [String?] = [
+            "-5:\(emptyHash)",      // 负长度 + 空串哈希：本 bug 的核心
+            "",                     // 空串
+            "abc",                  // 无冒号
+            ":deadbeef",            // 缺长度
+            "12x:abcd",             // 长度非整数
+            "10:short",             // 哈希长度不对
+            "999999:\(emptyHash)",  // 长度大于文件
+            nil                     // 无指纹
+        ]
+        for fingerprint in cases {
+            let staleSurvivors = try await staleSessionEventCount(storedFingerprint: fingerprint)
+            XCTAssertEqual(staleSurvivors, 0, "content_fingerprint=\(fingerprint ?? "NULL") 必须全量重读，而不是续读")
+        }
+    }
+
+    /// 预置一个 (指纹 + 陈旧事件 + resumeOffset 指到文件末尾之后) 的行，扫一个"变大"的真实文件，
+    /// 返回陈旧会话残留的事件数：0 = 全量重读（fail closed），1 = 错误续读。
+    private func staleSessionEventCount(storedFingerprint: String?) async throws -> Int64 {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("rollout.jsonl")
+        try writeJSONL(codexJSONL(inputTokens: 9, outputTokens: 4, sessionId: "real-session"), to: file)
+        let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+        let sizeBytes = try XCTUnwrap((attributes[.size] as? NSNumber)?.int64Value)
+        let mtimeNs = Int64((try XCTUnwrap(attributes[.modificationDate] as? Date).timeIntervalSince1970 * 1_000_000_000).rounded())
+        let inode = (attributes[.systemFileNumber] as? NSNumber)?.int64Value
+        let dev = (attributes[.systemNumber] as? NSNumber)?.int64Value
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        try database.execute("INSERT INTO scan_runs(id, scan_root_id, run_kind, status) VALUES (99,1,'incremental','ok')")
+        try database.execute("INSERT INTO agent_sessions(id, source_kind, source_session_key, scan_root_id, provider_id, source_revision) VALUES (77,'codex_jsonl','stale-session',1,'codex','r')")
+        try database.execute(
+            """
+            INSERT INTO source_files(id, scan_root_id, relative_path, canonical_path, file_type, size_bytes, mtime_ns,
+                inode, dev, first_seen_run_id, last_seen_run_id, last_parsed_run_id, content_fingerprint, parse_status, parser_state)
+            VALUES (5, 1, 'rollout.jsonl', ?, 'jsonl_session', ?, ?, ?, ?, 99, 99, 99, ?, 'ok', ?)
+            """,
+            [
+                .text(file.path),
+                .int(1),
+                .int(mtimeNs - 1),
+                inode.map(SQLiteValue.int) ?? .null,
+                dev.map(SQLiteValue.int) ?? .null,
+                storedFingerprint.map(SQLiteValue.text) ?? .null,
+                .text("{\"lastEventSeq\":5,\"resumeOffset\":\(sizeBytes + 100)}")
+            ]
+        )
+        try database.execute(
+            """
+            INSERT INTO usage_events(session_id, source_file_id, event_seq, observed_epoch_ms, model_canonical, tokens_input, cost_source, source_offset)
+            VALUES (77, 5, 1, 1000, 'stale-model', 999, 'unknown', 0)
+            """
+        )
+        try await LocalAgentScanner(database: database).scanRoot(id: 1)
+        return try scalarInt(database, "SELECT count(*) AS value FROM usage_events WHERE session_id = 77")
+    }
 }
 
 // MARK: - Fixtures

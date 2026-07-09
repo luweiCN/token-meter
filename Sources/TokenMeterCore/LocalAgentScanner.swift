@@ -843,8 +843,12 @@ public final class LocalAgentScanner {
     }
 
     private func parseFingerprint(_ fingerprint: String) -> (length: Int, hash: String)? {
+        // length <= 0 必须拒绝：`Int("-5")` 能解析，而负长度会让 oldPrefixIntact 的
+        // `currentSize >= length` 恒真、`hashPrefix(length:)` 哈希空串，于是 "-N:<空串哈希>"
+        // 对任何新内容都匹配成功、放行续读。指纹的整个职责就是 fail closed，这里必须挡住它。
         guard let colon = fingerprint.firstIndex(of: ":"),
-              let length = Int(fingerprint[..<colon]) else { return nil }
+              let length = Int(fingerprint[..<colon]),
+              length > 0 else { return nil }
         return (length, String(fingerprint[fingerprint.index(after: colon)...]))
     }
 
