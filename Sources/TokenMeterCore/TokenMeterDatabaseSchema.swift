@@ -1,13 +1,21 @@
 public enum TokenMeterDatabaseSchema {
-    public static let currentVersion: Int64 = 3
+    /// 派生数据的 schema 版本。改动它 == 下次启动删光派生表、重建、等一次全量重扫。
+    /// 这是【零成本】的：数据的真相在会话文件里（~/.claude、~/.codex、~/.omp、opencode.db），不在这里。
+    /// 因此不需要 V1/V2/V3 那套版本化迁移链，也不需要「加列必须是加法」那套开发期约束。
+    ///
+    /// 为什么是 4 而不是 1：历史迁移链用 user_version 1/2/3 编号，生产库现在停在 user_version = 1
+    /// 的老 v1 形状（没有 usage_events）。若 derivedVersion 也取 1，migrate 会把老 v1 库误判成
+    /// 「已是最新」而跳过重建，永远建不出 usage_events。取 4（大于历史最大值 3）保证任何遗留库
+    /// （user_version ∈ 0/1/2/3）都与之不等，从而在下次启动时触发一次重建。
+    public static let derivedVersion: Int64 = 4
 
-    public static let v1 = """
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      version INTEGER PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-    );
-
+    /// 用户配置。永不删除。这三张表存的是无法从会话文件重建的东西：
+    /// - settings：过滤器 / 菜单栏偏好 / 自动刷新间隔
+    /// - provider_config_overrides：各 provider 的启用、显示名、菜单顺序
+    /// - scan_roots：扫描哪些目录（用户可能加了自定义路径），及其扫描状态列
+    /// 全是 CREATE TABLE IF NOT EXISTS，幂等，每次启动都跑也安全。以后要加列，请用
+    /// `ALTER TABLE ... ADD COLUMN`（同样幂等），永远不要把配置表卷进 derivedVersion 的重建。
+    public static let configTables = """
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value_json TEXT NOT NULL,
@@ -47,6 +55,15 @@ public enum TokenMeterDatabaseSchema {
       UNIQUE(stable_source_key)
     );
 
+    CREATE INDEX IF NOT EXISTS idx_settings_updated ON settings(updated_at DESC);
+    """
+
+    /// 派生数据。全部可由一次全量重扫从会话文件重建，故 schema 版本一变就整体 DROP + CREATE。
+    /// 这里包含 source_files / projects / agent_sessions / scan_runs / usage_events /
+    /// daily_rollup / session_rollup / model_pricing 及它们的索引。
+    /// 注意：agent_sessions 用的是「事件级」之后的最终形状——已删掉下沉到 usage_events 的
+    /// source_file_id / model_name / total_cost_usd_micros / worktree_path / session_closed_at 五列。
+    public static let derivedTables = """
     CREATE TABLE IF NOT EXISTS source_files (
       id INTEGER PRIMARY KEY,
       scan_root_id INTEGER NOT NULL REFERENCES scan_roots(id) ON DELETE CASCADE,
@@ -85,23 +102,18 @@ public enum TokenMeterDatabaseSchema {
       source_kind TEXT NOT NULL,
       source_session_key TEXT NOT NULL,
       scan_root_id INTEGER NOT NULL REFERENCES scan_roots(id) ON DELETE CASCADE,
-      source_file_id INTEGER REFERENCES source_files(id) ON DELETE SET NULL,
       project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
       provider_id TEXT,
       agent_name TEXT,
       model_provider TEXT,
-      model_name TEXT,
       cli_version TEXT,
       session_started_at TEXT,
       session_updated_at TEXT,
-      session_closed_at TEXT,
       cwd_path TEXT,
-      worktree_path TEXT,
       title TEXT,
       status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'closed', 'deleted', 'orphaned')),
       message_count INTEGER,
       event_count INTEGER,
-      total_cost_usd_micros INTEGER,
       source_revision TEXT NOT NULL,
       first_seen_run_id INTEGER REFERENCES scan_runs(id) ON DELETE SET NULL,
       last_seen_run_id INTEGER REFERENCES scan_runs(id) ON DELETE SET NULL,
@@ -109,55 +121,6 @@ public enum TokenMeterDatabaseSchema {
       deleted_at TEXT,
       raw_meta_json TEXT,
       UNIQUE(source_kind, source_session_key)
-    );
-
-    CREATE TABLE IF NOT EXISTS session_usage (
-      id INTEGER PRIMARY KEY,
-      session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
-      observed_at TEXT NOT NULL,
-      usage_seq INTEGER NOT NULL,
-      metric_scope TEXT NOT NULL DEFAULT 'session' CHECK (metric_scope IN ('session', 'window', 'total')),
-      window_label TEXT,
-      tokens_input INTEGER,
-      tokens_output INTEGER,
-      tokens_reasoning INTEGER,
-      tokens_cache_read INTEGER,
-      tokens_cache_write INTEGER,
-      tokens_total INTEGER GENERATED ALWAYS AS (
-        coalesce(tokens_input,0) + coalesce(tokens_output,0) + coalesce(tokens_reasoning,0) +
-        coalesce(tokens_cache_read,0) + coalesce(tokens_cache_write,0)
-      ) VIRTUAL,
-      cost_usd_micros INTEGER,
-      source_event_id TEXT,
-      source_offset INTEGER,
-      source_hash TEXT,
-      is_cumulative INTEGER NOT NULL DEFAULT 1 CHECK (is_cumulative IN (0,1)),
-      UNIQUE(session_id, usage_seq),
-      UNIQUE(session_id, source_event_id),
-      UNIQUE(session_id, source_offset),
-      UNIQUE(session_id, id)
-    );
-
-    CREATE TABLE IF NOT EXISTS session_usage_latest (
-      session_id INTEGER PRIMARY KEY REFERENCES agent_sessions(id) ON DELETE CASCADE,
-      session_usage_id INTEGER NOT NULL UNIQUE REFERENCES session_usage(id) ON DELETE CASCADE,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (session_id, session_usage_id) REFERENCES session_usage(session_id, id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS provider_daily_usage (
-      usage_date TEXT NOT NULL,
-      provider_id TEXT NOT NULL,
-      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
-      source_kind TEXT NOT NULL,
-      sessions_count INTEGER NOT NULL,
-      tokens_input INTEGER NOT NULL DEFAULT 0,
-      tokens_output INTEGER NOT NULL DEFAULT 0,
-      tokens_reasoning INTEGER NOT NULL DEFAULT 0,
-      tokens_cache_read INTEGER NOT NULL DEFAULT 0,
-      tokens_cache_write INTEGER NOT NULL DEFAULT 0,
-      total_cost_usd_micros INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (usage_date, provider_id, project_id, source_kind)
     );
 
     CREATE TABLE IF NOT EXISTS scan_runs (
@@ -184,23 +147,8 @@ public enum TokenMeterDatabaseSchema {
     CREATE INDEX IF NOT EXISTS idx_source_files_inode ON source_files(scan_root_id, dev, inode) WHERE inode IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_sessions_project_updated ON agent_sessions(project_id, session_updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_sessions_provider_updated ON agent_sessions(provider_id, session_updated_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_sessions_source_file ON agent_sessions(source_file_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_status_updated ON agent_sessions(status, session_updated_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_usage_session_observed ON session_usage(session_id, observed_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_daily_provider_date ON provider_daily_usage(provider_id, usage_date DESC);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_unique_project_scope ON provider_daily_usage(usage_date, provider_id, coalesce(project_id, -1), source_kind);
-    CREATE INDEX IF NOT EXISTS idx_daily_project_provider_date ON provider_daily_usage(project_id, provider_id, usage_date DESC);
-    CREATE INDEX IF NOT EXISTS idx_settings_updated ON settings(updated_at DESC);
 
-    INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (1, 'phase2_hybrid_sessions');
-    PRAGMA user_version = 1;
-    """
-
-    /// v2 只做加法：新增四张表，不触碰 v1 的任何表。
-    /// v1 全是 CREATE TABLE IF NOT EXISTS，migrator 顺序执行两段即可：
-    /// 全新库跑 v1 + v2Additions，v1 老库只跑 v2Additions。
-    /// 旧表的删除由 Task 18 负责，那时 scanner 已切换完毕。
-    public static let v2Additions = """
     CREATE TABLE IF NOT EXISTS usage_events (
       id INTEGER PRIMARY KEY,
       session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
@@ -282,37 +230,21 @@ public enum TokenMeterDatabaseSchema {
       source TEXT NOT NULL CHECK (source IN ('litellm', 'builtin', 'user')),
       snapshot_version TEXT
     );
-
-    INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (2, 'phase3_message_level_usage');
-    PRAGMA user_version = 2;
     """
 
-    /// v3：删除 v1 的用量表与 agent_sessions 上已下沉、且再无人读的列。
-    /// 此时 writer 只写 usage_events，scanner 只调 writer，Electron 只查 rollup 表。
-    ///
-    /// 只删「无人读」的列。计划原稿还想删 model_provider / message_count / event_count，
-    /// 但 Electron 的 sessionsRepository.query 仍从 agent_sessions 读这三列（modelProvider /
-    /// messageCount / eventCount）。删了它们，会话列表查询会在运行时抛 "no such column"。
-    /// v2 写入路径不再填充它们（值为 NULL），但「列存在返回 NULL」和「列不存在报错」是两回事，
-    /// 故保留。真正无人读的是下面这五列。
-    ///
-    /// `ALTER TABLE ... DROP COLUMN` 需要 SQLite 3.35+；本机链接 3.51.0，已实测五列（含带外键
-    /// 约束的 source_file_id，在摘掉其索引后）均可删除。
-    public static let v3Cleanup = """
-    DROP TABLE IF EXISTS provider_daily_usage;
-    DROP TABLE IF EXISTS session_usage_latest;
-    DROP TABLE IF EXISTS session_usage;
-
-    -- DROP COLUMN 不能删除被索引引用的列，先摘掉索引
-    DROP INDEX IF EXISTS idx_sessions_source_file;
-
-    ALTER TABLE agent_sessions DROP COLUMN source_file_id;
-    ALTER TABLE agent_sessions DROP COLUMN model_name;
-    ALTER TABLE agent_sessions DROP COLUMN total_cost_usd_micros;
-    ALTER TABLE agent_sessions DROP COLUMN worktree_path;
-    ALTER TABLE agent_sessions DROP COLUMN session_closed_at;
-
-    INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (3, 'phase3_drop_v1_usage_tables');
-    PRAGMA user_version = 3;
+    /// 重建派生表后，把 scan_roots 上的扫描状态清回「从未扫描过」。
+    /// last_successful_cursor 是关键：OpenCode 的 changedSessions(after:) 用它做
+    /// `time_updated > cursor` 的增量过滤——若 usage_events 被清空而游标还在，适配器会因
+    /// 「游标之后无变化」返回空集，被清掉的 OpenCode 事件永不重建（Phase 1 Task 15 的教训）。
+    /// 另外三列（started/finished/last_error）是扫描进度与错误的展示状态，一并清掉，
+    /// 让 scan_roots 诚实地反映「派生数据已清空、尚未重扫」。
+    /// TokenMeterDatabaseMigrator 的重建与 LocalAgentScanner.fullRescan 都执行这一段常量，
+    /// 清同样的列——共用一份 SQL，故两处不会漂移。
+    public static let resetScanState = """
+    UPDATE scan_roots SET
+      last_successful_cursor = NULL,
+      last_scan_started_at = NULL,
+      last_scan_finished_at = NULL,
+      last_error = NULL
     """
 }

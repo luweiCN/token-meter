@@ -56,10 +56,11 @@ public final class LocalAgentScanner {
         try database.execute("DELETE FROM session_rollup")
         try database.execute("DELETE FROM usage_events")
         try database.execute("UPDATE source_files SET parser_state = NULL, parse_status = 'pending'")
-        // OpenCode 的 changedSessions(after:) 用这个游标做增量过滤：不清空它，被删掉的 OpenCode
-        // 事件在重扫时会因「游标之后无变化」而不被重建。JSONL 的续读走 per-file parser_state，
-        // 与此列无关，清空对它无害。
-        try database.execute("UPDATE scan_roots SET last_successful_cursor = NULL")
+        // scan_roots 的扫描状态清回「从未扫描过」。last_successful_cursor 是关键：OpenCode 的
+        // changedSessions(after:) 用它做增量过滤，不清空它，被删掉的 OpenCode 事件在重扫时会因
+        // 「游标之后无变化」而不被重建。JSONL 的续读走 per-file parser_state，与此列无关，一并清空无害。
+        // 与 TokenMeterDatabaseMigrator 的派生重建共用同一段常量——两处清同样的列，不会漂移。
+        try database.execute(TokenMeterDatabaseSchema.resetScanState)
 
         let rootIds = try loadEnabledRootIds()
         let totals = try corpusTotals(rootIds: rootIds)
