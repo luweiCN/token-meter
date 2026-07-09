@@ -3,6 +3,16 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { SessionsRepository } from './sessionsRepository.js';
 
+// Epoch-ms timestamps for the last event of each session. session_rollup stores
+// last_event_epoch_ms as an integer; the repository renders it back to an ISO string.
+const T1 = Date.parse('2026-07-03T09:30:00Z');
+const T2 = Date.parse('2026-07-03T12:00:00Z');
+const T3 = Date.parse('2026-07-03T11:00:00Z');
+const iso = (ms: number) => new Date(ms).toISOString();
+
+// v2 fixture. sessionsRepository.query() is now driven by session_rollup: only sessions
+// that produced usage events appear, and per-session totals + model come from the rollup,
+// not from session_usage (removed) or agent_sessions columns.
 function createSessionsDb() {
   const db = new Database(':memory:');
   db.exec(`
@@ -27,7 +37,7 @@ function createSessionsDb() {
       id INTEGER PRIMARY KEY,
       source_kind TEXT NOT NULL,
       source_session_key TEXT NOT NULL,
-      scan_root_id INTEGER NOT NULL REFERENCES scan_roots(id) ON DELETE CASCADE,
+      scan_root_id INTEGER NOT NULL,
       project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
       provider_id TEXT,
       agent_name TEXT,
@@ -36,50 +46,24 @@ function createSessionsDb() {
       cli_version TEXT,
       session_started_at TEXT,
       session_updated_at TEXT,
-      session_closed_at TEXT,
-      cwd_path TEXT,
-      worktree_path TEXT,
       title TEXT,
       status TEXT NOT NULL DEFAULT 'active',
       message_count INTEGER,
       event_count INTEGER,
-      total_cost_usd_micros INTEGER,
       source_revision TEXT NOT NULL,
-      deleted_at TEXT,
       raw_meta_json TEXT,
       UNIQUE(source_kind, source_session_key)
     );
 
-    CREATE TABLE session_usage (
-      id INTEGER PRIMARY KEY,
-      session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
-      observed_at TEXT NOT NULL,
-      usage_seq INTEGER NOT NULL,
-      metric_scope TEXT NOT NULL DEFAULT 'session',
-      window_label TEXT,
-      tokens_input INTEGER,
-      tokens_output INTEGER,
-      tokens_reasoning INTEGER,
-      tokens_cache_read INTEGER,
-      tokens_cache_write INTEGER,
-      tokens_total INTEGER GENERATED ALWAYS AS (
-        coalesce(tokens_input,0) + coalesce(tokens_output,0) + coalesce(tokens_reasoning,0) +
-        coalesce(tokens_cache_read,0) + coalesce(tokens_cache_write,0)
-      ) VIRTUAL,
-      cost_usd_micros INTEGER,
-      source_event_id TEXT,
-      source_offset INTEGER,
-      source_hash TEXT,
-      is_cumulative INTEGER NOT NULL DEFAULT 1,
-      UNIQUE(session_id, usage_seq),
-      UNIQUE(session_id, id)
-    );
-
-    CREATE TABLE session_usage_latest (
+    CREATE TABLE session_rollup (
       session_id INTEGER PRIMARY KEY REFERENCES agent_sessions(id) ON DELETE CASCADE,
-      session_usage_id INTEGER NOT NULL UNIQUE REFERENCES session_usage(id) ON DELETE CASCADE,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (session_id, session_usage_id) REFERENCES session_usage(session_id, id) ON DELETE CASCADE
+      first_event_epoch_ms INTEGER NOT NULL,
+      last_event_epoch_ms INTEGER NOT NULL,
+      events_count INTEGER NOT NULL,
+      tokens_total INTEGER NOT NULL,
+      cost_usd_micros INTEGER NOT NULL,
+      cost_unknown_events INTEGER NOT NULL DEFAULT 0,
+      primary_model TEXT
     );
 
     INSERT INTO scan_roots(id, kind, root_path, display_name, stable_source_key) VALUES
@@ -89,39 +73,36 @@ function createSessionsDb() {
     INSERT INTO projects(id, project_key, canonical_path, display_name, first_seen_at, last_seen_at) VALUES
       (10, 'token-meter', '/work/token-meter', 'Token Meter', '2026-07-01T00:00:00Z', '2026-07-03T00:00:00Z');
 
+    -- model_name here is intentionally stale so tests can prove modelName comes from
+    -- session_rollup.primary_model, not from the agent_sessions column.
     INSERT INTO agent_sessions(
       id, source_kind, source_session_key, scan_root_id, project_id, provider_id, agent_name,
       model_provider, model_name, cli_version, session_started_at, session_updated_at,
-      cwd_path, worktree_path, title, status, message_count, event_count, total_cost_usd_micros,
-      source_revision, deleted_at, raw_meta_json
+      title, status, message_count, event_count, source_revision, raw_meta_json
     ) VALUES
-      (1, 'codex_jsonl', 'codex-old', 1, 10, 'codex', 'Codex', 'openai', 'gpt-5', '1.0.0',
-       '2026-07-01T08:00:00Z', '2026-07-03T09:00:00Z', '/work/token-meter', '/work/token-meter', 'Implement repo',
-       'active', 5, 9, 30000, 'rev-a', NULL, '{"safe":"metadata","prompt":"SECRET_PROMPT_SHOULD_NOT_LEAK"}'),
-      (2, 'codex_jsonl', 'codex-new', 1, 10, 'codex', 'Codex', 'openai', 'gpt-5', '1.0.0',
-       '2026-07-02T08:00:00Z', '2026-07-03T10:00:00Z', '/work/token-meter', '/work/token-meter', 'Latest usage wins',
-       'active', 6, 10, 50000, 'rev-b', NULL, '{"tool_output":"SECRET_TOOL_OUTPUT_SHOULD_NOT_LEAK"}'),
-      (3, 'claude_jsonl', 'claude-one', 2, NULL, 'claude-code', 'Claude Code', 'anthropic', 'claude-sonnet', '2.0.0',
-       '2026-07-02T09:00:00Z', '2026-07-03T11:00:00Z', '/work/other', '/work/other', 'Claude session',
-       'closed', 7, 11, 70000, 'rev-c', NULL, '{"reasoning":"SECRET_REASONING_SHOULD_NOT_LEAK"}'),
-      (4, 'codex_jsonl', 'deleted-session', 1, 10, 'codex', 'Codex', 'openai', 'gpt-5', '1.0.0',
-       '2026-07-02T10:00:00Z', '2026-07-03T12:00:00Z', '/work/token-meter', '/work/token-meter', 'Deleted',
-       'deleted', 99, 99, 990000, 'rev-d', '2026-07-03T12:30:00Z', '{"message":"DELETED_SECRET"}');
+      (1, 'codex_jsonl', 'codex-old', 1, 10, 'codex', 'Codex', 'openai', 'stale-agent-model', '1.0.0',
+       '2026-07-01T08:00:00Z', '2026-07-03T09:00:00Z', 'Implement repo',
+       'active', 5, 9, 'rev-a', '{"safe":"metadata","prompt":"SECRET_PROMPT_SHOULD_NOT_LEAK"}'),
+      (2, 'codex_jsonl', 'codex-new', 1, 10, 'codex', 'Codex', 'openai', 'stale-agent-model', '1.0.0',
+       '2026-07-02T08:00:00Z', '2026-07-03T10:00:00Z', 'Latest usage wins',
+       'active', 6, 10, 'rev-b', '{"tool_output":"SECRET_TOOL_OUTPUT_SHOULD_NOT_LEAK"}'),
+      (3, 'claude_jsonl', 'claude-one', 2, NULL, 'claude-code', 'Claude Code', 'anthropic', 'stale-agent-model', '2.0.0',
+       '2026-07-02T09:00:00Z', '2026-07-03T11:00:00Z', 'Claude session',
+       'closed', 7, 11, 'rev-c', '{"reasoning":"SECRET_REASONING_SHOULD_NOT_LEAK"}'),
+      (4, 'codex_jsonl', 'deleted-session', 1, 10, 'codex', 'Codex', 'openai', 'stale-agent-model', '1.0.0',
+       '2026-07-02T10:00:00Z', '2026-07-03T12:00:00Z', 'Deleted',
+       'deleted', 99, 99, 'rev-d', '{"message":"DELETED_SECRET"}'),
+      (5, 'codex_jsonl', 'codex-noevents', 1, 10, 'codex', 'Codex', 'openai', 'stale-agent-model', '1.0.0',
+       '2026-07-02T11:00:00Z', '2026-07-03T13:00:00Z', 'No token data on disk',
+       'active', 0, 0, 'rev-e', '{"message":"NO_EVENTS_SECRET"}');
 
-    INSERT INTO session_usage(
-      id, session_id, observed_at, usage_seq, tokens_input, tokens_output, tokens_reasoning,
-      tokens_cache_read, tokens_cache_write, cost_usd_micros, source_event_id, source_offset, source_hash
-    ) VALUES
-      (101, 1, '2026-07-03T09:30:00Z', 1, 10, 20, 0, 5, 0, 30000, 'event-1', 100, 'hash-1'),
-      (102, 2, '2026-07-03T12:00:00Z', 1, 20, 30, 5, 0, 0, 50000, 'event-2', 200, 'hash-2'),
-      (103, 3, '2026-07-03T11:00:00Z', 1, 30, 40, 0, 0, 7, 70000, 'event-3', 300, 'hash-3'),
-      (104, 4, '2026-07-03T13:00:00Z', 1, 90, 9, 0, 0, 0, 990000, 'event-4', 400, 'hash-4');
-
-    INSERT INTO session_usage_latest(session_id, session_usage_id, updated_at) VALUES
-      (1, 101, '2026-07-03T09:31:00Z'),
-      (2, 102, '2026-07-03T12:01:00Z'),
-      (3, 103, '2026-07-03T11:01:00Z'),
-      (4, 104, '2026-07-03T13:01:00Z');
+    -- Only sessions with real usage events get a session_rollup row. Session 4 is deleted
+    -- (RollupBuilder excludes it); session 5 yielded zero events (the pre-2026-04-16 Codex
+    -- case) so it has no rollup and must not surface as a wall-of-zeros row.
+    INSERT INTO session_rollup(session_id, first_event_epoch_ms, last_event_epoch_ms, events_count, tokens_total, cost_usd_micros, primary_model) VALUES
+      (1, ${T1 - 60000}, ${T1}, 9, 35, 30000, 'gpt-5'),
+      (2, ${T2 - 60000}, ${T2}, 10, 55, 50000, 'gpt-5'),
+      (3, ${T3 - 60000}, ${T3}, 11, 77, 70000, 'claude-sonnet');
   `);
   return db;
 }
@@ -141,7 +122,7 @@ describe('SessionsRepository', () => {
     return new SessionsRepository(db);
   }
 
-  it('query excludes deleted sessions, joins latest usage totals, and orders by latest observed time before session update time', () => {
+  it('query lists only sessions with usage events, joins rollup totals and primary model, and orders by latest event time', () => {
     const result = openRepo().query({ limit: 10, offset: 0 });
 
     expect(result.total).toBe(3);
@@ -153,7 +134,8 @@ describe('SessionsRepository', () => {
         providerId: 'codex',
         projectId: 10,
         projectDisplayName: 'Token Meter',
-        latestObservedAt: '2026-07-03T12:00:00Z',
+        modelName: 'gpt-5',
+        latestObservedAt: iso(T2),
         updatedAt: '2026-07-03T10:00:00Z',
         tokensTotal: 55,
         costUsdMicros: 50000
@@ -165,7 +147,8 @@ describe('SessionsRepository', () => {
         providerId: 'claude-code',
         projectId: null,
         projectDisplayName: null,
-        latestObservedAt: '2026-07-03T11:00:00Z',
+        modelName: 'claude-sonnet',
+        latestObservedAt: iso(T3),
         updatedAt: '2026-07-03T11:00:00Z',
         tokensTotal: 77,
         costUsdMicros: 70000
@@ -176,18 +159,22 @@ describe('SessionsRepository', () => {
         sourceKind: 'codex_jsonl',
         providerId: 'codex',
         projectId: 10,
-        latestObservedAt: '2026-07-03T09:30:00Z',
+        modelName: 'gpt-5',
+        latestObservedAt: iso(T1),
         updatedAt: '2026-07-03T09:00:00Z',
         tokensTotal: 35,
         costUsdMicros: 30000
       })
     ]);
-    expect(result.items.map((item) => item.sessionKey)).not.toContain('deleted-session');
+    const keys = result.items.map((item) => item.sessionKey);
+    expect(keys).not.toContain('deleted-session');
+    expect(keys).not.toContain('codex-noevents');
   });
 
   it('query filters by provider, paginates, and never exposes raw prompt-like metadata', () => {
     const result = openRepo().query({ providerId: 'codex', limit: 1, offset: 1 });
 
+    // codex sessions with events = {1, 2}; the zero-event codex session 5 is excluded.
     expect(result.total).toBe(2);
     expect(result.items).toEqual([
       expect.objectContaining({
@@ -200,7 +187,7 @@ describe('SessionsRepository', () => {
     expect(result.items[0]).not.toHaveProperty('raw_meta_json');
     expect(result.items[0]).not.toHaveProperty('rawMetaJson');
     expect(result.items[0]).not.toHaveProperty('rawMeta');
-    expect(JSON.stringify(result)).not.toMatch(/SECRET_|prompt|tool_output|reasoning|DELETED_SECRET/);
+    expect(JSON.stringify(result)).not.toMatch(/SECRET_|prompt|tool_output|reasoning|DELETED_SECRET|NO_EVENTS/);
   });
 
   it('rejects malformed renderer session filters instead of throwing TypeError or silently changing pagination', () => {
@@ -217,10 +204,7 @@ describe('SessionsRepository', () => {
     ];
 
     for (const { name, filter } of invalidFilters) {
-      expect(
-        () => repo.query(filter as never),
-        name
-      ).toThrow(/sessions filter/i);
+      expect(() => repo.query(filter as never), name).toThrow(/sessions filter/i);
     }
   });
 });

@@ -44,6 +44,11 @@ export class SessionsRepository {
     const limit = validatedFilter.limit ?? 50;
     const offset = validatedFilter.offset ?? 0;
     const providerId = validatedFilter.providerId ?? null;
+    // Driven by session_rollup (INNER JOIN): only sessions that produced usage events are
+    // listed. Sessions with no token data on disk — e.g. Codex sessions from before
+    // 2026-04-16, which never wrote token counts — have no rollup row and must not surface
+    // as a wall of zeros. Per-session totals and the primary model come from the rollup;
+    // model_name on agent_sessions is a stale legacy column (dropped in Task 18).
     const items = this.db
       .prepare(
         `SELECT s.id AS id,
@@ -54,23 +59,22 @@ export class SessionsRepository {
                 p.display_name AS projectDisplayName,
                 s.agent_name AS agentName,
                 s.model_provider AS modelProvider,
-                s.model_name AS modelName,
+                sr.primary_model AS modelName,
                 s.title AS title,
                 s.status AS status,
                 s.session_started_at AS startedAt,
                 s.session_updated_at AS updatedAt,
                 s.message_count AS messageCount,
                 s.event_count AS eventCount,
-                u.observed_at AS latestObservedAt,
-                u.tokens_total AS tokensTotal,
-                u.cost_usd_micros AS costUsdMicros
+                strftime('%Y-%m-%dT%H:%M:%fZ', sr.last_event_epoch_ms / 1000.0, 'unixepoch') AS latestObservedAt,
+                sr.tokens_total AS tokensTotal,
+                sr.cost_usd_micros AS costUsdMicros
          FROM agent_sessions s
+         JOIN session_rollup sr ON sr.session_id = s.id
          LEFT JOIN projects p ON p.id = s.project_id
-         LEFT JOIN session_usage_latest ul ON ul.session_id = s.id
-         LEFT JOIN session_usage u ON u.id = ul.session_usage_id
          WHERE (? IS NULL OR s.provider_id = ?)
            AND s.status != 'deleted'
-         ORDER BY coalesce(u.observed_at, s.session_updated_at, s.session_started_at) DESC,
+         ORDER BY sr.last_event_epoch_ms DESC,
                   s.session_updated_at DESC,
                   s.id DESC
          LIMIT ? OFFSET ?`
@@ -78,7 +82,12 @@ export class SessionsRepository {
       .all(providerId, providerId, limit, offset) as SessionItem[];
 
     const total = this.db
-      .prepare(`SELECT count(*) AS count FROM agent_sessions WHERE (? IS NULL OR provider_id = ?) AND status != 'deleted'`)
+      .prepare(
+        `SELECT count(*) AS count
+         FROM agent_sessions s
+         JOIN session_rollup sr ON sr.session_id = s.id
+         WHERE (? IS NULL OR s.provider_id = ?) AND s.status != 'deleted'`
+      )
       .get(providerId, providerId) as CountRow;
 
     return { items, total: total.count };
