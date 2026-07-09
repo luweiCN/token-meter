@@ -757,7 +757,17 @@ Task 14 的代码审查用变异测试（把不变量对应的那一行改坏，
 
 这条只能靠测量得到。三个配置里排名第二的那个，是任何人凭直觉都会先写的那个。
 
-### 10.5 文件分类属于 parser，不属于 scanner
+### 10.5 全量重扫不开事务，靠自愈
+
+`fullRescan` 的清理语句跑完之后（删事件与 rollup、`parser_state = NULL`、`parse_status = 'pending'`、`last_successful_cursor = NULL`），数据库的状态与「从未扫描过」**逐字节不可区分**。跳过判据和 `shouldResume` 都要求 `parse_status = 'ok'`，所以 pending 的文件必定被完整重读。因此 275 秒的重扫中途任何一刻崩溃，留下的只是"下次增量扫描要重做的工作"，没有任何数据损失。
+
+这就是不开事务的许可证。反过来说：若 `testInterruptedFullRescanSelfHealsOnNextIncrementalScan` 变红，`fullRescan` 就必须改用事务或影子表——一个跨越几分钟、写入 26 万行的写事务会锁死整个库，并把 WAL 撑到明细表那么大。
+
+**清空 `last_successful_cursor` 是必需的，但理由只对 OpenCode 成立。** JSONL 的续读靠 `source_files.parser_state`，那个游标是惰性的、清不清都一样。而 `OpenCodeUsageEventAdapter.changedSessions(after:)` 用它做 `time_updated > ?` 过滤：`usage_events` 被删空后若游标还在，它会返回空集，`.db` 的指纹也没变——**那些被删掉的 OpenCode 事件就再也不会被重建**。「从未扫描过」这个状态必须对每一种源都成立，否则自愈只是部分成立。
+
+实测：真实语料 11.15 GiB / 26,374 个文件，耗时 274.7 s，发出 **102** 条进度事件（上限约 201），峰值 RSS 1116 MiB。事件总数与同一时刻的普通增量扫描相差 +7，正是这几分钟里语料自身的增长——两条路径收敛。
+
+### 10.6 文件分类属于 parser，不属于 scanner
 
 `sawClaudeUsage` 曾用裸子串 `line.text.contains("\"usage\"")` 在 scanner 里判断：一个没有 `sessionId` 的 Claude 文件，究竟是辅助文件（跳过）还是坏掉的会话文件（失败，把整根拖成 partial）。正文里碰巧出现这个字面量就会误判。
 
@@ -787,4 +797,5 @@ Task 14 的代码审查用变异测试（把不变量对应的那一行改坏，
 - **Codex `service_tier` 倍率未实现**，本机配置未启用该字段，无法验证。
 - **每个 parser 各自构造 `ISO8601DateFormatter`**，实测约 171 µs / 次，12,447 个 Claude 文件合计约 2.13 秒。改成 `static let` 能省掉，但 Apple 从未在文档里承诺 `ISO8601DateFormatter` 对并发 `date(from:)` 是线程安全的（`DateFormatter` 有此承诺，它没有）。全量重扫本身是分钟级，2 秒占比不足 2%——不为一个具体的小收益换一个抽象的并发风险。若将来改成并行扫描，这个决定不必回头看。
 - **subagent 的 `agentId` / `attributionAgent` 字段未被采集。** 它们能支持「按子 agent 归因成本」，但 Phase 1 不需要。真要做时，parser 加两个字段即可。
+- **全量重扫的峰值内存 1116 MiB，且同一进程内连跑两次会到 1897 MiB。** 后者说明内存**没有在两次扫描之间归还**。单根冷扫 codex 的峰值是 311.6 MiB（§10.4），四根 11.15 GiB 全量重扫是 1116 MiB——大致随语料线性增长，而不是被 pool 边界压住。全量重扫是罕见的显式操作，不是常驻路径，所以不阻塞 Phase 1；但"跑第二次更高"这一点值得单独查，它指向某个跨根存活的引用。
 - **`OpenCodeUsageEventAdapter.changedMessageRows` 没有 `LIMIT`，一次把整张 `message` 表读进内存。** 实测行数 18,121，`data` 列合计 **168 MB**，单行最大 12.1 MB。`opencode.db` 文件确实有 1.9 GB，但绝大部分是其他表、索引与空闲页——**「1.9 GB 的数据库」不等于「1.9 GB 进内存」**，早先的记录夸大了这一点。168 MB 加上 Swift 字符串开销仍会把扫描峰值推高（codex 根已优化到 311 MB），值得改成按 `id` 分页游标，但不属于正确性问题。
