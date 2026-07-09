@@ -771,3 +771,4 @@ Task 14 的代码审查用变异测试（把不变量对应的那一行改坏，
 - **Codex `service_tier` 倍率未实现**，本机配置未启用该字段，无法验证。
 - **每个 parser 各自构造 `ISO8601DateFormatter`**，实测约 171 µs / 次，12,447 个 Claude 文件合计约 2.13 秒。改成 `static let` 能省掉，但 Apple 从未在文档里承诺 `ISO8601DateFormatter` 对并发 `date(from:)` 是线程安全的（`DateFormatter` 有此承诺，它没有）。全量重扫本身是分钟级，2 秒占比不足 2%——不为一个具体的小收益换一个抽象的并发风险。若将来改成并行扫描，这个决定不必回头看。
 - **subagent 的 `agentId` / `attributionAgent` 字段未被采集。** 它们能支持「按子 agent 归因成本」，但 Phase 1 不需要。真要做时，parser 加两个字段即可。
+- **`OpenCodeUsageEventAdapter.changedMessageRows` 没有 `LIMIT`，一次把整张 `message` 表读进内存。** 实测行数 18,121，`data` 列合计 **168 MB**，单行最大 12.1 MB。`opencode.db` 文件确实有 1.9 GB，但绝大部分是其他表、索引与空闲页——**「1.9 GB 的数据库」不等于「1.9 GB 进内存」**，早先的记录夸大了这一点。168 MB 加上 Swift 字符串开销仍会把扫描峰值推高（codex 根已优化到 311 MB），值得改成按 `id` 分页游标，但不属于正确性问题。
