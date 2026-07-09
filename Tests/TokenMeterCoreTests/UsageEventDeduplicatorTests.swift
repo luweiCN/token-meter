@@ -94,4 +94,21 @@ final class UsageEventDeduplicatorTests: XCTestCase {
     func testEmptyInputYieldsEmptyOutput() {
         XCTAssertTrue(UsageEventDeduplicator.deduplicate([]).isEmpty)
     }
+
+    func testExactTieResolvesToLowestEventSeqRegardlessOfIterationOrder() {
+        // 同 isSidechain、同 observedAt，只有 eventSeq 不同：全靠 eventSeq 这一级决胜。
+        // 少了它，胜者取决于 Swift 每进程随机的字典迭代顺序——即哪条并列事件
+        // 恰好第一个被迭代到。用足够多的并列事件把「最小 eventSeq 恰好排第一」的
+        // 概率压到 ~1/N，让这个守卫在单次调用里也能稳定抓住缺失的决胜级。
+        let seqs = [7, 3, 11, 5, 2, 9, 4, 12, 6, 10, 8]
+        let events = seqs.map {
+            event(seq: $0, at: 100, messageId: "m1", requestId: "r\($0)")
+        }
+
+        let result = UsageEventDeduplicator.deduplicate(events)
+
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].eventSeq, 2)
+        XCTAssertEqual(result[0].requestId, "r2")
+    }
 }
