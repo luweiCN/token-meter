@@ -12,12 +12,17 @@ public enum TokenMeterDatabaseMigrator {
         }
         guard currentVersion < TokenMeterDatabaseSchema.currentVersion else { return }
 
-        // v1 全是 CREATE TABLE IF NOT EXISTS，重复执行安全。
-        // 全新库两段都跑；v1 老库跳过第一段，只补上新表。
+        // v1 全是 CREATE TABLE IF NOT EXISTS，重复执行安全。三段按版本顺序补齐：
+        // 全新库跑全部三段；v1 老库跳过第一段；v2 老库只跑 v3 清理。
+        // v3Cleanup 含不可幂等的 DROP COLUMN，但上面的 guard 保证 currentVersion < 3 才会到这里，
+        // 每列至多被删一次；v1→v3 升级后 usage_events 为空表，全量重扫由 Task 15 的按钮显式触发。
         if currentVersion < 1 {
             try database.execute(TokenMeterDatabaseSchema.v1)
         }
-        try database.execute(TokenMeterDatabaseSchema.v2Additions)
+        if currentVersion < 2 {
+            try database.execute(TokenMeterDatabaseSchema.v2Additions)
+        }
+        try database.execute(TokenMeterDatabaseSchema.v3Cleanup)
     }
 }
 

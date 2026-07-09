@@ -1,5 +1,5 @@
 public enum TokenMeterDatabaseSchema {
-    public static let currentVersion: Int64 = 2
+    public static let currentVersion: Int64 = 3
 
     public static let v1 = """
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -285,5 +285,34 @@ public enum TokenMeterDatabaseSchema {
 
     INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (2, 'phase3_message_level_usage');
     PRAGMA user_version = 2;
+    """
+
+    /// v3：删除 v1 的用量表与 agent_sessions 上已下沉、且再无人读的列。
+    /// 此时 writer 只写 usage_events，scanner 只调 writer，Electron 只查 rollup 表。
+    ///
+    /// 只删「无人读」的列。计划原稿还想删 model_provider / message_count / event_count，
+    /// 但 Electron 的 sessionsRepository.query 仍从 agent_sessions 读这三列（modelProvider /
+    /// messageCount / eventCount）。删了它们，会话列表查询会在运行时抛 "no such column"。
+    /// v2 写入路径不再填充它们（值为 NULL），但「列存在返回 NULL」和「列不存在报错」是两回事，
+    /// 故保留。真正无人读的是下面这五列。
+    ///
+    /// `ALTER TABLE ... DROP COLUMN` 需要 SQLite 3.35+；本机链接 3.51.0，已实测五列（含带外键
+    /// 约束的 source_file_id，在摘掉其索引后）均可删除。
+    public static let v3Cleanup = """
+    DROP TABLE IF EXISTS provider_daily_usage;
+    DROP TABLE IF EXISTS session_usage_latest;
+    DROP TABLE IF EXISTS session_usage;
+
+    -- DROP COLUMN 不能删除被索引引用的列，先摘掉索引
+    DROP INDEX IF EXISTS idx_sessions_source_file;
+
+    ALTER TABLE agent_sessions DROP COLUMN source_file_id;
+    ALTER TABLE agent_sessions DROP COLUMN model_name;
+    ALTER TABLE agent_sessions DROP COLUMN total_cost_usd_micros;
+    ALTER TABLE agent_sessions DROP COLUMN worktree_path;
+    ALTER TABLE agent_sessions DROP COLUMN session_closed_at;
+
+    INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (3, 'phase3_drop_v1_usage_tables');
+    PRAGMA user_version = 3;
     """
 }

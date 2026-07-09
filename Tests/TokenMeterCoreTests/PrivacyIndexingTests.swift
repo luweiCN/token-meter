@@ -56,7 +56,6 @@ private func localAgentTextDump(_ database: SQLiteDatabase) throws -> String {
           UNION ALL SELECT source_kind FROM agent_sessions
           UNION ALL SELECT source_session_key FROM agent_sessions
           UNION ALL SELECT provider_id FROM agent_sessions
-          UNION ALL SELECT model_name FROM agent_sessions
           UNION ALL SELECT cli_version FROM agent_sessions
           UNION ALL SELECT session_started_at FROM agent_sessions
           UNION ALL SELECT session_updated_at FROM agent_sessions
@@ -72,14 +71,6 @@ private func localAgentTextDump(_ database: SQLiteDatabase) throws -> String {
           UNION ALL SELECT project_key FROM projects
           UNION ALL SELECT canonical_path FROM projects
           UNION ALL SELECT display_name FROM projects
-          UNION ALL SELECT observed_at FROM session_usage
-          UNION ALL SELECT metric_scope FROM session_usage
-          UNION ALL SELECT window_label FROM session_usage
-          UNION ALL SELECT source_event_id FROM session_usage
-          UNION ALL SELECT source_hash FROM session_usage
-          UNION ALL SELECT usage_date FROM provider_daily_usage
-          UNION ALL SELECT provider_id FROM provider_daily_usage
-          UNION ALL SELECT source_kind FROM provider_daily_usage
         )
         WHERE value IS NOT NULL
         """
