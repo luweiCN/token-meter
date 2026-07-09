@@ -7,6 +7,11 @@ public final class LocalAgentScanner {
     private let rollupBuilder: RollupBuilder
     private let isoFormatter = ISO8601DateFormatter()
 
+    /// 测试用 seam：在事件写入（step 2）之后、游标推进（step 3）之前调用。
+    /// 让测试能模拟"事件已落库、游标尚未推进"的硬崩溃——抛错即中止，跳过 step 3。
+    /// 生产环境永远为 nil。
+    var testHookAfterEventWrite: ((Int64) throws -> Void)?
+
     public init(database: SQLiteDatabase) {
         self.database = database
         // 定价来自随包快照；缺失时退化为空表（成本按 unknown 记，仍能正确落 usage_events）。
@@ -285,20 +290,19 @@ public final class LocalAgentScanner {
 
         // 残行（最后一行没有换行符收尾）：解析剩余事件仍写入，但标 partial，让整根变 partial。
         let hasResidual = readResult.residual != nil
-        // 先落 source_files（拿到 id，满足 usage_events 的外键），再写事件。
-        let fileId = try upsertSourceFile(
+
+        // I2 三步走，让游标永远不早于它所描述的事件提交：
+        // step 1：建/取行为 pending（不推进游标），拿到 id 满足 usage_events 外键。
+        let fileId = try beginSourceFile(
             rootId: root.id,
             relativePath: relativePath,
             canonicalPath: metadata.canonicalPath,
             fileType: "jsonl_session",
             metadata: metadata,
-            runId: runId,
-            parsed: true,
-            parseStatus: hasResidual ? "partial" : "ok",
-            parseError: hasResidual ? "parse partial: incomplete line" : nil,
-            parserState: resumed(outcome.state, stoppedAt: readResult.nextOffset)
+            runId: runId
         )
 
+        // step 2：写事件（各自事务提交）。
         do {
             try writer.write(outcome.session, scanRootId: root.id, sourceFileId: fileId, runId: runId)
         } catch {
@@ -316,6 +320,19 @@ public final class LocalAgentScanner {
             )
             throw error
         }
+
+        // 崩在这一行之前（step 3 未跑）→ 行仍是 pending + 旧游标 → 下次全量重读恢复。
+        try testHookAfterEventWrite?(fileId)
+
+        // step 3：单独一条语句推进游标并置 ok/partial。
+        try finishSourceFile(
+            fileId: fileId,
+            metadata: metadata,
+            parseStatus: hasResidual ? "partial" : "ok",
+            parseError: hasResidual ? "parse partial: incomplete line" : nil,
+            parserState: resumed(outcome.state, stoppedAt: readResult.nextOffset),
+            runId: runId
+        )
         return hasResidual
     }
 
@@ -603,6 +620,93 @@ public final class LocalAgentScanner {
             parseStatus: "ok",
             parseError: nil,
             parserState: nil
+        )
+    }
+
+    /// I2 step 1：确保 source_files 行存在、拿到 id，并置为 pending。
+    ///
+    /// 关键：对**已存在**的行【不】推进 size/mtime/resumeOffset/fingerprint/parser_state。
+    /// 事件写入（step 2）与游标推进（step 3）是两次独立提交；若在两者之间硬崩溃，行必须仍是
+    /// pending + 旧游标，下次扫描据此走全量重读（skip 要求 ok、shouldResume 要求 ok），
+    /// deleteEvents 清掉这次写了一半的事件，从头重来——不丢也不重。
+    /// 新行则以当前 size/mtime/fingerprint 落地（pending 同样保证崩溃后被重读），last_parsed_run_id 留空。
+    private func beginSourceFile(
+        rootId: Int64,
+        relativePath: String,
+        canonicalPath: String,
+        fileType: String,
+        metadata: FileMetadata,
+        runId: Int64
+    ) throws -> Int64 {
+        try database.execute(
+            """
+            INSERT INTO source_files(
+                scan_root_id, relative_path, canonical_path, file_type,
+                size_bytes, mtime_ns, inode, dev, content_fingerprint,
+                first_seen_run_id, last_seen_run_id, last_parsed_run_id, disappeared_at, parse_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'pending')
+            ON CONFLICT(scan_root_id, relative_path) DO UPDATE SET
+                last_seen_run_id = excluded.last_seen_run_id,
+                disappeared_at = NULL,
+                parse_status = 'pending',
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            [
+                .int(rootId),
+                .text(relativePath),
+                .text(canonicalPath),
+                .text(fileType),
+                .int(metadata.sizeBytes),
+                .int(metadata.mtimeNanoseconds),
+                sqliteInt(metadata.inode),
+                sqliteInt(metadata.dev),
+                sqliteText(metadata.contentFingerprint),
+                .int(runId),
+                .int(runId)
+            ]
+        )
+        return try database.query(
+            "SELECT id FROM source_files WHERE scan_root_id = ? AND relative_path = ?",
+            [.int(rootId), .text(relativePath)]
+        )[0].int("id") ?? 0
+    }
+
+    /// I2 step 3：事件已提交后，单独一条语句推进游标（size/mtime/fingerprint/parser_state）并置 ok/partial。
+    private func finishSourceFile(
+        fileId: Int64,
+        metadata: FileMetadata,
+        parseStatus: String,
+        parseError: String?,
+        parserState: ParserState?,
+        runId: Int64
+    ) throws {
+        try database.execute(
+            """
+            UPDATE source_files SET
+                size_bytes = ?,
+                mtime_ns = ?,
+                inode = ?,
+                dev = ?,
+                content_fingerprint = ?,
+                parser_state = ?,
+                parse_status = ?,
+                parse_error = ?,
+                last_parsed_run_id = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            [
+                .int(metadata.sizeBytes),
+                .int(metadata.mtimeNanoseconds),
+                sqliteInt(metadata.inode),
+                sqliteInt(metadata.dev),
+                sqliteText(metadata.contentFingerprint),
+                sqliteText(encodeParserState(parserState)),
+                .text(parseStatus),
+                sqliteText(parseError),
+                .int(runId),
+                .int(fileId)
+            ]
         )
     }
 

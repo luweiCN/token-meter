@@ -852,6 +852,42 @@ final class LocalAgentScannerTests: XCTestCase {
             1
         )
     }
+
+    func testCursorIsNotAdvancedUntilEventsAreCommitted() async throws {
+        // I2：游标（size/mtime/resumeOffset + parse_status=ok）必须在事件提交【之后】才推进。
+        // 模拟硬崩溃：事件写完后、游标推进前中止 → 行必须留在 pending，下次扫描据此全量重读，不丢不重。
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("rollout.jsonl")
+        try writeJSONL(codexJSONL(inputTokens: 3, outputTokens: 4, sessionId: "crash-session"), to: file)
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+
+        struct SimulatedCrash: Error {}
+        scanner.testHookAfterEventWrite = { _ in throw SimulatedCrash() }
+        do {
+            try await scanner.scanRoot(id: 1)
+        } catch {
+            // 崩溃中止整根，符合预期。
+        }
+
+        // 崩溃后：事件已提交，但行必须停在 pending（游标未推进）。
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1)
+        XCTAssertEqual(
+            try database.query("SELECT parse_status FROM source_files WHERE relative_path = 'rollout.jsonl'").first?.string("parse_status"),
+            "pending",
+            "事件已提交、游标未推进时必须是 pending，否则崩溃后会被永久跳过"
+        )
+
+        // 恢复：正常扫描 → pending → 全量重读 → deleteEvents 清旧再重写 → 不丢不重。
+        scanner.testHookAfterEventWrite = nil
+        try await scanner.scanRoot(id: 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1, "恢复后不得重复计数")
+        XCTAssertEqual(
+            try database.query("SELECT parse_status FROM source_files WHERE relative_path = 'rollout.jsonl'").first?.string("parse_status"),
+            "ok"
+        )
+    }
 }
 
 // MARK: - Fixtures
