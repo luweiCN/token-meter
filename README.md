@@ -86,6 +86,8 @@ swift test
 swift build
 ```
 
+`scripts/reconcile-with-ccusage.sh` 把 token 记账与 ccusage 独立对账：扫真实语料进临时库，按 provider 比对 `usage_events.tokens_total`，任一源超出容差即非零退出（`~/.claude`、`~/.codex`、`~/.omp`、`opencode.db` 全程只读）。它只验证全量扫描；增量路径由 `LocalAgentScannerTests.testIncrementalScanReplacesAPartialStreamedFrameWithTheFinalOne` 守护。
+
 ## 第二阶段开发
 
 Swift 菜单栏仍可单独运行：
