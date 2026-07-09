@@ -72,27 +72,13 @@ public enum UsageEventDeduplicator {
 
     /// 规则一的全序判别：`candidate` 是否应替换掉已在 `byExactKey` 里的 `existing`。
     ///
-    /// 排序（从高到低，逐级决胜，任一级严格胜负即定）：
-    ///   1. `tokensTotal` 更大者胜 —— 保留流式响应的最终（最完整）帧，杜绝少算 output。
-    ///   2. 总量并列 → `observedAt` 更早者胜 —— resume/fork 的逐字节副本走到这里，此级
-    ///      复刻 Task 14g 之前「保留最早」的确定性行为。
-    ///   3. 时间也并列 → `eventSeq` 更小者胜。
-    ///
-    /// 第 3 级不是可有可无的：这一遍是按**输入数组顺序**（`for event in events`）扫的，碰撞时
-    /// 若比较判不出胜负（并列返回 false），留下的就是数组里先到的那条。少了 eventSeq 这一级，
-    /// 「总量并列且时间并列」时胜者便取决于 parser 往 `session.events` 里追加事件的顺序——今天
-    /// 恰好按 eventSeq 递增排，于是侥幸等价于「保留最小 seq」，但这把去重的正确性拴在了 parser
-    /// 的产出顺序上。补上 eventSeq 让胜者只由数据本身决定，与到达顺序无关。
-    /// （`testTotalOrderIsLoadBearingAtEveryLevel` 用一个乱序输入守这一级：把高 seq 的并列帧
-    /// 放在最小 seq 之前，删掉此级就会留下高 seq 的那条。）
+    /// 三级全序（tokensTotal 最大 → observedAt 最早 → eventSeq 最小）由 `UsageEventPrecedence`
+    /// 统一裁决，`UsageEventWriter` 对已落库行去重时走同一个函数。规则曾被抄成两份、Task 14g
+    /// 只修了这一份，因此绝不在这里复制排序逻辑。
+    /// （`testTotalOrderIsLoadBearingAtEveryLevel` 用一个乱序输入守这三级：把高 seq 的并列帧
+    /// 放在最小 seq 之前，删掉任一级就会挑错 winner。）
     private static func replacesOnExactKey(_ existing: UsageEvent, with candidate: UsageEvent) -> Bool {
-        if candidate.totalTokens != existing.totalTokens {
-            return candidate.totalTokens > existing.totalTokens
-        }
-        if candidate.observedAt != existing.observedAt {
-            return candidate.observedAt < existing.observedAt
-        }
-        return candidate.eventSeq < existing.eventSeq
+        UsageEventPrecedence.candidateWins(candidate.precedenceFields, over: existing.precedenceFields)
     }
 
     /// 规则二的全序判别。**Task 14e 后无任何现有来源会触发它**（见 `deduplicate` 顶部注释）：

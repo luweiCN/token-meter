@@ -125,6 +125,46 @@ final class UsageEventWriterTests: XCTestCase {
         XCTAssertEqual(rows[0].int("observed_epoch_ms"), 100_000, "已存在的更早记录不得被覆盖")
     }
 
+    func testDedupeKeyCollisionBreaksFullTieByLowestEventSeq() throws {
+        // 总量并列、观测时间并列，只 eventSeq 不同：全靠比较器的第三级决胜（更小 seq 胜）。
+        // 先写大 seq 的那条，再写小 seq 的候选——候选必须替换掉它，留下 event_seq=2。
+        // 删掉第三级后候选会因「并列不胜」被丢弃，先写入的 seq=5 留下，本断言变红。
+        let database = try makeDatabase()
+        let writer = UsageEventWriter(database: database, costCalculator: calculator())
+
+        let highSeq = UsageEvent(eventSeq: 5, observedAt: Date(timeIntervalSince1970: 100), modelName: "claude-fable-5",
+                                 messageId: "m1", requestId: "r1", dedupeKey: "m1", inputTokens: 1, sourceOffset: 10)
+        let lowSeq = UsageEvent(eventSeq: 2, observedAt: Date(timeIntervalSince1970: 100), modelName: "claude-fable-5",
+                                messageId: "m1", requestId: "r1", dedupeKey: "m1", inputTokens: 1, sourceOffset: 20)
+
+        try writer.write(session([highSeq]), scanRootId: 1, sourceFileId: 1, runId: nil)
+        try writer.write(session([lowSeq]), scanRootId: 1, sourceFileId: 2, runId: nil)
+
+        let rows = try database.query("SELECT event_seq FROM usage_events")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0].int("event_seq"), 2, "总量与时间都并列时，更小 eventSeq 的候选必须胜出")
+    }
+
+    func testDedupeKeyCollisionKeepsLargerTokensTotalRegardlessOfObservedAt() throws {
+        // 比较器第一级（tokensTotal 最大者胜）在 writer 对已落库行的去重上也必须生效：
+        // 先落库一条更晚但 token 更大的最终帧，再来一条更早但 token 更小的中间帧——
+        // 尽管候选更早，也绝不能因「保留最早」而顶掉更完整的最终帧。
+        let database = try makeDatabase()
+        let writer = UsageEventWriter(database: database, costCalculator: calculator())
+
+        let finalFrame = UsageEvent(eventSeq: 1, observedAt: Date(timeIntervalSince1970: 200), modelName: "claude-fable-5",
+                                    messageId: "m1", requestId: "r1", dedupeKey: "m1", inputTokens: 1, outputTokens: 559, sourceOffset: 10)
+        let earlierPartial = UsageEvent(eventSeq: 1, observedAt: Date(timeIntervalSince1970: 100), modelName: "claude-fable-5",
+                                        messageId: "m1", requestId: "r1", dedupeKey: "m1", inputTokens: 1, outputTokens: 4, sourceOffset: 20)
+
+        try writer.write(session([finalFrame]), scanRootId: 1, sourceFileId: 1, runId: nil)
+        try writer.write(session([earlierPartial]), scanRootId: 1, sourceFileId: 2, runId: nil)
+
+        let rows = try database.query("SELECT tokens_output FROM usage_events")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows[0].int("tokens_output"), 559, "更完整（tokensTotal 更大）的帧必须留下，即便它观测时间更晚")
+    }
+
     func testResumeOffsetIsPerSourceFile() throws {
         let database = try makeDatabase()
         let writer = UsageEventWriter(database: database, costCalculator: calculator())

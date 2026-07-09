@@ -141,15 +141,24 @@ public final class UsageEventWriter {
         if let dedupeKey = event.dedupeKey {
             // `idx_usage_dedupe` 是 UNIQUE(session_id, dedupe_key)，`INSERT OR IGNORE`
             // 只能挡住第二次写入，但保留的是**先写入的那条**——扫描顺序（先扫到哪个文件）
-            // 与事件的时间顺序无关。这里必须显式查出已有行、比较 observed_epoch_ms，
-            // 更晚的新事件绝不能覆盖更早的已有记录；更早的新事件必须替换掉更晚的旧记录。
+            // 与事件的完整度无关。这里显式查出已有行，用 `UsageEventPrecedence`（与
+            // `UsageEventDeduplicator` 同一裁决）比较：候选胜出就删旧插新，落败就丢弃候选。
+            //
+            // 续读路径专属：同一 messageId 的流式帧分属两次扫描，output 逐帧增长。内存去重看不到
+            // 彼此，只有这里能挡住——若仍「保留最早」，先落库的中间帧（output=4）会永久顶掉续读到
+            // 的最终帧（output=559）。Task 14g 只修了内存那一遍，漏了这里。
             let existingRows = try database.query(
-                "SELECT id, observed_epoch_ms FROM usage_events WHERE session_id = ? AND dedupe_key = ?",
+                "SELECT id, tokens_total, observed_epoch_ms, event_seq FROM usage_events WHERE session_id = ? AND dedupe_key = ?",
                 [.int(sessionId), .text(dedupeKey)]
             )
             if let existing = existingRows.first, let existingId = existing.int("id") {
-                let existingObservedAt = existing.int("observed_epoch_ms") ?? Int64.max
-                if existingObservedAt <= event.observedEpochMilliseconds {
+                // 三列均为 NOT NULL（tokens_total 是生成列），兜底值只在理论上不可达的读失败时生效。
+                let existingFields = UsageEventPrecedence.Fields(
+                    tokensTotal: existing.int("tokens_total") ?? 0,
+                    observedEpochMs: existing.int("observed_epoch_ms") ?? Int64.max,
+                    eventSeq: existing.int("event_seq") ?? Int64.max
+                )
+                guard UsageEventPrecedence.candidateWins(event.precedenceFields, over: existingFields) else {
                     return
                 }
                 try database.execute("DELETE FROM usage_events WHERE id = ?", [.int(existingId)])

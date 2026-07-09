@@ -1150,6 +1150,86 @@ final class LocalAgentScannerTests: XCTestCase {
         try await LocalAgentScanner(database: database).scanRoot(id: 1)
         return try scalarInt(database, "SELECT count(*) AS value FROM usage_events WHERE session_id = 77")
     }
+
+    func testIncrementalScanReplacesAPartialStreamedFrameWithTheFinalOne() async throws {
+        // T1: 文件以一条 output=4 的中间帧结束，扫描并落库。
+        // T2: 追加同一 messageId / requestId 的 output=559 最终帧，增量扫描。
+        // 断言：该 messageId 只有一行，且 output == 559。
+        //
+        // 这条只在【续读】路径上会红。全量扫描时两帧同批解析，
+        // UsageEventDeduplicator 在内存里就折叠了，writer 根本看不到冲突——
+        // 所以全量扫描的总数正确，掩盖了这个缺陷。
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("stream.jsonl")
+        try writeJSONL(
+            claudeStreamFrame(messageId: "msg-stream-1", output: 4, timestamp: "2026-07-03T02:00:00Z") + "\n",
+            to: file
+        )
+        let database = try migratedDatabase(rootKind: .claudeJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+
+        try await scanner.scanRoot(id: 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT tokens_output AS value FROM usage_events"), 4)
+
+        try appendJSONL(
+            claudeStreamFrame(messageId: "msg-stream-1", output: 559, timestamp: "2026-07-03T02:00:01Z"),
+            to: file
+        )
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1,
+                       "同一 messageId 的流式帧续读后必须仍只有一行")
+        XCTAssertEqual(try scalarInt(database, "SELECT tokens_output AS value FROM usage_events"), 559,
+                       "续读到的最终帧（output=559）必须替换掉先落库的中间帧（output=4）")
+    }
+
+    func testIncrementalScanKeepsFinalFrameEvenWhenPartialArrivesLater() async throws {
+        // 反向：最终帧先落库、被截断的中间帧后到（现实中不会发生，但结果必须确定且保留 559）。
+        // 「保留最完整」而非「保留最早」——后到的 output=4 绝不能顶掉先到的 output=559。
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("stream.jsonl")
+        try writeJSONL(
+            claudeStreamFrame(messageId: "msg-stream-1", output: 559, timestamp: "2026-07-03T02:00:00Z") + "\n",
+            to: file
+        )
+        let database = try migratedDatabase(rootKind: .claudeJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+
+        try await scanner.scanRoot(id: 1)
+        try appendJSONL(
+            claudeStreamFrame(messageId: "msg-stream-1", output: 4, timestamp: "2026-07-03T02:00:01Z"),
+            to: file
+        )
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT tokens_output AS value FROM usage_events"), 559,
+                       "更完整的帧必须留下，无论到达顺序")
+    }
+
+    func testIncrementalScanOfByteIdenticalDuplicateKeepsOneRowWithoutChurn() async throws {
+        // 逐字节相同的帧在两次扫描里各出现一次：仍只有一行，且原行不被替换（无 churn）。
+        // 总量并列、时间并列 → 后到的（更大 eventSeq）落败，原行原样保留。
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("stream.jsonl")
+        let frame = claudeStreamFrame(messageId: "msg-stream-1", output: 559, timestamp: "2026-07-03T02:00:00Z")
+        try writeJSONL(frame + "\n", to: file)
+        let database = try migratedDatabase(rootKind: .claudeJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+
+        try await scanner.scanRoot(id: 1)
+        try appendJSONL(frame, to: file)
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT tokens_output AS value FROM usage_events"), 559)
+        XCTAssertEqual(try scalarInt(database, "SELECT event_seq AS value FROM usage_events"), 1,
+                       "逐字节相同的重复帧不得替换原行：原行 event_seq=1 必须保留")
+    }
 }
 
 // MARK: - Fixtures
@@ -1176,6 +1256,19 @@ private func claudeJSONL(sessionKey: String, inputTokens: Int64, outputTokens: I
     {"sessionId":"\(sessionKey)","cwd":"/repo/\(sessionKey)","timestamp":"2026-07-03T02:00:00Z","type":"assistant","message":{"role":"assistant","model":"claude-sonnet","usage":{"input_tokens":\(inputTokens),"output_tokens":\(outputTokens)}}}
 
     """
+}
+
+/// 一条 Claude 流式帧：同 messageId / requestId、input 与 cache 各档不变、只 output_tokens 随帧增长。
+/// 单行、无换行收尾；调用方按需拼 `+ "\n"` 或交给 appendJSONL 补换行。
+private func claudeStreamFrame(
+    sessionKey: String = "stream-session",
+    messageId: String,
+    requestId: String = "req-1",
+    input: Int64 = 100,
+    output: Int64,
+    timestamp: String
+) -> String {
+    #"{"sessionId":"\#(sessionKey)","cwd":"/repo","timestamp":"\#(timestamp)","type":"assistant","requestId":"\#(requestId)","message":{"id":"\#(messageId)","role":"assistant","model":"claude-sonnet","usage":{"input_tokens":\#(input),"output_tokens":\#(output)}}}"#
 }
 
 private func claudeJSONLMissingSessionKey(inputTokens: Int64, outputTokens: Int64) -> String {
