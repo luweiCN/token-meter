@@ -1681,6 +1681,10 @@ public enum UsageEventDeduplicator {
     ///   丢弃 sidechain 副本。`/btw` 类 sidechain 会用新的 requestId 重放父消息，
     ///   规则一拦不住，会导致缓存 token 被重复计费。
     ///
+    ///   这条是对 ccusage issue #913 的防御性移植，**不是本机观察到的问题**：
+    ///   本机 5,492 个 session 文件、334,941 行中，零个 messageId 出现在多个
+    ///   requestId 下。保留它是因为重复计费是静默错误，而代价只有几行。
+    ///
     /// 没有 `dedupeKey` 的事件（如 Codex）原样保留。
     public static func deduplicate(_ events: [UsageEvent]) -> [UsageEvent] {
         var byExactKey: [String: UsageEvent] = [:]
