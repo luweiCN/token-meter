@@ -42,6 +42,24 @@
 
 parser 因此是 `class`（`consume` 要改内部状态），协议加 `AnyObject` 约束。为了让测试可读，协议扩展提供一个静态便利方法一次性喂完所有行——**生产路径不得使用它**。
 
+### 新旧 parser 并存（不可跳过）
+
+基线里的 `LocalAgentSessionParser` / `LocalAgentSessionStreamingParser` 被 `LocalAgentScanner` 和三个 parser 测试文件使用。如果 Task 6 直接改写它们，`swift build` 会从 Task 6 一路红到 Task 11——中间八个任务都失去「跑测试确认没搞砸」的能力，而一片红里再多一个红点谁也看不出来。这和 Task 3 不删 v1 表是同一个理由。
+
+因此新 parser **全部新建文件、新命名**，旧的一行不动：
+
+| 旧（保留至 Task 18） | 新（Task 6–10 新增） |
+|---|---|
+| `LocalAgentSessionParser`、`LocalAgentSessionStreamingParser` | `UsageEventParser` |
+| `ClaudeCodeSessionParser`、`ClaudeCodeStreamingParser` | `ClaudeCodeUsageEventParser` |
+| `CodexSessionParser`、`CodexStreamingParser` | `CodexUsageEventParser` |
+| `OmpSessionParser`、`OmpStreamingParser` | `OmpUsageEventParser` |
+| `OpenCodeSessionAdapter` | `OpenCodeUsageEventAdapter` |
+
+Task 14 把 `LocalAgentScanner` 切到新 parser 与 `UsageEventWriter`，此刻旧 parser 成为死代码。Task 18 连同 v1 表一起删除它们。
+
+**Task 6 到 Task 13，每一个任务结束时 `swift test` 都必须全绿。** 任何一个变红都说明动了不该动的东西。
+
 ---
 
 ## File Structure
@@ -51,6 +69,11 @@ parser 因此是 `class`（`consume` 要改内部状态），协议加 `AnyObjec
 | 文件 | 职责 |
 |---|---|
 | `Sources/TokenMeterCore/UsageEventModels.swift` | `UsageEvent` / `ParsedSession` / `ParserState` 类型 |
+| `Sources/TokenMeterCore/UsageEventParsers.swift` | 流式协议 `UsageEventParser` |
+| `Sources/TokenMeterCore/ClaudeCodeUsageEventParser.swift` | Claude adapter |
+| `Sources/TokenMeterCore/CodexUsageEventParser.swift` | Codex adapter |
+| `Sources/TokenMeterCore/OmpUsageEventParser.swift` | omp adapter |
+| `Sources/TokenMeterCore/OpenCodeUsageEventAdapter.swift` | OpenCode adapter |
 | `Sources/TokenMeterCore/ModelNameNormalizer.swift` | 模型名归一 |
 | `Sources/TokenMeterCore/UsageEventDeduplicator.swift` | 去重规则 |
 | `Sources/TokenMeterCore/Pricing.swift` | `ModelPricing` / `PricingSnapshot` 加载 |
@@ -68,14 +91,8 @@ parser 因此是 `class`（`consume` 要改内部状态），协议加 `AnyObjec
 |---|---|
 | `Sources/TokenMeterCore/TokenMeterDatabaseSchema.swift` | 新增 `v2` 与 `dropV1Tables` |
 | `Sources/TokenMeterCore/TokenMeterDatabaseMigrator.swift` | v0→v2 与 v1→v2 两条路径 |
-| `Sources/TokenMeterCore/LocalAgentSessionParsers.swift` | 流式协议 `finish()` 返回 `[UsageEvent]`；删除旧的一次性 `parse(lines:sourceURL:)` |
-| `Sources/TokenMeterCore/ClaudeCodeSessionParser.swift` | 改 `class`，`consume`/`finish`，不再 aggregate；取代基线的 `ClaudeCodeStreamingParser` |
-| `Sources/TokenMeterCore/CodexSessionParser.swift` | 改 `class`，语义归一 + 差分 + 畸形事件；取代基线的 `CodexStreamingParser` |
-| `Sources/TokenMeterCore/OmpSessionParser.swift` | 改 `class`，不再 aggregate；取代基线的 `OmpStreamingParser` |
-| `Sources/TokenMeterCore/OpenCodeSessionAdapter.swift` | 移除 `mergeUsage`（SQLite 源不走流式协议） |
 | `Sources/TokenMeterCore/JSONLStreamReader.swift` | 逐字节循环重写 + 字节预筛（onLine 版本已在基线中） |
 | `Sources/TokenMeterCore/LocalAgentScanner.swift` | 断点续读按 `source_file_id` |
-| `Sources/TokenMeterCore/LocalAgentUsageRepository.swift` | 委托给 `UsageEventWriter` |
 | `Package.swift` | `TokenMeterCore` 增加 `resources` |
 | `Electron/src/main/dashboardRepository.ts` | 改查 `daily_rollup` |
 | `Electron/src/main/sessionsRepository.ts` | 改查 `session_rollup` |
@@ -1239,22 +1256,24 @@ git commit -m "feat: add offline cost calculator with cache tier pricing"
 
 ---
 
-## Task 6: parser 协议改造与 Claude adapter
+## Task 6: 流式 parser 协议与 Claude adapter（全部新增）
 
 **Files:**
-- Modify: `Sources/TokenMeterCore/LocalAgentSessionParsers.swift:3-5`
-- Modify: `Sources/TokenMeterCore/ClaudeCodeSessionParser.swift`
-- Test: `Tests/TokenMeterCoreTests/ClaudeCodeSessionParserTests.swift`
+- Create: `Sources/TokenMeterCore/UsageEventParsers.swift`
+- Create: `Sources/TokenMeterCore/ClaudeCodeUsageEventParser.swift`
+- Test: `Tests/TokenMeterCoreTests/ClaudeCodeUsageEventParserTests.swift`
+
+`LocalAgentSessionParsers.swift`、`ClaudeCodeSessionParser.swift`、`LocalAgentScanner.swift` **一行都不动**。旧 parser 继续为 scanner 服务，直到 Task 14 切换、Task 18 删除。本任务结束时 `swift test` 必须全绿。
 
 - [ ] **Step 1: 写失败的测试**
 
-替换 `Tests/TokenMeterCoreTests/ClaudeCodeSessionParserTests.swift` 全文：
+新建 `Tests/TokenMeterCoreTests/ClaudeCodeUsageEventParserTests.swift`：
 
 ```swift
 import XCTest
 @testable import TokenMeterCore
 
-final class ClaudeCodeSessionParserTests: XCTestCase {
+final class ClaudeCodeUsageEventParserTests: XCTestCase {
     private func line(_ text: String, offset: Int64) -> JSONLLine {
         JSONLLine(text: text, offset: offset, nextOffset: offset + 1)
     }
@@ -1265,7 +1284,7 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
             line(#"{"type":"assistant","timestamp":"2026-07-08T02:00:00Z","sessionId":"s1","requestId":"req_2","message":{"id":"msg_2","role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":200,"output_tokens":20}}}"#, offset: 1)
         ]
 
-        let (session, state) = try ClaudeCodeSessionParser.parse(
+        let (session, state) = try ClaudeCodeUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil
         )
 
@@ -1294,7 +1313,7 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
             line(#"{"type":"assistant","timestamp":"2026-07-08T00:30:00Z","sessionId":"s1","requestId":"r2","message":{"id":"m2","role":"assistant","model":"m","usage":{"input_tokens":1}}}"#, offset: 1)
         ]
 
-        let (session, _) = try ClaudeCodeSessionParser.parse(
+        let (session, _) = try ClaudeCodeUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil
         )
 
@@ -1309,7 +1328,7 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
             line(#"{"type":"assistant","timestamp":"2026-07-08T01:00:00Z","sessionId":"s1","requestId":"r1","message":{"id":"m1","role":"assistant","model":"m","usage":{"input_tokens":1,"cache_creation_input_tokens":300}}}"#, offset: 0)
         ]
 
-        let (session, _) = try ClaudeCodeSessionParser.parse(
+        let (session, _) = try ClaudeCodeUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil
         )
 
@@ -1323,7 +1342,7 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
             line(#"{"type":"assistant","timestamp":"2026-07-08T01:00:00Z","sessionId":"s1","requestId":"r1","isSidechain":true,"message":{"id":"m1","role":"assistant","model":"m","usage":{"input_tokens":1}}}"#, offset: 0)
         ]
 
-        let (session, _) = try ClaudeCodeSessionParser.parse(
+        let (session, _) = try ClaudeCodeUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil
         )
 
@@ -1336,7 +1355,7 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
             line(#"{"type":"assistant","timestamp":"2026-07-08T01:00:01Z","sessionId":"s1","message":{"id":"m1","role":"assistant","model":"m"}}"#, offset: 1)
         ]
 
-        let (session, _) = try ClaudeCodeSessionParser.parse(
+        let (session, _) = try ClaudeCodeUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil
         )
 
@@ -1349,7 +1368,7 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
             line(#"{"type":"assistant","timestamp":"2026-07-08T01:00:00Z","sessionId":"s1","requestId":"r9","message":{"id":"m9","role":"assistant","model":"m","usage":{"input_tokens":1}}}"#, offset: 500)
         ]
 
-        let (session, state) = try ClaudeCodeSessionParser.parse(
+        let (session, state) = try ClaudeCodeUsageEventParser.parse(
             lines: lines,
             sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"),
             resuming: ParserState(lastEventSeq: 7)
@@ -1363,7 +1382,7 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
     func testThrowsWhenSessionKeyMissing() {
         let lines = [line(#"{"type":"assistant","message":{"role":"assistant"}}"#, offset: 0)]
         XCTAssertThrowsError(
-            try ClaudeCodeSessionParser.parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil)
+            try ClaudeCodeUsageEventParser.parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil)
         ) { error in
             XCTAssertEqual(error as? LocalAgentParserError, .missingSessionKey)
         }
@@ -1373,23 +1392,23 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `swift test --filter ClaudeCodeSessionParserTests`
+Run: `swift test --filter ClaudeCodeUsageEventParserTests`
 Expected: 编译失败，`extra argument 'resuming' in call`
 
 - [ ] **Step 3: 实现**
 
-`Sources/TokenMeterCore/LocalAgentSessionParsers.swift` 中，**删除**旧的 `LocalAgentSessionParser`（一次性 `parse(lines:sourceURL:)`）和旧的 `LocalAgentSessionStreamingParser`（它的 `latestTokenUsageIsCumulative` 语义已被 `ParserState.lastCumulative` 取代），替换为：
+新建 `Sources/TokenMeterCore/UsageEventParsers.swift`。旧的 `LocalAgentSessionParser` 与 `LocalAgentSessionStreamingParser` 留在原文件里不动——它们还在给 scanner 供货，Task 18 才删。
 
 ```swift
 /// parser 是流式的：逐行 consume，最后 finish 出完整事件列表。
 /// 3.28 GB 的 Codex session 文件不能把 [JSONLLine] 全部读进内存。
-public protocol LocalAgentSessionStreamingParser: AnyObject {
+public protocol UsageEventParser: AnyObject {
     init(resuming state: ParserState?)
     func consume(_ line: JSONLLine)
     func finish(sourceURL: URL) throws -> (session: ParsedSession, state: ParserState)
 }
 
-public extension LocalAgentSessionStreamingParser {
+public extension UsageEventParser {
     /// 测试便利方法，一次性喂完所有行。
     /// **生产路径不得使用**：必须走 JSONLStreamReader 的 onLine 回调。
     static func parse(
@@ -1404,12 +1423,12 @@ public extension LocalAgentSessionStreamingParser {
 }
 ```
 
-`Sources/TokenMeterCore/ClaudeCodeSessionParser.swift` 全文替换：
+`Sources/TokenMeterCore/ClaudeCodeUsageEventParser.swift` 全文替换：
 
 ```swift
 import Foundation
 
-public final class ClaudeCodeSessionParser: LocalAgentSessionStreamingParser {
+public final class ClaudeCodeUsageEventParser: UsageEventParser {
     private var sessionKey: String?
     private var projectPath: String?
     private var cliVersion: String?
@@ -1417,7 +1436,7 @@ public final class ClaudeCodeSessionParser: LocalAgentSessionStreamingParser {
     private var updatedAt: Date?
     private var events: [UsageEvent] = []
     private var eventSeq: Int
-    private let dateFormatters = ClaudeCodeSessionParser.makeDateFormatters()
+    private let dateFormatters = ClaudeCodeUsageEventParser.makeDateFormatters()
 
     public init(resuming state: ParserState?) {
         eventSeq = state?.lastEventSeq ?? 0
@@ -1541,15 +1560,16 @@ public final class ClaudeCodeSessionParser: LocalAgentSessionStreamingParser {
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `swift test --filter ClaudeCodeSessionParserTests`
+Run: `swift test --filter ClaudeCodeUsageEventParserTests`
 Expected: `Executed 7 tests, with 0 failures`
 
-此时其他 parser 尚未改造，`swift build` 会失败——这是预期的，Task 8-10 会逐个修好。
+Run: `swift test`
+Expected: **全绿。** 新 parser 是全新文件，旧 parser 与 `LocalAgentScanner` 一行未动。任何一个既有测试变红，都说明碰了不该碰的东西。
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add Sources/TokenMeterCore/LocalAgentSessionParsers.swift Sources/TokenMeterCore/ClaudeCodeSessionParser.swift Tests/TokenMeterCoreTests/ClaudeCodeSessionParserTests.swift
+git add Sources/TokenMeterCore/UsageEventParsers.swift Sources/TokenMeterCore/ClaudeCodeUsageEventParser.swift Tests/TokenMeterCoreTests/ClaudeCodeUsageEventParserTests.swift
 git commit -m "feat: emit message-level events from claude parser"
 ```
 
@@ -1724,18 +1744,18 @@ git commit -m "feat: add usage event deduplicator with sidechain replay rule"
 **本任务是全计划最容易出错的地方。** Codex 的 `input_tokens` **包含** `cached_input_tokens`，必须做减法。
 
 **Files:**
-- Modify: `Sources/TokenMeterCore/CodexSessionParser.swift`
-- Test: `Tests/TokenMeterCoreTests/CodexSessionParserTests.swift`
+- Create: `Sources/TokenMeterCore/CodexUsageEventParser.swift`（旧 `CodexSessionParser.swift` 不动）
+- Test: `Tests/TokenMeterCoreTests/CodexUsageEventParserTests.swift`
 
 - [ ] **Step 1: 写失败的测试**
 
-替换 `Tests/TokenMeterCoreTests/CodexSessionParserTests.swift` 全文：
+替换 `Tests/TokenMeterCoreTests/CodexUsageEventParserTests.swift` 全文：
 
 ```swift
 import XCTest
 @testable import TokenMeterCore
 
-final class CodexSessionParserTests: XCTestCase {
+final class CodexUsageEventParserTests: XCTestCase {
     private func line(_ text: String, offset: Int64) -> JSONLLine {
         JSONLLine(text: text, offset: offset, nextOffset: offset + 1)
     }
@@ -1751,7 +1771,7 @@ final class CodexSessionParserTests: XCTestCase {
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":900,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":1050}}}}"#, offset: 2)
         ]
 
-        let (session, _) = try CodexSessionParser.parse(
+        let (session, _) = try CodexUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
         )
 
@@ -1772,7 +1792,7 @@ final class CodexSessionParserTests: XCTestCase {
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":25,"cached_input_tokens":5,"output_tokens":5},"total_token_usage":{"input_tokens":125,"cached_input_tokens":30,"output_tokens":55}}}}"#, offset: 1)
         ]
 
-        let (session, _) = try CodexSessionParser.parse(
+        let (session, _) = try CodexUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
         )
 
@@ -1788,7 +1808,7 @@ final class CodexSessionParserTests: XCTestCase {
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:06:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"cached_input_tokens":60,"output_tokens":30}}}}"#, offset: 2)
         ]
 
-        let (session, state) = try CodexSessionParser.parse(
+        let (session, state) = try CodexUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
         )
 
@@ -1815,7 +1835,7 @@ final class CodexSessionParserTests: XCTestCase {
             lastEventSeq: 4,
             lastCumulative: CumulativeTokenTotals(inputTokens: 100, cachedInputTokens: 40, outputTokens: 20, reasoningTokens: 0)
         )
-        let (session, state) = try CodexSessionParser.parse(
+        let (session, state) = try CodexUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: previous
         )
 
@@ -1833,7 +1853,7 @@ final class CodexSessionParserTests: XCTestCase {
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:06:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":80,"cached_input_tokens":20,"output_tokens":10}}}}"#, offset: 2)
         ]
 
-        let (session, _) = try CodexSessionParser.parse(
+        let (session, _) = try CodexUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
         )
 
@@ -1849,7 +1869,7 @@ final class CodexSessionParserTests: XCTestCase {
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":14676}}}}"#, offset: 1)
         ]
 
-        let (session, _) = try CodexSessionParser.parse(
+        let (session, _) = try CodexUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
         )
 
@@ -1862,7 +1882,7 @@ final class CodexSessionParserTests: XCTestCase {
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"output_tokens":1}}}}"#, offset: 1)
         ]
 
-        let (session, _) = try CodexSessionParser.parse(
+        let (session, _) = try CodexUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
         )
 
@@ -1874,17 +1894,17 @@ final class CodexSessionParserTests: XCTestCase {
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `swift test --filter CodexSessionParserTests`
+Run: `swift test --filter CodexUsageEventParserTests`
 Expected: 编译失败，`extra argument 'resuming' in call`
 
 - [ ] **Step 3: 实现**
 
-`Sources/TokenMeterCore/CodexSessionParser.swift` 全文替换：
+`Sources/TokenMeterCore/CodexUsageEventParser.swift` 全文替换：
 
 ```swift
 import Foundation
 
-public final class CodexSessionParser: LocalAgentSessionStreamingParser {
+public final class CodexUsageEventParser: UsageEventParser {
     private var sessionKey: String?
     private var projectPath: String?
     private var modelName: String?
@@ -1893,7 +1913,7 @@ public final class CodexSessionParser: LocalAgentSessionStreamingParser {
     private var events: [UsageEvent] = []
     private var eventSeq: Int
     private var cumulative: CumulativeTokenTotals?
-    private let dateFormatters = ClaudeCodeSessionParser.makeDateFormatters()
+    private let dateFormatters = ClaudeCodeUsageEventParser.makeDateFormatters()
 
     public init(resuming state: ParserState?) {
         eventSeq = state?.lastEventSeq ?? 0
@@ -2048,7 +2068,7 @@ private struct RawTokenTotals {
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `swift test --filter CodexSessionParserTests`
+Run: `swift test --filter CodexUsageEventParserTests`
 Expected: `Executed 7 tests, with 0 failures`
 
 若 `testSubtractsCachedInputFromInput` 得到 `inputTokens == 1000`，说明减法没做，Codex 的 token 会翻倍。
@@ -2056,7 +2076,7 @@ Expected: `Executed 7 tests, with 0 failures`
 - [ ] **Step 5: 提交**
 
 ```bash
-git add Sources/TokenMeterCore/CodexSessionParser.swift Tests/TokenMeterCoreTests/CodexSessionParserTests.swift
+git add Sources/TokenMeterCore/CodexUsageEventParser.swift Tests/TokenMeterCoreTests/CodexUsageEventParserTests.swift
 git commit -m "feat: normalize codex token semantics and emit delta events"
 ```
 
@@ -2068,18 +2088,18 @@ omp 的 `input` **不含** cache（与 Codex 相反），`reasoningTokens ⊂ ou
 它的消息行只有 `id`、没有 `requestId`，因此 `dedupeKey` 恒为 nil，唯一性靠 `(source_file_id, event_seq)`。
 
 **Files:**
-- Modify: `Sources/TokenMeterCore/OmpSessionParser.swift`
-- Test: `Tests/TokenMeterCoreTests/OmpSessionParserTests.swift`
+- Create: `Sources/TokenMeterCore/OmpUsageEventParser.swift`（旧 `OmpSessionParser.swift` 不动）
+- Test: `Tests/TokenMeterCoreTests/OmpUsageEventParserTests.swift`
 
 - [ ] **Step 1: 写失败的测试**
 
-替换 `Tests/TokenMeterCoreTests/OmpSessionParserTests.swift` 全文：
+替换 `Tests/TokenMeterCoreTests/OmpUsageEventParserTests.swift` 全文：
 
 ```swift
 import XCTest
 @testable import TokenMeterCore
 
-final class OmpSessionParserTests: XCTestCase {
+final class OmpUsageEventParserTests: XCTestCase {
     private func line(_ text: String, offset: Int64) -> JSONLLine {
         JSONLLine(text: text, offset: offset, nextOffset: offset + 1)
     }
@@ -2093,7 +2113,7 @@ final class OmpSessionParserTests: XCTestCase {
             line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","provider":"openai-codex","model":"gpt-5.5","usage":{"input":1000,"output":50,"cacheRead":900,"cacheWrite":0,"reasoningTokens":10,"totalTokens":1950,"cost":{"total":0.5}}}}"#, offset: 1)
         ]
 
-        let (session, _) = try OmpSessionParser.parse(
+        let (session, _) = try OmpUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/o.jsonl"), resuming: nil
         )
 
@@ -2113,7 +2133,7 @@ final class OmpSessionParserTests: XCTestCase {
             line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","model":"gpt-5.5","usage":{"input":10,"output":1,"cost":{"total":0.19055}}}}"#, offset: 1)
         ]
 
-        let (session, _) = try OmpSessionParser.parse(
+        let (session, _) = try OmpUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/o.jsonl"), resuming: nil
         )
 
@@ -2128,7 +2148,7 @@ final class OmpSessionParserTests: XCTestCase {
             line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","model":"gpt-5.5","usage":{"input":10,"output":1,"cost":{"total":0}}}}"#, offset: 1)
         ]
 
-        let (session, _) = try OmpSessionParser.parse(
+        let (session, _) = try OmpUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/o.jsonl"), resuming: nil
         )
 
@@ -2141,7 +2161,7 @@ final class OmpSessionParserTests: XCTestCase {
             line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","model":"m","usage":{"input":1,"cacheWrite":300}}}"#, offset: 1)
         ]
 
-        let (session, _) = try OmpSessionParser.parse(
+        let (session, _) = try OmpUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/o.jsonl"), resuming: nil
         )
 
@@ -2154,7 +2174,7 @@ final class OmpSessionParserTests: XCTestCase {
             line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","model":"m","usage":{"input":1}}}"#, offset: 0)
         ]
 
-        let (session, _) = try OmpSessionParser.parse(
+        let (session, _) = try OmpUsageEventParser.parse(
             lines: lines,
             sourceURL: URL(fileURLWithPath: "/tmp/2026-07-01T11-20-18-498Z_019f1d68.jsonl"),
             resuming: nil
@@ -2169,7 +2189,7 @@ final class OmpSessionParserTests: XCTestCase {
             line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","model":"m","usage":{"input":1}}}"#, offset: 42)
         ]
 
-        let (session, state) = try OmpSessionParser.parse(
+        let (session, state) = try OmpUsageEventParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/o.jsonl"), resuming: ParserState(lastEventSeq: 3)
         )
 
@@ -2182,17 +2202,17 @@ final class OmpSessionParserTests: XCTestCase {
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `swift test --filter OmpSessionParserTests`
+Run: `swift test --filter OmpUsageEventParserTests`
 Expected: 编译失败，`extra argument 'resuming' in call`
 
 - [ ] **Step 3: 实现**
 
-`Sources/TokenMeterCore/OmpSessionParser.swift` 全文替换：
+`Sources/TokenMeterCore/OmpUsageEventParser.swift` 全文替换：
 
 ```swift
 import Foundation
 
-public final class OmpSessionParser: LocalAgentSessionStreamingParser {
+public final class OmpUsageEventParser: UsageEventParser {
     private var sessionKey: String?
     private var projectPath: String?
     private var modelName: String?
@@ -2200,7 +2220,7 @@ public final class OmpSessionParser: LocalAgentSessionStreamingParser {
     private var updatedAt: Date?
     private var events: [UsageEvent] = []
     private var eventSeq: Int
-    private let dateFormatters = ClaudeCodeSessionParser.makeDateFormatters()
+    private let dateFormatters = ClaudeCodeUsageEventParser.makeDateFormatters()
 
     public init(resuming state: ParserState?) {
         eventSeq = state?.lastEventSeq ?? 0
@@ -2310,13 +2330,13 @@ public final class OmpSessionParser: LocalAgentSessionStreamingParser {
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `swift test --filter OmpSessionParserTests`
+Run: `swift test --filter OmpUsageEventParserTests`
 Expected: `Executed 6 tests, with 0 failures`
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add Sources/TokenMeterCore/OmpSessionParser.swift Tests/TokenMeterCoreTests/OmpSessionParserTests.swift
+git add Sources/TokenMeterCore/OmpUsageEventParser.swift Tests/TokenMeterCoreTests/OmpUsageEventParserTests.swift
 git commit -m "feat: emit message-level events from omp parser"
 ```
 
@@ -2324,23 +2344,23 @@ git commit -m "feat: emit message-level events from omp parser"
 
 ## Task 10: OpenCode adapter
 
-`parseMessageRow` 本来就是逐消息解析的，改造点是**删除 `mergeMessageSession` / `mergeUsage` / `sum` / `isLater`**，让每条消息成为一个 `UsageEvent`。
+旧的 `OpenCodeSessionAdapter.parseMessageRow` 本来就是逐消息解析的，只是 `mergeMessageSession` / `mergeUsage` 又把它们合并了回去。新适配器照抄它的 SQL 与 JSON 解析，但**不做任何合并**：每条消息产出一个 `UsageEvent`。旧文件一行不动。
 
 OpenCode 的 `tokens` 与 omp 同侧：cache 独立于 input。
 
 **Files:**
-- Modify: `Sources/TokenMeterCore/OpenCodeSessionAdapter.swift`
-- Test: `Tests/TokenMeterCoreTests/OpenCodeSessionAdapterTests.swift`
+- Create: `Sources/TokenMeterCore/OpenCodeUsageEventAdapter.swift`（旧 `OpenCodeSessionAdapter.swift` 不动）
+- Test: `Tests/TokenMeterCoreTests/OpenCodeUsageEventAdapterTests.swift`
 
 - [ ] **Step 1: 写失败的测试**
 
-替换 `Tests/TokenMeterCoreTests/OpenCodeSessionAdapterTests.swift` 全文：
+替换 `Tests/TokenMeterCoreTests/OpenCodeUsageEventAdapterTests.swift` 全文：
 
 ```swift
 import XCTest
 @testable import TokenMeterCore
 
-final class OpenCodeSessionAdapterTests: XCTestCase {
+final class OpenCodeUsageEventAdapterTests: XCTestCase {
     private func makeDatabase() throws -> SQLiteDatabase {
         let database = try SQLiteDatabase(path: ":memory:")
         try database.execute(
@@ -2371,7 +2391,7 @@ final class OpenCodeSessionAdapterTests: XCTestCase {
         try insert(database, id: "m2", sessionId: "s1", createdMs: 2_000,
             data: #"{"id":"m2","sessionID":"s1","role":"assistant","modelID":"glm-4.6","cost":0.5,"time":{"created":2000},"tokens":{"input":200,"output":20,"reasoning":5,"cache":{"read":0,"write":300}}}"#)
 
-        let sessions = try OpenCodeSessionAdapter(sourceDatabase: database).changedSessions(after: nil)
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
 
         XCTAssertEqual(sessions.count, 1)
         let session = sessions[0]
@@ -2392,7 +2412,7 @@ final class OpenCodeSessionAdapterTests: XCTestCase {
         try insert(database, id: "m1", sessionId: "s1", createdMs: 1_000,
             data: #"{"id":"m1","sessionID":"s1","role":"assistant","modelID":"glm-4.6","cost":0,"time":{"created":1000},"tokens":{"input":100,"output":10,"cache":{"read":0,"write":0}}}"#)
 
-        let sessions = try OpenCodeSessionAdapter(sourceDatabase: database).changedSessions(after: nil)
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
 
         XCTAssertNil(sessions[0].events[0].reportedCostUSDMicros)
     }
@@ -2402,7 +2422,7 @@ final class OpenCodeSessionAdapterTests: XCTestCase {
         try insert(database, id: "m1", sessionId: "s1", createdMs: 1_000,
             data: #"{"id":"m1","sessionID":"s1","role":"assistant","modelID":"glm-4.6","cost":0.25,"time":{"created":1000},"tokens":{"input":100,"output":10,"cache":{"read":0,"write":0}}}"#)
 
-        let sessions = try OpenCodeSessionAdapter(sourceDatabase: database).changedSessions(after: nil)
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
 
         XCTAssertEqual(sessions[0].events[0].reportedCostUSDMicros, 250_000)
     }
@@ -2412,7 +2432,7 @@ final class OpenCodeSessionAdapterTests: XCTestCase {
         try insert(database, id: "m1", sessionId: "s1", createdMs: 1_765_980_154_045,
             data: #"{"id":"m1","sessionID":"s1","role":"assistant","modelID":"glm-4.6","cost":0,"time":{"created":1765980154045},"tokens":{"input":1,"output":1,"cache":{"read":0,"write":0}}}"#)
 
-        let sessions = try OpenCodeSessionAdapter(sourceDatabase: database).changedSessions(after: nil)
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
 
         XCTAssertEqual(sessions[0].events[0].observedEpochMilliseconds, 1_765_980_154_045)
     }
@@ -2422,7 +2442,7 @@ final class OpenCodeSessionAdapterTests: XCTestCase {
         try insert(database, id: "m1", sessionId: "s1", createdMs: 1_000,
             data: #"{"id":"m1","sessionID":"s1","role":"user","time":{"created":1000}}"#)
 
-        let sessions = try OpenCodeSessionAdapter(sourceDatabase: database).changedSessions(after: nil)
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
 
         XCTAssertTrue(sessions.isEmpty)
     }
@@ -2431,15 +2451,15 @@ final class OpenCodeSessionAdapterTests: XCTestCase {
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `swift test --filter OpenCodeSessionAdapterTests`
+Run: `swift test --filter OpenCodeUsageEventAdapterTests`
 Expected: FAIL，`value of type 'ParsedAgentSession' has no member 'events'`
 
 - [ ] **Step 3: 实现**
 
-改造 `Sources/TokenMeterCore/OpenCodeSessionAdapter.swift`：
+改造 `Sources/TokenMeterCore/OpenCodeUsageEventAdapter.swift`：
 
 1. `changedSessions(after:)` 返回类型改为 `[ParsedSession]`。
-2. **删除** `mergeMessageSession`（`:232`）、`mergeUsage`（`:250`）、`sum`（`:262`）、`isLater`（`:280`）。
+2. 不实现 `mergeMessageSession` / `mergeUsage` / `sum` / `isLater` —— 新适配器根本不合并。
 3. `parseMessageRow` 改为返回 `(sessionKey: String, event: UsageEvent, model: String?, provider: String?, createdAt: Date)`。
 4. 按 `sessionKey` 分组，组内按 `createdAt` 升序编号 `eventSeq`。
 
@@ -2547,32 +2567,32 @@ private struct ParsedOpenCodeMessage {
 
 - [ ] **Step 4: 运行测试并确认整个包能编译**
 
-Run: `swift test --filter OpenCodeSessionAdapterTests`
+Run: `swift test --filter OpenCodeUsageEventAdapterTests`
 Expected: `Executed 5 tests, with 0 failures`
 
 Run: `swift build`
-Expected: 仍会失败，`LocalAgentUsageRepository` 还在用已删除的 `ParsedAgentSession`。Task 11 修复。
+Expected: **全绿。** 新适配器是新文件，旧 `OpenCodeSessionAdapter` 与 `LocalAgentUsageRepository` 一行未动。
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add Sources/TokenMeterCore/OpenCodeSessionAdapter.swift Tests/TokenMeterCoreTests/OpenCodeSessionAdapterTests.swift
+git add Sources/TokenMeterCore/OpenCodeUsageEventAdapter.swift Tests/TokenMeterCoreTests/OpenCodeUsageEventAdapterTests.swift
 git commit -m "feat: emit message-level events from opencode adapter"
 ```
 
 ---
 
-## Task 11: UsageEventWriter
+## Task 11: UsageEventWriter（新增）
 
-把 `LocalAgentUsageRepository` 里的 `upsertUsage` / `updateLatestUsagePointer` / `refreshDailyRollups` 全部替换掉。
+新建一个只写 `usage_events` 的写入器。`LocalAgentUsageRepository` 一行不动——它还在给 scanner 供货，Task 14 切换、Task 18 删除。
 
 **「保留时间戳更早的那条」靠唯一索引实现不了**：`INSERT OR IGNORE` 保留的是先写入的那条，而扫描顺序不保证时间顺序。必须先查后比。
 
 **Files:**
 - Create: `Sources/TokenMeterCore/UsageEventWriter.swift`
-- Modify: `Sources/TokenMeterCore/LocalAgentUsageRepository.swift`
-- Delete: `LocalAgentModels.swift` 中的 `ParsedSessionUsage` / `ParsedAgentSession` / `ParsedSessionUsageKind`
 - Test: `Tests/TokenMeterCoreTests/UsageEventWriterTests.swift`
+
+`LocalAgentUsageRepository.swift` 与 `LocalAgentModels.swift` **一行都不动**。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -2902,19 +2922,20 @@ public final class UsageEventWriter {
 }
 ```
 
-在 `LocalAgentUsageRepository.swift` 里把 `upsert(_:scanRootId:sourceFileId:runId:)` 改为委托给 `UsageEventWriter`，删除 `upsertUsage` / `existingUsageId` / `updateLatestUsagePointer` / `refreshDailyRollups` / `usageParameters`。
-
-从 `LocalAgentModels.swift` 删除 `ParsedSessionUsage`、`ParsedAgentSession`、`ParsedSessionUsageKind`、`SourceFileFingerprint` 保留。
+不要碰 `LocalAgentUsageRepository`。它仍在把旧的 `ParsedAgentSession` 写进 v1 表，scanner 仍在调它。两条写入路径并存到 Task 14。
 
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `swift test --filter UsageEventWriterTests`
 Expected: `Executed 5 tests, with 0 failures`
 
+Run: `swift test`
+Expected: **全绿。** 新写入器是新文件，旧 repository 与 scanner 一行未动。
+
 - [ ] **Step 5: 提交**
 
 ```bash
-git add Sources/TokenMeterCore/UsageEventWriter.swift Sources/TokenMeterCore/LocalAgentUsageRepository.swift Sources/TokenMeterCore/LocalAgentModels.swift Tests/TokenMeterCoreTests/UsageEventWriterTests.swift
+git add Sources/TokenMeterCore/UsageEventWriter.swift Tests/TokenMeterCoreTests/UsageEventWriterTests.swift
 git commit -m "feat: write message-level usage events with cost"
 ```
 
@@ -3454,12 +3475,12 @@ Expected: FAIL，`no such table: usage_events` 或 event_seq 重置为 1
         try saveParserState(nextState, fileId: fileId)
     }
 
-    private func streamingParser(for kind: SourceKind, resuming state: ParserState?) -> LocalAgentSessionStreamingParser? {
+    private func streamingParser(for kind: SourceKind, resuming state: ParserState?) -> UsageEventParser? {
         switch kind {
-        case .claudeJSONL: return ClaudeCodeSessionParser(resuming: state)
-        case .codexJSONL: return CodexSessionParser(resuming: state)
-        case .ompJSONL: return OmpSessionParser(resuming: state)
-        case .opencodeSQLite: return nil   // SQLite 走 OpenCodeSessionAdapter
+        case .claudeJSONL: return ClaudeCodeUsageEventParser(resuming: state)
+        case .codexJSONL: return CodexUsageEventParser(resuming: state)
+        case .ompJSONL: return OmpUsageEventParser(resuming: state)
+        case .opencodeSQLite: return nil   // SQLite 走 OpenCodeUsageEventAdapter
         }
     }
 
@@ -3845,9 +3866,19 @@ git commit -m "test: add ccusage reconciliation script"
 
 ---
 
-## Task 18: 清理 v1 遗留表（schema v3）
+## Task 18: 清理 v1 遗留（schema v3 + 旧 parser）
 
-到这一步为止：Task 11 让 writer 只写 `usage_events`，Task 14 让 scanner 只调 writer，Task 16 让 Electron 只查 rollup 表。三张 v1 用量表已经**无人读、无人写**。现在才能安全删掉它们。
+到这一步为止：Task 11 让 writer 只写 `usage_events`，Task 14 让 scanner 只调新 parser 与 writer，Task 16 让 Electron 只查 rollup 表。三张 v1 用量表和一整套旧 parser 已经**无人读、无人写**。现在才能安全删掉。
+
+除了下面的 schema v3，本任务还要删除这些死代码及其测试：
+
+- `Sources/TokenMeterCore/LocalAgentSessionParsers.swift` 里的 `LocalAgentSessionParser`、`LocalAgentSessionStreamingParser`（`JSONDictionary` 与 `LocalAgentParserError` 保留，新 parser 仍在用）
+- `ClaudeCodeSessionParser.swift`、`CodexSessionParser.swift`、`OmpSessionParser.swift`、`OpenCodeSessionAdapter.swift` 四个文件整体
+- `LocalAgentModels.swift` 里的 `ParsedAgentSession`、`ParsedSessionUsage`、`ParsedSessionUsageKind`（`SourceKind`、`SourceFileFingerprint` 保留）
+- `LocalAgentUsageRepository.swift` 整体（职责已由 `UsageEventWriter` 接管）
+- 对应的旧测试文件
+
+删完跑 `swift test`，只应剩下新 parser 的测试。
 
 排在 Task 16 之后不是随意的：在此之前 `dashboardRepository.ts` 仍在查 `provider_daily_usage`，提前删表会让 Electron 测试全红。
 
@@ -4018,14 +4049,14 @@ git commit -m "refactor: drop v1 usage tables and redundant session columns"
 
 - `UsageEvent` 的字段名在 Task 1、6、8、9、10、11 中一致（`cacheWrite5mTokens` 而非 `cacheWrite5m`）。
 - `ParsedSession`（Task 1）取代了 `ParsedAgentSession`，Task 6/8/9/10 全部返回前者，Task 11 消费前者。
-- `LocalAgentSessionStreamingParser`（Task 6）是 `AnyObject` 协议，`init(resuming:)` + `consume(_:)` + `finish(_:)`。Task 6/8/9 的三个 parser 都是 `final class` 并实现它；Task 14 的 `streamingParser(for:resuming:)` 构造它们。
+- `UsageEventParser`（Task 6）是 `AnyObject` 协议，`init(resuming:)` + `consume(_:)` + `finish(_:)`。Task 6/8/9 的三个 parser 都是 `final class` 并实现它；Task 14 的 `streamingParser(for:resuming:)` 构造它们。
 - 三个 parser 的测试统一走协议扩展提供的静态 `parse(lines:sourceURL:resuming:)`；生产路径只走 `consume`/`finish`。
 - `CostCalculator.cost(for:)` 返回 `(micros: Int64?, source: CostSource)`，Task 5 定义、Task 11 消费，签名一致。
 - `UsageEventDeduplicator.deduplicate(_:)` 在 Task 7 定义、Task 11 调用。
 - `RollupBuilder.rebuildAll()` 在 Task 12 定义，Task 14、15 调用。
 - `UsageEventWriter.lastSourceOffset(sourceFileId:)` 在 Task 11 定义，Task 14 调用。
 - `JSONLStreamReader.readLines(from:startingAt:markers:onLine:)`（流式）在 Task 13 定义，Task 14 调用；同名的数组版仅供 Task 13 自身的测试使用。
-- `ClaudeCodeSessionParser.makeDateFormatters()` 是 `static`，被 Codex 与 omp 两个 parser 复用（Task 6/8/9），避免三份重复定义。
+- `ClaudeCodeUsageEventParser.makeDateFormatters()` 是 `static`，被 Codex 与 omp 两个 parser 复用（Task 6/8/9），避免三份重复定义。
 
 **风险提示：**
 
