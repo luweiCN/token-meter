@@ -497,7 +497,21 @@ ccusage daily --json --since 20260601 --until 20260630
 
 ccusage 的 codex 记录没有 `cacheCreation` 字段，与 codex 日志不区分缓存写入、我们的 `cache_write_5m` / `cache_write_1h` 对 codex 恒为 0 相符。
 
-#### 9.3.2 codex 的 token 数据从 2026-04-16 才存在
+#### 9.3.2 我们漏扫了 `~/.codex/archived_sessions`
+
+对账立刻发现 codex 少了 **954,227,362** token（占 5.2%）。50 天里 13 天不一致，全部是 ccusage 更多，集中在 2026-05-29 ~ 06-09。
+
+原因不在解析，而在扫描范围。用一个独立的 Python 脚本直接累加 `~/.codex/sessions` 全部文件的 `last_token_usage.total_tokens`（跳过 `input == 0 && output == 0` 的纯状态事件），得到 **125,851 事件 / 17,501,293,111 token**——与我们 Swift parser 的输出一位不差。parser 是对的。**错的是我们没看 `~/.codex/archived_sessions/`**：70 个文件、7,228 个事件、954,673,982 token。
+
+`TokenMeterPaths.defaultScanRoots` 只声明了 `.codex/sessions`。必须补上归档目录，`kind` 仍是 `.codexJSONL`，`provider_id` 仍归到 `codex`，因此 rollup 会自然合并。
+
+**补之前必须先确认归档是"移动"而非"复制"。** codex 的事件没有 `messageId`，`UsageEvent.dedupeKey` 为 nil，`UsageEventDeduplicator` 会原样放行——若同一个 session 同时存在于两个目录，那 9.5 亿 token 会被计两遍。实测两目录文件名交集为 **0**，归档是移动。这个前提若在未来的 codex 版本里改变，去重必须改用 `source_session_key`。
+
+残差 446,620 token（0.0024%）尚未解释，留待实现时定位。
+
+这类缺陷单元测试永远发现不了：解析逻辑完全正确，错的是读哪里。只有拿一个独立实现在同一台机器的真实数据上跑一遍才会暴露。
+
+#### 9.3.3 codex 的 token 数据从 2026-04-16 才存在
 
 本机 19,971 个 codex rollout 文件里，**96.7% 完全不含 `token_count` 行**（随机抽样 300 个，290 个为零）。按文件名日期分组后边界是干净的：2026-02 与 2026-03 的文件无一例外没有 token 记录，2026-05 之后无一例外都有，交界在 **2026-04-16**（当日 15 个有、1 个无）。
 
@@ -610,7 +624,7 @@ Task 14 的代码审查用变异测试（把不变量对应的那一行改坏，
 
 一次"什么都没变"的增量扫描，代价必须与**变化的**文件数成正比，而不是与文件总数成正比。这条被破坏过一次：为续读安全加的指纹一度放在 `fileMetadata` 里，于是每个文件在跳过判据生效之前就被 open + 读 4 KB + 哈希。
 
-跳过判据最终是 `parse_status = 'ok'` ∧ size 未变 ∧ `mtime_ns` 未变 ∧ `parser_state IS NOT NULL`。最后一项一石二鸟：它精确表达"v2 的 scanner 完整解析过这个文件"，因而既能识别 v1 遗留行（旧格式解不成 v2 的 `ParserState`）要重扫，又让 19,211 个零事件的 codex 文件（§9.3.2）终于能被跳过——旧判据用"`usage_events` 里有没有这个文件的行"，把"没有事件"和"没解析过"混为一谈。
+跳过判据最终是 `parse_status = 'ok'` ∧ size 未变 ∧ `mtime_ns` 未变 ∧ `parser_state IS NOT NULL`。最后一项一石二鸟：它精确表达"v2 的 scanner 完整解析过这个文件"，因而既能识别 v1 遗留行（旧格式解不成 v2 的 `ParserState`）要重扫，又让 19,211 个零事件的 codex 文件（§9.3.3）终于能被跳过——旧判据用"`usage_events` 里有没有这个文件的行"，把"没有事件"和"没解析过"混为一谈。
 
 真实 codex 根，第二遍空扫：
 
