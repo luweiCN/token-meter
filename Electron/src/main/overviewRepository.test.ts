@@ -66,6 +66,13 @@ function seedSession(id: number, provider: string, project: string, lastEventMsA
     .run(id, last - 60_000, last, 3, tokens, 1000, 'claude-fable-5');
 }
 
+// localDateTime 无时区 → JS 按本地时区解析，SQLite 的 'localtime' 再转回同一本地日期。
+// 取正午等非边界时刻，避免午夜/DST 的日期归属歧义。
+function seedEvent(id: number, sessionId: number, localDateTime: string, model = 'm') {
+  db.prepare(`INSERT INTO usage_events(id, session_id, observed_epoch_ms, model_canonical)
+              VALUES (?,?,?,?)`).run(id, sessionId, Date.parse(localDateTime), model);
+}
+
 describe('recentActivity', () => {
   it('orders by last event descending and marks only fresh sessions as live', () => {
     seedSession(1, 'claude-code', 'token-meter', 12_000, 500);      // 12 秒前
@@ -155,5 +162,42 @@ describe('trend', () => {
   it('rejects a granularity the range does not allow', () => {
     const repo = new OverviewRepository(db, () => NOW);
     expect(() => repo.trend('2026-06-11', '2026-07-10', 'hour')).toThrow(/hour.*not allowed/i);
+  });
+});
+
+describe('heatmap', () => {
+  it('returns one row per day that has data, with three switchable metrics', () => {
+    db.exec(`INSERT INTO daily_rollup(usage_date, provider_id, source_kind, project_id, model_canonical,
+      sessions_count, events_count, tokens_input, tokens_output, cost_usd_micros)
+      VALUES ('2026-07-09','c','k',NULL,'m1', 1, 3, 100, 10, 500),
+             ('2026-07-09','c','k',NULL,'m2', 1, 2,  50,  5, 300),
+             ('2026-07-10','c','k',NULL,'m1', 1, 1,  20,  2, 100);`);
+    // sessions 走 usage_events 的 count(distinct)，与 token/成本/事件分开取。
+    // 07-09 是两个不同会话，07-10 是一个会话。
+    seedEvent(1, 1, '2026-07-09T09:00:00');
+    seedEvent(2, 2, '2026-07-09T10:00:00');
+    seedEvent(3, 1, '2026-07-10T09:00:00');
+
+    const rows = new OverviewRepository(db, () => NOW).heatmap('2026-07-09', '2026-07-10');
+
+    expect(rows).toEqual([
+      { date: '2026-07-09', tokens: 165, costUsdMicros: 800, sessions: 2, events: 5 },
+      { date: '2026-07-10', tokens: 22, costUsdMicros: 100, sessions: 1, events: 1 }
+    ]);
+  });
+
+  it('counts distinct sessions, not summed sessions_count, when one session used two models', () => {
+    // 同一会话当天用了两个模型 → 两行 daily_rollup、各 sessions_count=1，naive sum = 2。
+    // 但 usage_events 里只有一个 session_id → 正确会话数是 1。RollupBuilder.swift L44-49 同旨。
+    db.exec(`INSERT INTO daily_rollup(usage_date, provider_id, source_kind, project_id, model_canonical,
+      sessions_count, events_count, tokens_input, cost_usd_micros)
+      VALUES ('2026-07-09','c','k',NULL,'m1', 1, 1, 100, 1),
+             ('2026-07-09','c','k',NULL,'m2', 1, 1, 200, 1);`);
+    seedEvent(1, 7, '2026-07-09T09:00:00', 'm1');
+    seedEvent(2, 7, '2026-07-09T10:00:00', 'm2');
+
+    const rows = new OverviewRepository(db, () => NOW).heatmap('2026-07-09', '2026-07-09');
+
+    expect(rows[0].sessions).toBe(1);   // NOT sum(sessions_count) = 2
   });
 });

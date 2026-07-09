@@ -36,6 +36,14 @@ export interface TrendBucket {
   output: number;
 }
 
+export interface HeatmapDay {
+  date: string;
+  tokens: number;
+  costUsdMicros: number;
+  sessions: number;
+  events: number;
+}
+
 /// `now` 可注入，否则测试会在午夜前后随机变红。
 export class OverviewRepository {
   constructor(private readonly db: Database.Database, private readonly now: () => number = Date.now) {}
@@ -152,6 +160,25 @@ export class OverviewRepository {
         WHERE usage_date BETWEEN ? AND ?
      GROUP BY bucket ORDER BY bucket`
     ).all(from, to) as TrendBucket[];
+  }
+
+  /// 一格一天。`sessions` 走 usage_events 的 count(distinct session_id)，
+  /// 【不能】对 daily_rollup.sessions_count 求和——同一会话当天用两个模型会占两行
+  /// （RollupBuilder.swift L44-49）。热力图不补空洞：没数据的那天就是 level 0，
+  /// 由组件按日历网格摆放，无需 repository 造零行。
+  heatmap(from: string, to: string): HeatmapDay[] {
+    return this.db.prepare(
+      `SELECT d.usage_date AS date,
+              coalesce(sum(d.tokens_input + d.tokens_output + d.tokens_cache_read
+                           + d.tokens_cache_write_5m + d.tokens_cache_write_1h), 0) AS tokens,
+              coalesce(sum(d.cost_usd_micros), 0) AS costUsdMicros,
+              (SELECT count(DISTINCT e.session_id) FROM usage_events e
+                WHERE date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime') = d.usage_date) AS sessions,
+              coalesce(sum(d.events_count), 0) AS events
+         FROM daily_rollup d
+        WHERE d.usage_date BETWEEN ? AND ?
+     GROUP BY d.usage_date ORDER BY d.usage_date`
+    ).all(from, to) as HeatmapDay[];
   }
 }
 
