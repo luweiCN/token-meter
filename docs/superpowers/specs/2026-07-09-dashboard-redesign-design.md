@@ -214,7 +214,17 @@ public protocol LocalAgentSessionParser {
 
 **若不做这个减法，Codex 的 token 会被计成将近两倍**——那个 3.2 GB 的 session 里 `cached_input` 占 `input` 的 94.6%。
 
-Codex 另有畸形事件（`input = output = 0` 但 `total > 0`，600 条中出现 2 条）。adapter 必须跳过这类事件并计数，不得把 `total` 当作 output 写入。
+#### 4.3.2 Codex `token_count` 事件的实测行为
+
+在一个 221 MB、含 5,366 条 `token_count` 事件的真实 session 上测得：
+
+- **100% 的事件同时带 `last_token_usage` 与 `total_token_usage`。** 因此「对 `total` 做差分」这条路径在本机数据上从不触发。仍要实现它——其他 Codex 版本可能只写累计值——但不要以为它是主路径。
+- **`total_token_usage` 从不递减**（0 次）。569 个 `compacted` 事件没有重置累计计数。重置处理逻辑保留为防御。
+- **49 条畸形事件**（`last.input = last.output = 0` 但 `last.total_tokens > 0`，占 0.9%）。关键发现：**这些事件发生时 `total_token_usage` 的 input / output / cached 增量全部为 0**。那个 `total_tokens: 24505` 是**当前上下文窗口的大小**，不是本次消耗。它们是纯状态汇报，没有 token 被用掉。
+
+  所以跳过它们既正确又不丢数据：两种口径（用 `last` 或对 `total` 差分）在这些事件上都得 0。**绝不能把 `total_tokens` 当成 output 写入**——那会凭空造出 120 万个不存在的 token。
+
+- **`Σ last.input_tokens = 796,872,582`，而 `total_token_usage` 的终值是 `796,150,596`，相差 721,986（约 0.09%）。** 两个口径不完全等价。采用 `last` 优先（与 ccusage 一致，且它是 Codex 自报的「本次用量」）。这个偏差要在第 9.3 节的对账中记住，否则会被误当成我们的缺陷。
 
 ### 4.4 去重
 
