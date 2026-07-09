@@ -16,7 +16,8 @@ public struct UsageEvent: Equatable {
     public let messageId: String?
     public let requestId: String?
     /// 去重指纹，**由各 parser 在构造时提供**，不再由本类型从 id 推导。
-    /// - Claude：`messageId`⨯`requestId`，仅当两者都在时；否则 nil。
+    /// - Claude：`messageId` 本身（缺 messageId 时为 nil）。requestId 不参与——它时有时无，
+    ///   并进 key 会让缺它的那份逃过去重、被重复计数（见 ClaudeCodeUsageEventParser）。
     /// - Codex：`token_count` 无 message/request id，改用 timestamp + 原始 token 四元组合成
     ///   （见 CodexUsageEventParser），否则每条都是 NULL、`idx_usage_dedupe` 永不生效。
     /// - omp / OpenCode：为 nil（OpenCode 在 adapter 内以 messageId 自去重，omp 无稳定指纹）。

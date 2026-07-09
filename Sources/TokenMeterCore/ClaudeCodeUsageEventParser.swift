@@ -61,8 +61,13 @@ public final class ClaudeCodeUsageEventParser: UsageEventParser {
 
         let messageId = firstString(in: message, keys: ["id"])
         let requestId = firstString(in: object, keys: ["requestId", "request_id"])
-        // 仅当 message 与 request id 都在时才构成指纹（与旧的 computed 行为一致）。
-        let dedupeKey = messageId.flatMap { messageId in requestId.map { "\(messageId)\u{1F}\($0)" } }
+        // 去重指纹就是 messageId 本身，requestId 不参与。
+        // 一条 assistant 响应 = 一次 API 计费，全程只有一个 messageId；requestId 却时有时无
+        // （同一响应会以带 requestId 与不带 requestId 两种形态各出现一次，尤以 sidechain 为甚）。
+        // 把 requestId 并进 key 会让"缺 requestId 的那一份"得到 nil 指纹、彻底绕过去重而被重复
+        // 计数——本机因此把 Claude 多算约 17.9%。requestId 对身份零贡献：无一个 messageId 落在
+        // 多个 requestId 下（见 UsageEventDeduplicator 注释），所以只按 messageId 去重既充分又正确。
+        let dedupeKey = messageId
 
         eventSeq += 1
         events.append(

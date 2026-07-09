@@ -26,7 +26,7 @@ final class ClaudeCodeUsageEventParserTests: XCTestCase {
         XCTAssertEqual(session.events[0].cacheReadTokens, 900)
         XCTAssertEqual(session.events[0].cacheWrite5mTokens, 50)
         XCTAssertEqual(session.events[0].cacheWrite1hTokens, 20)
-        XCTAssertEqual(session.events[0].dedupeKey, "msg_1\u{1F}req_1")
+        XCTAssertEqual(session.events[0].dedupeKey, "msg_1")
 
         // 同一会话内换了模型，各归各的
         XCTAssertEqual(session.events[1].modelName, "claude-opus-4-8")
