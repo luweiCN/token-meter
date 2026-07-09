@@ -11,9 +11,12 @@ public struct CostCalculator {
 
     public init(snapshot: PricingSnapshot) {
         var index: [String: ModelPricing] = [:]
-        // LiteLLM 的 key 是原始名。归一化后会撞名：claude-3-opus 与
-        // claude-3-opus-20240229 都归到 claude-3-opus。按字典序取第一个——
-        // 裸名总排在带日期后缀的前面，且同一份快照总是得到同一结果。
+        // LiteLLM 的 key 是原始名，归一化后会撞名：一个规范名常对应多个原始 key。
+        // 实测快照有 15 组，主因是 provider 前缀（claude-opus-4-8 与
+        // vertex_ai/claude-opus-4-8），其次才是日期后缀。取字典序最小的那个。
+        //
+        // sorted 不可省略：Swift 字典的迭代顺序取决于每进程随机的哈希种子，
+        // 同一份字典连跑十次会得到四种顺序。去掉它，first-write-wins 就成了掷骰子。
         for (key, pricing) in snapshot.models.sorted(by: { $0.key < $1.key }) {
             let canonical = ModelNameNormalizer.canonical(key)
             if index[canonical] == nil {

@@ -8,7 +8,7 @@
 """
 import unittest
 
-from transform_pricing import convert_model, rate, should_keep
+from transform_pricing import canonical, convert_model, divergent_collisions, rate, should_keep
 
 
 class RateTests(unittest.TestCase):
@@ -84,6 +84,39 @@ class ConvertModelTests(unittest.TestCase):
         self.assertEqual(out["cacheReadPerMTok"], 1.0)      # input * 0.1
         self.assertEqual(out["cacheWrite5mPerMTok"], 12.5)  # input * 1.25
         self.assertEqual(out["cacheWrite1hPerMTok"], 20.0)  # input * 2.0
+
+
+class CanonicalTests(unittest.TestCase):
+    def test_matches_swift_normalizer(self):
+        self.assertEqual(canonical("vertex_ai/claude-3-opus"), "claude-3-opus")
+        self.assertEqual(canonical("claude-3-opus-20240229"), "claude-3-opus")
+        self.assertEqual(canonical("zai/glm-4.6"), "glm-4.6")
+        self.assertEqual(canonical("glm-4.6"), "glm-4.6")          # 非八位数字后缀不剥离
+        self.assertEqual(canonical("GPT-5.5"), "gpt-5.5")
+
+
+class DivergentCollisionTests(unittest.TestCase):
+    def test_flags_collision_with_different_prices(self):
+        models = {
+            "claude-3-opus-20240229": {"inputPerMTok": 15.0, "cacheWrite1hPerMTok": 6.0},
+            "vertex_ai/claude-3-opus": {"inputPerMTok": 15.0, "cacheWrite1hPerMTok": 30.0},
+        }
+        found = divergent_collisions(models)
+        self.assertEqual(len(found), 1)
+        name, keys = found[0]
+        self.assertEqual(name, "claude-3-opus")
+        self.assertEqual(keys[0], "claude-3-opus-20240229", "字典序最小者胜出")
+
+    def test_ignores_collision_with_identical_prices(self):
+        models = {
+            "claude-fable-5": {"inputPerMTok": 10.0},
+            "vertex_ai/claude-fable-5": {"inputPerMTok": 10.0},
+        }
+        self.assertEqual(divergent_collisions(models), [])
+
+    def test_ignores_non_colliding_names(self):
+        models = {"a": {"inputPerMTok": 1.0}, "b": {"inputPerMTok": 2.0}}
+        self.assertEqual(divergent_collisions(models), [])
 
 
 if __name__ == "__main__":

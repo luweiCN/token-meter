@@ -90,16 +90,32 @@ final class CostCalculatorTests: XCTestCase {
         XCTAssertEqual(result.source, .unknown)
     }
 
-    func testCanonicalCollisionPrefersBareNameDeterministically() {
-        // 两个 key 归一后都是 claude-3-opus，必须稳定地选中裸名
+    func testCanonicalCollisionResolvesToLexicographicallyFirstKey() {
+        // 三组撞名，每组四个原始 key，只有字典序最小的那个价格独特。
+        //
+        // 用三组而不是一组，是为了让这个测试真的守得住 init 里的 sorted(by:)。
+        // 去掉 sorted 后，Swift 字典的迭代顺序随进程哈希种子变化，单组撞名
+        // 只有 1/4 概率选错，测试有 25% 概率放过。三组同时蒙对的概率是
+        // (1/4)^3 ≈ 1.6%，测试会以 98.4% 的概率变红。
+        func priced(_ input: Double) -> ModelPricing {
+            ModelPricing(inputPerMTok: input, outputPerMTok: 0, cacheReadPerMTok: 0,
+                         cacheWrite5mPerMTok: 0, cacheWrite1hPerMTok: 0)
+        }
         let snapshot = PricingSnapshot(snapshotVersion: "test", source: "litellm", models: [
-            "claude-3-opus": ModelPricing(inputPerMTok: 15, outputPerMTok: 75, cacheReadPerMTok: 1.5,
-                                          cacheWrite5mPerMTok: 18.75, cacheWrite1hPerMTok: 30),
-            "claude-3-opus-20240229": ModelPricing(inputPerMTok: 99, outputPerMTok: 99, cacheReadPerMTok: 99,
-                                                   cacheWrite5mPerMTok: 99, cacheWrite1hPerMTok: 99)
+            "alpha-1": priced(1), "alpha-1-20240101": priced(90),
+            "vertex_ai/alpha-1": priced(91), "zai/alpha-1": priced(92),
+
+            "beta-2": priced(2), "beta-2-20240101": priced(93),
+            "vertex_ai/beta-2": priced(94), "zai/beta-2": priced(95),
+
+            "gamma-3": priced(3), "gamma-3-20240101": priced(96),
+            "vertex_ai/gamma-3": priced(97), "zai/gamma-3": priced(98)
         ])
-        let result = CostCalculator(snapshot: snapshot).cost(for: event(model: "claude-3-opus", input: 1_000_000))
-        XCTAssertEqual(result.micros, 15_000_000)
+        let calculator = CostCalculator(snapshot: snapshot)
+
+        XCTAssertEqual(calculator.cost(for: event(model: "alpha-1", input: 1_000_000)).micros, 1_000_000)
+        XCTAssertEqual(calculator.cost(for: event(model: "beta-2", input: 1_000_000)).micros, 2_000_000)
+        XCTAssertEqual(calculator.cost(for: event(model: "gamma-3", input: 1_000_000)).micros, 3_000_000)
     }
 
     func testResolvesGlmThroughZaiPrefix() {
