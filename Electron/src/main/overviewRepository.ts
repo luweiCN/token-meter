@@ -1,6 +1,19 @@
+import fs from 'node:fs';
 import type Database from 'better-sqlite3';
 import { isAllowed, type Granularity } from './granularity.js';
 import { localBucketKeys } from '../shared/calendar.js';
+
+/// 概览页的三种数据状态。空的两种必须分开表达（spec「升级后的第一次打开」）：
+/// 显示 0 tokens 会让刚升级的用户以为软件坏了，而真相是「还没扫过」。
+export type OverviewDataState = 'ready' | 'never-used' | 'needs-reindex';
+
+const defaultCorpusExists = (rootPath: string): boolean => {
+  try {
+    return fs.existsSync(rootPath);
+  } catch {
+    return false;
+  }
+};
 
 /// 5 分钟内消耗过 token 的会话打实心脉冲点。
 ///
@@ -75,6 +88,37 @@ export interface ModelRank {
 /// `now` 可注入，否则测试会在午夜前后随机变红。
 export class OverviewRepository {
   constructor(private readonly db: Database.Database, private readonly now: () => number = Date.now) {}
+
+  /// 区分两种「空」：
+  ///   never-used   —— 无启用扫描源，或启用的扫描源语料目录都不在磁盘上。
+  ///   needs-reindex —— 有启用扫描源、语料在，但 usage_events 为空（升级后尚未重扫）。
+  /// 只要 usage_events 有一行就是 ready，语料判据不再咨询。
+  ///
+  /// 必须容忍 v1 库：迁移由 Swift 触发，Electron 直接打开尚未迁移的 v1 库时
+  /// usage_events / rollup 表尚不存在，这里按「空」处理，绝不能抛 no such table。
+  /// 本机生产库（user_version=1）正是这个状态，落点为 needs-reindex。
+  dataState(corpusExists: (rootPath: string) => boolean = defaultCorpusExists): OverviewDataState {
+    if (this.hasUsageRows()) return 'ready';
+    return this.enabledScanRootPaths().some(corpusExists) ? 'needs-reindex' : 'never-used';
+  }
+
+  private tableExists(name: string): boolean {
+    return this.db
+      .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`)
+      .get(name) !== undefined;
+  }
+
+  private hasUsageRows(): boolean {
+    if (!this.tableExists('usage_events')) return false;
+    return (this.db.prepare(`SELECT EXISTS(SELECT 1 FROM usage_events) AS n`).get() as { n: number }).n === 1;
+  }
+
+  private enabledScanRootPaths(): string[] {
+    if (!this.tableExists('scan_roots')) return [];
+    return (this.db
+      .prepare(`SELECT root_path AS rootPath FROM scan_roots WHERE enabled = 1 AND scan_mode != 'disabled'`)
+      .all() as Array<{ rootPath: string }>).map(r => r.rootPath);
+  }
 
   private localDate(offsetDays = 0): string {
     const d = new Date(this.now() + offsetDays * 86_400_000);

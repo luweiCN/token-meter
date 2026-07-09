@@ -52,8 +52,19 @@ beforeEach(() => {
       cost_usd_micros INTEGER,
       cost_source TEXT NOT NULL DEFAULT 'reported'
     );
+    -- 空状态判据表（TokenMeterDatabaseSchema.swift 的 scan_roots，取本判据用到的列）。
+    CREATE TABLE scan_roots (
+      id INTEGER PRIMARY KEY, kind TEXT NOT NULL, root_path TEXT NOT NULL,
+      display_name TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
+      scan_mode TEXT NOT NULL DEFAULT 'incremental', stable_source_key TEXT NOT NULL DEFAULT 'k'
+    );
   `);
 });
+
+function seedScanRoot(id: number, rootPath: string, enabled = 1, scanMode = 'incremental') {
+  db.prepare(`INSERT INTO scan_roots(id, kind, root_path, enabled, scan_mode, stable_source_key)
+              VALUES (?,?,?,?,?,?)`).run(id, 'claude_jsonl', rootPath, enabled, scanMode, `k${id}`);
+}
 
 function seedSession(id: number, provider: string, project: string, lastEventMsAgo: number, tokens: number) {
   db.prepare(`INSERT OR IGNORE INTO projects(id, canonical_path, display_name) VALUES (?,?,?)`)
@@ -221,6 +232,46 @@ describe('modelRanking', () => {
       .find(m => m.model === 'unpriced')!;
     expect(unpriced.costUsdMicros).toBe(0);
     expect(unpriced.costUnknownEvents).toBe(4);   // 成本是 0 还是「不知道」，UI 必须能区分
+  });
+});
+
+describe('dataState', () => {
+  it('reports ready as soon as usage_events has any row', () => {
+    seedScanRoot(1, '/corpus/claude');
+    seedEvent(1, 1, '2026-07-09T09:00:00');
+    // corpus 判据函数在 ready 分支不该被咨询——有明细就是有数据。
+    expect(new OverviewRepository(db, () => NOW).dataState(() => false)).toBe('ready');
+  });
+
+  it('reports never-used when no scan root is enabled', () => {
+    seedScanRoot(1, '/corpus/claude', 0);            // 停用
+    seedScanRoot(2, '/corpus/codex', 1, 'disabled'); // scan_mode disabled
+    expect(new OverviewRepository(db, () => NOW).dataState(() => true)).toBe('never-used');
+  });
+
+  it('reports never-used when enabled roots point at corpora that do not exist on disk', () => {
+    seedScanRoot(1, '/corpus/claude');               // 启用，但目录不存在
+    expect(new OverviewRepository(db, () => NOW).dataState(() => false)).toBe('never-used');
+  });
+
+  it('reports needs-reindex when enabled roots have a present corpus but usage_events is empty', () => {
+    // 升级后尚未重扫：scan_roots 有启用项、语料在，但 rollup/明细都空。
+    seedScanRoot(1, '/corpus/missing');
+    seedScanRoot(2, '/corpus/present');
+    const present = (p: string) => p === '/corpus/present';
+    expect(new OverviewRepository(db, () => NOW).dataState(present)).toBe('needs-reindex');
+  });
+
+  it('survives a v1 database whose usage_events table does not exist yet', () => {
+    // 迁移由 Swift 触发；Electron 直接打开尚未迁移的 v1 库时 usage_events 尚不存在，
+    // dataState 必须按「空」处理而不是抛 no such table。本机生产库就是这个状态。
+    const v1 = new Database(':memory:');
+    v1.exec(`CREATE TABLE scan_roots (id INTEGER PRIMARY KEY, kind TEXT NOT NULL, root_path TEXT NOT NULL,
+      display_name TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
+      scan_mode TEXT NOT NULL DEFAULT 'incremental', stable_source_key TEXT NOT NULL DEFAULT 'k');
+      INSERT INTO scan_roots(id, kind, root_path, stable_source_key) VALUES (1,'claude_jsonl','/corpus/claude','k1');`);
+    expect(new OverviewRepository(v1, () => NOW).dataState(() => true)).toBe('needs-reindex');
+    v1.close();
   });
 });
 
