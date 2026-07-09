@@ -138,7 +138,9 @@ final class CodexUsageEventParserTests: XCTestCase {
         XCTAssertTrue(session.events.isEmpty, "纯状态汇报事件必须跳过，不得凭空造出 24505 个 token")
     }
 
-    func testCodexEventsHaveNoDedupeKey() throws {
+    func testCodexEventsCarrySyntheticDedupeKey() throws {
+        // Codex 的 token_count 无 message/request id，改用 timestamp + 原始四元组
+        // （input/cached/output/reasoning，减法之前的日志原值）合成去重指纹。
         let lines = [
             line(meta, offset: 0),
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"output_tokens":1}}}}"#, offset: 1)
@@ -148,8 +150,13 @@ final class CodexUsageEventParserTests: XCTestCase {
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
         )
 
-        XCTAssertNil(session.events[0].dedupeKey)
-        XCTAssertEqual(session.events[0].sourceOffset, 1)
+        let event = session.events[0]
+        XCTAssertEqual(
+            event.dedupeKey,
+            "\(event.observedEpochMilliseconds)\u{1F}10\u{1F}0\u{1F}1\u{1F}0",
+            "指纹 = 毫秒时间戳 + 原始 input/cached/output/reasoning"
+        )
+        XCTAssertEqual(event.sourceOffset, 1)
     }
 
     func testThrowsWhenSessionKeyMissing() {

@@ -59,14 +59,20 @@ public final class ClaudeCodeUsageEventParser: UsageEventParser {
 
         guard inputTokens + outputTokens + cacheReadTokens + write5m + write1h > 0 else { return }
 
+        let messageId = firstString(in: message, keys: ["id"])
+        let requestId = firstString(in: object, keys: ["requestId", "request_id"])
+        // 仅当 message 与 request id 都在时才构成指纹（与旧的 computed 行为一致）。
+        let dedupeKey = messageId.flatMap { messageId in requestId.map { "\(messageId)\u{1F}\($0)" } }
+
         eventSeq += 1
         events.append(
             UsageEvent(
                 eventSeq: eventSeq,
                 observedAt: observedAt,
                 modelName: firstString(in: message, keys: ["model", "modelName", "model_name"]),
-                messageId: firstString(in: message, keys: ["id"]),
-                requestId: firstString(in: object, keys: ["requestId", "request_id"]),
+                messageId: messageId,
+                requestId: requestId,
+                dedupeKey: dedupeKey,
                 inputTokens: inputTokens,
                 outputTokens: outputTokens,
                 reasoningTokens: 0,

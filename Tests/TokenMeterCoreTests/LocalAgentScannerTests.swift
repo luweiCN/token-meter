@@ -859,6 +859,65 @@ final class LocalAgentScannerTests: XCTestCase {
         )
     }
 
+    func testDuplicateCodexTokenCountLineWithinOneFileIsCountedOnce() async throws {
+        // Codex 偶尔把同一个 token_count 事件写两遍：相同 timestamp、相同 last_token_usage。
+        // 合成 dedupeKey（timestamp + 原始四元组）让这两行的 key 一致，
+        // UsageEventDeduplicator 在写库前把它们合成一条，只算一次。
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("rollout.jsonl")
+        let duplicateLine = #"{"type":"event_msg","timestamp":"2026-06-14T04:05:29.624Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0}}}}"#
+        let jsonl = """
+        {"type":"session_meta","payload":{"id":"codex-dup-line","cwd":"/repo"}}
+        \(duplicateLine)
+        \(duplicateLine)
+
+        """
+        try writeJSONL(jsonl, to: file)
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(
+            try scalarInt(database, "SELECT count(*) AS value FROM usage_events"),
+            1,
+            "同一 token_count 行重复出现必须只算一次"
+        )
+        XCTAssertEqual(
+            try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"),
+            120
+        )
+    }
+
+    func testTwoDistinctCodexEventsSharingATimestampBothSurvive() async throws {
+        // 同一毫秒的两个 token_count，last_token_usage 不同：是两次真实调用。
+        // 合成 dedupeKey 里带上原始四元组，两条 key 就不同，必须都保留——
+        // 若 key 只用 timestamp，就会误删一条真实事件。
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("rollout.jsonl")
+        let jsonl = """
+        {"type":"session_meta","payload":{"id":"codex-same-ts","cwd":"/repo"}}
+        {"type":"event_msg","timestamp":"2026-06-14T04:05:29.624Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0}}}}
+        {"type":"event_msg","timestamp":"2026-06-14T04:05:29.624Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":7,"reasoning_output_tokens":0}}}}
+
+        """
+        try writeJSONL(jsonl, to: file)
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(
+            try scalarInt(database, "SELECT count(*) AS value FROM usage_events"),
+            2,
+            "同毫秒但 usage 不同的两次真实调用都必须保留"
+        )
+        XCTAssertEqual(
+            try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"),
+            177
+        )
+    }
+
     func testInPlaceRewriteToLargerBodyDoesNotResumeWithStaleContent() async throws {
         // 原地改写成更大的不同内容（同 inode + 更大 size）与"追加"在 shouldResume 眼里长得一样。
         // 只有内容指纹能分辨：改写会改开头字节，指纹变 → 全量重读，而非从旧游标续读。

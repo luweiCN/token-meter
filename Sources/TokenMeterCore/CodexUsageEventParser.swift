@@ -66,6 +66,15 @@ public final class CodexUsageEventParser: UsageEventParser {
             // 在这些事件上也一动没动。把 total_tokens 当成 output 会凭空造 token。
             guard delta.inputTokens > 0 || delta.outputTokens > 0 else { return }
 
+            // Codex 的 token_count 没有 message/request id，用 timestamp + 原始四元组
+            // （input/cached/output/reasoning，取减法之前的日志原值）合成去重指纹：
+            // 它标识的是"哪一行日志"，而非归一化后的数字。
+            //   - 同一 session 跨两个 scan root（归档是移动、非复制的镜像）→ 同 session_id 同 key，
+            //     由 UNIQUE(session_id, dedupe_key) + writer 的 query-then-compare 挡住重复计数。
+            //   - 同一文件内被写两遍的重复行 → 同 key，由 UsageEventDeduplicator 先合成一条。
+            let observedMilliseconds = Int64((observedAt.timeIntervalSince1970 * 1000).rounded())
+            let dedupeKey = "\(observedMilliseconds)\u{1F}\(delta.inputTokens)\u{1F}\(delta.cachedInputTokens)\u{1F}\(delta.outputTokens)\u{1F}\(delta.reasoningTokens)"
+
             eventSeq += 1
             events.append(
                 UsageEvent(
@@ -74,6 +83,7 @@ public final class CodexUsageEventParser: UsageEventParser {
                     modelName: modelName,
                     messageId: nil,
                     requestId: nil,
+                    dedupeKey: dedupeKey,
                     // Codex 的 input 含 cached，必须减掉，否则缓存 token 被计两遍。
                     // 最大的 session 里 cached 占 input 的 94.6%，漏了这行数字翻倍。
                     inputTokens: max(0, delta.inputTokens - delta.cachedInputTokens),

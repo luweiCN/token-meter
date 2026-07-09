@@ -11,7 +11,10 @@ public enum UsageEventDeduplicator {
     ///   本机 5,492 个 session 文件、334,941 行中，零个 messageId 出现在多个
     ///   requestId 下。保留它是因为重复计费是静默错误，而代价只有几行。
     ///
-    /// 没有 `dedupeKey` 的事件（如 Codex）原样放行，不在这里去重。
+    /// Codex 事件现在也带 `dedupeKey`（timestamp + 原始四元组），会进入 `byExactKey`：
+    ///   规则一让同一文件里被写两遍的重复行合成一条（保留更早的 `observedAt`）。
+    ///   但它们 `messageId` 为 nil，第二遍按 messageId 分组时落入 passthrough，绝不被丢弃。
+    /// 仍无 `dedupeKey` 的事件（如 omp）原样放行，不在这里去重。
     ///
     /// 注意：`UNIQUE(source_file_id, event_seq)` **不是**防重复计数的机制。它只保证同一个
     /// (file, seq) 至多一行——让"同一行被原样重写"变幂等（崩溃恢复时的重放）。但被错误续读
@@ -40,10 +43,9 @@ public enum UsageEventDeduplicator {
         var byMessageId: [String: UsageEvent] = [:]
         for event in byExactKey.values {
             guard let messageId = event.messageId else {
-                // dedupeKey 非 nil 蕴含 messageId 非 nil，今天到不了这里。
-                // 但若 dedupeKey 的定义将来放宽，`continue` 会静默丢掉一条真实用量。
-                // 宁可放行（这些事件在文件内各有自己的 event_seq，不会撞库），
-                // 也不能凭空少算 token。
+                // Codex 事件带 dedupeKey 但 messageId 为 nil，会走到这里：放行是对的。
+                // 它们已在第一遍 byExactKey 里按精确 key 去过重，此处只是不再按 messageId
+                // 二次归组。绝不能 `continue`（丢弃）——那会凭空少算一条真实用量。
                 passthrough.append(event)
                 continue
             }

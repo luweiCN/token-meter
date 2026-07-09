@@ -32,6 +32,7 @@ final class CostCalculatorTests: XCTestCase {
             eventSeq: 1,
             observedAt: Date(timeIntervalSince1970: 0),
             modelName: model,
+            dedupeKey: nil,
             inputTokens: input,
             outputTokens: output,
             cacheReadTokens: cacheRead,
@@ -146,6 +147,7 @@ final class CostCalculatorTests: XCTestCase {
             eventSeq: 1,
             observedAt: Date(timeIntervalSince1970: 0),
             modelName: "claude-opus-4-8",
+            dedupeKey: nil,
             outputTokens: 1_000_000,
             reasoningTokens: 500_000,
             sourceOffset: 0

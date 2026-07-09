@@ -47,6 +47,7 @@ final class UsageEventWriterTests: XCTestCase {
             eventSeq: seq,
             observedAt: Date(timeIntervalSince1970: seconds),
             modelName: model,
+            dedupeKey: nil,
             inputTokens: input,
             sourceOffset: Int64(seq * 100)
         )
@@ -94,9 +95,9 @@ final class UsageEventWriterTests: XCTestCase {
         let writer = UsageEventWriter(database: database, costCalculator: calculator())
 
         let later = UsageEvent(eventSeq: 1, observedAt: Date(timeIntervalSince1970: 200), modelName: "claude-fable-5",
-                               messageId: "m1", requestId: "r1", inputTokens: 1, sourceOffset: 10)
+                               messageId: "m1", requestId: "r1", dedupeKey: "m1\u{1F}r1", inputTokens: 1, sourceOffset: 10)
         let earlier = UsageEvent(eventSeq: 1, observedAt: Date(timeIntervalSince1970: 100), modelName: "claude-fable-5",
-                                 messageId: "m1", requestId: "r1", inputTokens: 1, sourceOffset: 20)
+                                 messageId: "m1", requestId: "r1", dedupeKey: "m1\u{1F}r1", inputTokens: 1, sourceOffset: 20)
 
         // 先写晚的，再写早的。INSERT OR IGNORE 会保留先写入的那条，那是错的。
         try writer.write(session([later]), scanRootId: 1, sourceFileId: 1, runId: nil)
@@ -112,9 +113,9 @@ final class UsageEventWriterTests: XCTestCase {
         let writer = UsageEventWriter(database: database, costCalculator: calculator())
 
         let earlier = UsageEvent(eventSeq: 1, observedAt: Date(timeIntervalSince1970: 100), modelName: "claude-fable-5",
-                                 messageId: "m1", requestId: "r1", inputTokens: 1, sourceOffset: 10)
+                                 messageId: "m1", requestId: "r1", dedupeKey: "m1\u{1F}r1", inputTokens: 1, sourceOffset: 10)
         let later = UsageEvent(eventSeq: 1, observedAt: Date(timeIntervalSince1970: 200), modelName: "claude-fable-5",
-                               messageId: "m1", requestId: "r1", inputTokens: 1, sourceOffset: 20)
+                               messageId: "m1", requestId: "r1", dedupeKey: "m1\u{1F}r1", inputTokens: 1, sourceOffset: 20)
 
         try writer.write(session([earlier]), scanRootId: 1, sourceFileId: 1, runId: nil)
         try writer.write(session([later]), scanRootId: 1, sourceFileId: 2, runId: nil)

@@ -15,6 +15,12 @@ public struct UsageEvent: Equatable {
     public let modelName: String?
     public let messageId: String?
     public let requestId: String?
+    /// 去重指纹，**由各 parser 在构造时提供**，不再由本类型从 id 推导。
+    /// - Claude：`messageId`⨯`requestId`，仅当两者都在时；否则 nil。
+    /// - Codex：`token_count` 无 message/request id，改用 timestamp + 原始 token 四元组合成
+    ///   （见 CodexUsageEventParser），否则每条都是 NULL、`idx_usage_dedupe` 永不生效。
+    /// - omp / OpenCode：为 nil（OpenCode 在 adapter 内以 messageId 自去重，omp 无稳定指纹）。
+    public let dedupeKey: String?
     public let inputTokens: Int64
     public let outputTokens: Int64
     public let reasoningTokens: Int64
@@ -31,6 +37,7 @@ public struct UsageEvent: Equatable {
         modelName: String? = nil,
         messageId: String? = nil,
         requestId: String? = nil,
+        dedupeKey: String?,
         inputTokens: Int64 = 0,
         outputTokens: Int64 = 0,
         reasoningTokens: Int64 = 0,
@@ -46,6 +53,7 @@ public struct UsageEvent: Equatable {
         self.modelName = modelName
         self.messageId = messageId
         self.requestId = requestId
+        self.dedupeKey = dedupeKey
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
         self.reasoningTokens = reasoningTokens
@@ -60,12 +68,6 @@ public struct UsageEvent: Equatable {
     /// `reasoningTokens` 不计入：它已包含在 `outputTokens` 里。
     public var totalTokens: Int64 {
         inputTokens + outputTokens + cacheReadTokens + cacheWrite5mTokens + cacheWrite1hTokens
-    }
-
-    /// 仅当 messageId 与 requestId 都存在时才构成去重键。
-    public var dedupeKey: String? {
-        guard let messageId, let requestId else { return nil }
-        return "\(messageId)\u{1F}\(requestId)"
     }
 
     public var observedEpochMilliseconds: Int64 {

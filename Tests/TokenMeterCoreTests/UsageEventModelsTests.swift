@@ -6,6 +6,7 @@ final class UsageEventModelsTests: XCTestCase {
         let event = UsageEvent(
             eventSeq: 1,
             observedAt: Date(timeIntervalSince1970: 0),
+            dedupeKey: nil,
             inputTokens: 100,
             outputTokens: 50,
             reasoningTokens: 20,
@@ -20,6 +21,7 @@ final class UsageEventModelsTests: XCTestCase {
         let event = UsageEvent(
             eventSeq: 1,
             observedAt: Date(timeIntervalSince1970: 0),
+            dedupeKey: nil,
             inputTokens: 10,
             outputTokens: 5,
             cacheWrite5mTokens: 100,
@@ -29,32 +31,11 @@ final class UsageEventModelsTests: XCTestCase {
         XCTAssertEqual(event.totalTokens, 315)
     }
 
-    func testDedupeKeyCombinesMessageAndRequestId() {
-        let event = UsageEvent(
-            eventSeq: 1,
-            observedAt: Date(timeIntervalSince1970: 0),
-            messageId: "msg_1",
-            requestId: "req_1",
-            sourceOffset: 0
-        )
-        XCTAssertEqual(event.dedupeKey, "msg_1\u{1F}req_1")
-    }
-
-    func testDedupeKeyIsNilWhenEitherIdMissing() {
-        let event = UsageEvent(
-            eventSeq: 1,
-            observedAt: Date(timeIntervalSince1970: 0),
-            messageId: "msg_1",
-            requestId: nil,
-            sourceOffset: 0
-        )
-        XCTAssertNil(event.dedupeKey)
-    }
-
     func testObservedEpochMillisecondsRoundsToNearestMillisecond() {
         let event = UsageEvent(
             eventSeq: 1,
             observedAt: Date(timeIntervalSince1970: 1_782_940_713.4996),
+            dedupeKey: nil,
             sourceOffset: 0
         )
         // 1782940713.4996 * 1000 = 1782940713499.6 -> rounds to ...500
@@ -65,6 +46,7 @@ final class UsageEventModelsTests: XCTestCase {
         let event = UsageEvent(
             eventSeq: 1,
             observedAt: Date(timeIntervalSince1970: 0),
+            dedupeKey: nil,
             sourceOffset: 0
         )
         XCTAssertEqual(event.observedEpochMilliseconds, 0)

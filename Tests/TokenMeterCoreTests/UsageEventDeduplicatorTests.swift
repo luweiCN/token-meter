@@ -15,6 +15,8 @@ final class UsageEventDeduplicatorTests: XCTestCase {
             observedAt: Date(timeIntervalSince1970: seconds),
             messageId: messageId,
             requestId: requestId,
+            // dedupeKey 现由构造者提供；复刻 Claude parser 的派生规则驱动这些用例。
+            dedupeKey: messageId.flatMap { messageId in requestId.map { "\(messageId)\u{1F}\($0)" } },
             inputTokens: input,
             sourceOffset: Int64(seq),
             isSidechain: isSidechain
