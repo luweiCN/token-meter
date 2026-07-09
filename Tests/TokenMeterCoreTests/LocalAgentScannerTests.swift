@@ -493,6 +493,172 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(try scalarInt(database, "SELECT files_changed AS value FROM scan_runs ORDER BY id DESC LIMIT 1"), 1)
     }
 
+    func testJSONLScanContinuesAfterBadFileAndIndexesLaterValidFiles() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try writeJSONL(claudeJSONL(sessionKey: "claude-a", inputTokens: 1, outputTokens: 2), to: directory.appendingPathComponent("a-valid.jsonl"))
+        try writeJSONL(claudeJSONLMissingSessionKey(inputTokens: 3, outputTokens: 4), to: directory.appendingPathComponent("m-bad.jsonl"))
+        try writeJSONL(claudeJSONL(sessionKey: "claude-z", inputTokens: 5, outputTokens: 6), to: directory.appendingPathComponent("z-valid.jsonl"))
+
+        let database = try migratedDatabase(rootKind: .claudeJSONL, rootPath: directory.path)
+
+        do {
+            try await LocalAgentScanner(database: database).scanRoot(id: 1)
+        } catch {
+            // A bad file may leave the scan partial, but it must not stop later files from being indexed.
+        }
+
+        let run = try database.query("SELECT status, files_seen FROM scan_runs ORDER BY id DESC LIMIT 1")[0]
+        XCTAssertEqual(run.int("files_seen"), 3, "the scanner must visit every sorted JSONL file even after one parse failure")
+
+        let sessionKeys = try database.query("SELECT source_session_key FROM agent_sessions ORDER BY source_session_key ASC")
+            .compactMap { $0.string("source_session_key") }
+        XCTAssertEqual(sessionKeys, ["claude-a", "claude-z"], "valid files before and after the bad file must both be indexed")
+
+        let failedFiles = try database.query("SELECT relative_path, parse_status FROM source_files WHERE parse_status = 'failed'")
+        XCTAssertEqual(failedFiles.count, 1)
+        XCTAssertEqual(failedFiles[0].string("relative_path"), "m-bad.jsonl")
+    }
+
+    func testClaudeAuxiliaryJSONLIsSkippedWithoutMarkingRootPartial() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try writeJSONL(claudeJSONL(sessionKey: "claude-valid", inputTokens: 13, outputTokens: 21), to: directory.appendingPathComponent("session.jsonl"))
+        try writeJSONL(claudeAuxiliaryJSONL(), to: directory.appendingPathComponent("skill-injections.jsonl"))
+
+        let database = try migratedDatabase(rootKind: .claudeJSONL, rootPath: directory.path)
+
+        try await LocalAgentScanner(database: database).scanRoot(id: 1)
+
+        let run = try database.query("SELECT status, files_seen, files_changed, error_summary FROM scan_runs ORDER BY id DESC LIMIT 1")[0]
+        XCTAssertEqual(run.string("status"), "ok")
+        XCTAssertEqual(run.int("files_seen"), 2)
+        XCTAssertEqual(run.int("files_changed"), 2)
+        XCTAssertNil(run.string("error_summary"))
+        XCTAssertNil(try database.query("SELECT last_error FROM scan_roots WHERE id = 1")[0].string("last_error"))
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM source_files WHERE parse_status = 'failed'"), 0)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM agent_sessions"), 1)
+        XCTAssertEqual(try scalarInt(database, latestTotalTokensSQL), 34)
+
+        let auxiliary = try database.query("SELECT file_type, parse_status, parse_error, last_parsed_run_id FROM source_files WHERE relative_path = 'skill-injections.jsonl' LIMIT 1")[0]
+        XCTAssertEqual(auxiliary.string("file_type"), "jsonl_session")
+        XCTAssertEqual(auxiliary.string("parse_status"), "ok")
+        XCTAssertNil(auxiliary.string("parse_error"))
+        XCTAssertNotNil(auxiliary.int("last_parsed_run_id"))
+    }
+
+    func testMalformedJSONLLineWithValidUsageRecordsSanitizedParseError() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("mixed-malformed.jsonl")
+        let malformedLine = #"{"private":"SECRET_PRIVATE_PROMPT","usage":"not closed""#
+        let mixedJSONL = """
+        {"type":"session_meta","payload":{"id":"mixed-malformed-session","cwd":"/repo"}}
+        \(malformedLine)
+        {"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":2,"output_tokens":3}}}}
+
+        """
+        try writeJSONL(mixedJSONL, to: file)
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+
+        do {
+            try await LocalAgentScanner(database: database).scanRoot(id: 1)
+        } catch {
+            // The scanner may report the root as partial, but the source file must retain sanitized parse metadata.
+        }
+
+        let sourceFile = try database.query("SELECT parse_status, parse_error FROM source_files WHERE relative_path = 'mixed-malformed.jsonl' LIMIT 1")[0]
+        let parseStatus = try XCTUnwrap(sourceFile.string("parse_status"))
+        XCTAssertTrue(["partial", "failed"].contains(parseStatus), "mixed valid/malformed JSONL must not be marked ok")
+
+        let parseError = try XCTUnwrap(sourceFile.string("parse_error"))
+        XCTAssertFalse(parseError.isEmpty)
+        XCTAssertFalse(parseError.contains(malformedLine), "parse_error must not persist the malformed line")
+        XCTAssertFalse(parseError.contains("SECRET_PRIVATE_PROMPT"), "parse_error must not persist private JSONL content")
+    }
+
+    func testMalformedResidualJSONLLineWithValidUsageRecordsSanitizedParseError() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("mixed-residual-malformed.jsonl")
+        let malformedResidual = #"{"private":"SECRET_PRIVATE_PROMPT","usage":"not closed""#
+        let mixedJSONL = """
+        {"type":"session_meta","payload":{"id":"mixed-residual-session","cwd":"/repo"}}
+        {"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":2,"output_tokens":3}}}}
+        \(malformedResidual)
+        """
+        try writeJSONL(mixedJSONL, to: file)
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+
+        do {
+            try await LocalAgentScanner(database: database).scanRoot(id: 1)
+        } catch {
+            // The scanner may report the root as partial, but the source file must retain sanitized parse metadata.
+        }
+
+        let sourceFile = try database.query("SELECT parse_status, parse_error FROM source_files WHERE relative_path = 'mixed-residual-malformed.jsonl' LIMIT 1")[0]
+        let parseStatus = try XCTUnwrap(sourceFile.string("parse_status"))
+        XCTAssertTrue(["partial", "failed"].contains(parseStatus), "mixed valid/residual malformed JSONL must not be marked ok")
+
+        let parseError = try XCTUnwrap(sourceFile.string("parse_error"))
+        XCTAssertFalse(parseError.isEmpty)
+        XCTAssertFalse(parseError.contains(malformedResidual), "parse_error must not persist the malformed residual")
+        XCTAssertFalse(parseError.contains("SECRET_PRIVATE_PROMPT"), "parse_error must not persist private JSONL content")
+    }
+
+    func testOkSourceFileWithIncompleteParserOffsetIsRescanned() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("stale-ok.jsonl")
+        let content = codexJSONL(inputTokens: 9, outputTokens: 4)
+        try writeJSONL(content, to: file)
+        let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+        let sizeBytes = try XCTUnwrap((attributes[.size] as? NSNumber)?.int64Value)
+        let modifiedAt = try XCTUnwrap(attributes[.modificationDate] as? Date)
+        let mtimeNanoseconds = Int64((modifiedAt.timeIntervalSince1970 * 1_000_000_000).rounded())
+        let inode = (attributes[.systemFileNumber] as? NSNumber)?.int64Value
+        let dev = (attributes[.systemNumber] as? NSNumber)?.int64Value
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        try database.execute(
+            """
+            INSERT INTO scan_runs(id, scan_root_id, run_kind, status)
+            VALUES (?, ?, ?, ?)
+            """,
+            [.int(123), .int(1), .text("incremental"), .text("ok")]
+        )
+        try database.execute(
+            """
+            INSERT INTO source_files(
+                scan_root_id, relative_path, canonical_path, file_type, size_bytes, mtime_ns,
+                inode, dev, first_seen_run_id, last_seen_run_id, last_parsed_run_id,
+                parse_status, parser_state
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 123, ?, ?)
+            """,
+            [
+                .int(1),
+                .text("stale-ok.jsonl"),
+                .text(file.path),
+                .text("jsonl_session"),
+                .int(sizeBytes),
+                .int(mtimeNanoseconds),
+                inode.map(SQLiteValue.int) ?? .null,
+                dev.map(SQLiteValue.int) ?? .null,
+                .text("ok"),
+                .text(#"{"lastOffset":0,"lastUsageSeq":0}"#)
+            ]
+        )
+
+        try await LocalAgentScanner(database: database).scanRoot(id: 1)
+
+        XCTAssertEqual(try scalarInt(database, latestTotalTokensSQL), 13)
+        let sourceFile = try database.query("SELECT last_parsed_run_id, parser_state FROM source_files WHERE relative_path = 'stale-ok.jsonl' LIMIT 1")[0]
+        XCTAssertNotEqual(sourceFile.int("last_parsed_run_id"), 123)
+        let parserState = try XCTUnwrap(sourceFile.string("parser_state"))
+        XCTAssertTrue(parserState.contains("\"lastOffset\":\(sizeBytes)"))
+    }
+
     func testSeedsDefaultScanRootsFromHomeDirectory() throws {
         let homeDirectory = URL(fileURLWithPath: "/tmp/token-meter-home", isDirectory: true)
         let roots = TokenMeterPaths.defaultScanRoots(homeDirectory: homeDirectory)
@@ -525,6 +691,28 @@ private func codexJSONL(inputTokens: Int64, outputTokens: Int64) -> String {
     """
     {"type":"session_meta","payload":{"id":"s1","cwd":"/repo"}}
     {"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":\(inputTokens),"output_tokens":\(outputTokens)}}}}
+
+    """
+}
+
+private func claudeJSONL(sessionKey: String, inputTokens: Int64, outputTokens: Int64) -> String {
+    """
+    {"sessionId":"\(sessionKey)","cwd":"/repo/\(sessionKey)","type":"assistant","message":{"role":"assistant","model":"claude-sonnet","usage":{"input_tokens":\(inputTokens),"output_tokens":\(outputTokens)}}}
+
+    """
+}
+
+private func claudeJSONLMissingSessionKey(inputTokens: Int64, outputTokens: Int64) -> String {
+    """
+    {"type":"assistant","message":{"role":"assistant","model":"claude-sonnet","usage":{"input_tokens":\(inputTokens),"output_tokens":\(outputTokens)}}}
+
+    """
+}
+
+private func claudeAuxiliaryJSONL() -> String {
+    """
+    {"event":"skill_injection","hookEvent":"UserPromptSubmit","matchedSkills":["typescript-best-practices"],"injectedSkills":[],"droppedByBudget":[],"droppedByCap":[],"summaryOnly":false,"timestamp":"2026-07-03T18:44:03Z"}
+    {"event":"skill_injection","hookEvent":"UserPromptSubmit","matchedSkills":["test-driven-development"],"injectedSkills":[],"droppedByBudget":[],"droppedByCap":[],"summaryOnly":false,"timestamp":"2026-07-03T18:44:04Z"}
 
     """
 }

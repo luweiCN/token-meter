@@ -4,16 +4,120 @@ import SwiftUI
 import TokenMeterCore
 
 @MainActor
+protocol MainInterfaceLaunching: AnyObject {
+    func openMainInterface()
+}
+
+struct MainInterfaceLaunchCommand: Equatable {
+    let executablePath: String
+    let arguments: [String]
+    let environment: [String: String]
+}
+
+@MainActor
+final class ElectronMainInterfaceLauncher: MainInterfaceLaunching {
+    private var process: Process?
+
+    func openMainInterface() {
+        guard let electronDirectory = Self.electronDirectory() else {
+            NSSound.beep()
+            return
+        }
+
+        let command = Self.launchCommand(electronDirectory: electronDirectory)
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: command.executablePath)
+        process.arguments = command.arguments
+        var environment = ProcessInfo.processInfo.environment
+        command.environment.forEach { key, value in
+            environment[key] = value
+        }
+        process.environment = environment
+        process.standardOutput = nil
+        process.standardError = nil
+
+        do {
+            try process.run()
+            self.process = process
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    static func launchCommand(electronDirectory: URL) -> MainInterfaceLaunchCommand {
+        let path = [
+            URL(fileURLWithPath: ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory())
+                .appendingPathComponent(".volta/bin").path,
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin"
+        ].joined(separator: ":")
+
+        return MainInterfaceLaunchCommand(
+            executablePath: "/usr/bin/env",
+            arguments: [
+                "node",
+                electronDirectory.appendingPathComponent("node_modules/electron/cli.js").path,
+                electronDirectory.path
+            ],
+            environment: ["PATH": path]
+        )
+    }
+
+    static func electronDirectory(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        currentDirectoryPath: String = FileManager.default.currentDirectoryPath,
+        resourceURL: URL? = Bundle.main.resourceURL
+    ) -> URL? {
+        if let configuredPath = environment["TOKENMETER_ELECTRON_DIR"], !configuredPath.isEmpty {
+            let configuredURL = URL(fileURLWithPath: configuredPath, isDirectory: true)
+            if FileManager.default.fileExists(atPath: configuredURL.appendingPathComponent("package.json").path) {
+                return configuredURL
+            }
+        }
+
+        if let bundledElectronURL = resourceURL?.appendingPathComponent("Electron", isDirectory: true),
+           FileManager.default.fileExists(atPath: bundledElectronURL.appendingPathComponent("package.json").path) {
+            return bundledElectronURL
+        }
+
+        let workingDirectoryURL = URL(fileURLWithPath: currentDirectoryPath, isDirectory: true)
+            .appendingPathComponent("Electron", isDirectory: true)
+        if FileManager.default.fileExists(atPath: workingDirectoryURL.appendingPathComponent("package.json").path) {
+            return workingDirectoryURL
+        }
+
+        return nil
+    }
+}
+
+enum StatusItemClickAction: Equatable {
+    case togglePopover
+    case showContextMenu
+}
+
+@MainActor
 final class StatusBarController: NSObject {
     private let store: ProviderStore
     private let statusItem: NSStatusItem
     private let popover: NSPopover
+    private let mainInterfaceLauncher: MainInterfaceLaunching
+    private let quitApplication: () -> Void
     private var cancellables: Set<AnyCancellable> = []
 
-    init(store: ProviderStore) {
+    init(
+        store: ProviderStore,
+        mainInterfaceLauncher: MainInterfaceLaunching? = nil,
+        quitApplication: (() -> Void)? = nil
+    ) {
         self.store = store
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.popover = NSPopover()
+        self.mainInterfaceLauncher = mainInterfaceLauncher ?? ElectronMainInterfaceLauncher()
+        self.quitApplication = quitApplication ?? { NSApp.terminate(nil) }
 
         super.init()
 
@@ -33,7 +137,7 @@ final class StatusBarController: NSObject {
 
         button.title = "TokenMeter"
         button.target = self
-        button.action = #selector(togglePopover)
+        button.action = #selector(handleStatusItemClick)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
     }
 
@@ -61,7 +165,24 @@ final class StatusBarController: NSObject {
             .store(in: &cancellables)
     }
 
-    @objc private func togglePopover() {
+    func statusItemClickAction(for eventType: NSEvent.EventType?) -> StatusItemClickAction {
+        eventType == .rightMouseUp ? .showContextMenu : .togglePopover
+    }
+
+    func makeContextMenuForTesting() -> NSMenu {
+        makeContextMenu()
+    }
+
+    @objc private func handleStatusItemClick() {
+        switch statusItemClickAction(for: NSApp.currentEvent?.type) {
+        case .togglePopover:
+            togglePopover()
+        case .showContextMenu:
+            showContextMenu()
+        }
+    }
+
+    private func togglePopover() {
         guard let button = statusItem.button else {
             return
         }
@@ -72,6 +193,46 @@ final class StatusBarController: NSObject {
             updatePopoverContent(relativeTo: button)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
+    }
+
+    private func showContextMenu() {
+        guard let button = statusItem.button else {
+            return
+        }
+
+        let menu = makeContextMenu()
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height), in: button)
+    }
+
+    private func makeContextMenu() -> NSMenu {
+        let menu = NSMenu()
+
+        let openItem = NSMenuItem(
+            title: "打开主界面",
+            action: #selector(openMainInterface),
+            keyEquivalent: ""
+        )
+        openItem.target = self
+        menu.addItem(openItem)
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(
+            title: "退出 TokenMeter",
+            action: #selector(quitTokenMeter),
+            keyEquivalent: "q"
+        )
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        return menu
+    }
+
+    @objc private func openMainInterface() {
+        mainInterfaceLauncher.openMainInterface()
+    }
+
+    @objc private func quitTokenMeter() {
+        quitApplication()
     }
 
     private func updatePopoverContent(relativeTo button: NSStatusBarButton?) {

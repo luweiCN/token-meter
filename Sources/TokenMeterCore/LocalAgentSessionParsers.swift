@@ -4,9 +4,17 @@ public protocol LocalAgentSessionParser {
     func parse(lines: [JSONLLine], sourceURL: URL) throws -> ParsedAgentSession
 }
 
+protocol LocalAgentSessionStreamingParser {
+    var latestTokenUsageIsCumulative: Bool { get }
+
+    func consume(_ line: JSONLLine)
+    func finish(sourceURL: URL) throws -> ParsedAgentSession
+}
+
 public enum LocalAgentParserError: Error, Equatable {
     case missingSessionKey
     case unsupportedFormat
+    case incompleteLine
 }
 
 enum JSONDictionary {

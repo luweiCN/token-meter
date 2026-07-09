@@ -8,7 +8,8 @@
     "electron": "electron .",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "build": "vite build && vite build --mode preload && tsc --ignoreConfig --outDir dist-main --rootDir src --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck --types node --strict --esModuleInterop --jsx react-jsx src/main/main.ts src/main/ipc.ts"
+    "build": "vite build && vite build --mode preload && tsc --ignoreConfig --outDir dist-main --rootDir src --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck --types node --strict --esModuleInterop --jsx react-jsx src/main/main.ts src/main/ipc.ts",
+    "rebuild:native": "electron-rebuild"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
@@ -24,6 +25,7 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@electron/rebuild": "latest",
     "jsdom": "^29.1.1",
     "typescript": "latest",
     "vite": "latest",

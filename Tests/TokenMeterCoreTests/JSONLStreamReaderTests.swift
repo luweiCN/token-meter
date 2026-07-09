@@ -39,4 +39,24 @@ final class JSONLStreamReaderTests: XCTestCase {
         XCTAssertEqual(secondRead.nextOffset, 24)
         XCTAssertNil(secondRead.residual)
     }
+
+    func testStreamingCallbackDoesNotAccumulateDeliveredLinesInResult() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("session.jsonl")
+        try Data("{\"a\":1}\n{\"b\":2}\n{\"c\":3}\n".utf8).write(to: file)
+
+        var delivered: [JSONLLine] = []
+        let result = try JSONLStreamReader.readLines(from: file, startingAt: 0) { line in
+            delivered.append(line)
+        }
+
+        XCTAssertEqual(delivered.map(\.text), ["{\"a\":1}", "{\"b\":2}", "{\"c\":3}"])
+        XCTAssertEqual(delivered.map(\.offset), [0, 8, 16])
+        XCTAssertEqual(delivered.map(\.nextOffset), [8, 16, 24])
+        XCTAssertEqual(result.nextOffset, 24)
+        XCTAssertNil(result.residual)
+        XCTAssertTrue(result.lines.isEmpty, "streaming reads must deliver complete lines through the callback without retaining them in JSONLReadResult.lines")
+    }
 }

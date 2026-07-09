@@ -103,13 +103,24 @@ public final class LocalAgentScanner {
     }
 
     private func scanJSONLRoot(_ root: ScanRoot, runId: Int64, progress: ScanProgress) throws {
+        var failureCount = 0
         for file in try jsonlFiles(under: root.rootURL) {
             progress.filesSeen += 1
-            try scanJSONLFile(file, root: root, runId: runId, progress: progress)
+            do {
+                if try scanJSONLFile(file, root: root, runId: runId, progress: progress) {
+                    failureCount += 1
+                }
+            } catch {
+                failureCount += 1
+            }
+        }
+
+        if failureCount > 0 {
+            throw JSONLRootPartialError(failureCount: failureCount)
         }
     }
 
-    private func scanJSONLFile(_ file: URL, root: ScanRoot, runId: Int64, progress: ScanProgress) throws {
+    private func scanJSONLFile(_ file: URL, root: ScanRoot, runId: Int64, progress: ScanProgress) throws -> Bool {
         let metadata = try fileMetadata(for: file)
         let relativePath = relativePath(for: file, rootURL: root.rootURL)
         let existing = try existingSourceFile(rootId: root.id, relativePath: relativePath)
@@ -118,9 +129,10 @@ public final class LocalAgentScanner {
            existing.parseStatus == "ok",
            existing.lastParsedRunId != nil,
            existing.sizeBytes == metadata.sizeBytes,
-           existing.mtimeNanoseconds == metadata.mtimeNanoseconds {
+           existing.mtimeNanoseconds == metadata.mtimeNanoseconds,
+           existing.parserState?.lastOffset == metadata.sizeBytes {
             try markSourceFileSeen(sourceFileId: existing.id, runId: runId)
-            return
+            return false
         }
 
         let previousState = existing?.parserState
@@ -128,22 +140,66 @@ public final class LocalAgentScanner {
         progress.filesChanged += 1
 
         do {
-            let readResult = try JSONLStreamReader.readLines(from: file, startingAt: startOffset)
+            let streamParser = try streamingParser(for: root.kind)
+            var deliveredLines = 0
+            var malformedLineCount = 0
+            var hasClaudeSessionIdentifier = false
+            var hasClaudeUsageRecord = false
+            let readResult = try JSONLStreamReader.readLines(from: file, startingAt: startOffset) { line in
+                if let object = JSONDictionary.object(from: line.text) {
+                    if root.kind == .claudeJSONL {
+                        hasClaudeSessionIdentifier = hasClaudeSessionIdentifier || self.hasAnyString(in: object, keys: ["sessionId", "session_id", "leafUuid", "leaf_uuid"])
+                        if let message = JSONDictionary.dictionary(object, "message"),
+                           JSONDictionary.dictionary(message, "usage") != nil {
+                            hasClaudeUsageRecord = true
+                        }
+                    }
+                } else {
+                    malformedLineCount += 1
+                }
+                deliveredLines += 1
+                streamParser.consume(line)
+            }
             progress.bytesRead += max(0, readResult.nextOffset - startOffset)
+            if deliveredLines == 0, readResult.residual != nil {
+                throw LocalAgentParserError.incompleteLine
+            }
+            let hasResidualLine = readResult.residual != nil
+            let residualParseError = hasResidualLine ? "parse partial: incomplete line" : nil
+            let parseError = malformedLineCount > 0 ? "parse partial: malformed JSONL lines" : residualParseError
 
+            if root.kind == .claudeJSONL,
+               deliveredLines > 0,
+               parseError == nil,
+               !hasClaudeSessionIdentifier,
+               !hasClaudeUsageRecord {
+                _ = try upsertSourceFile(
+                    rootId: root.id,
+                    relativePath: relativePath,
+                    canonicalPath: metadata.canonicalPath,
+                    fileType: "jsonl_session",
+                    metadata: metadata,
+                    runId: runId,
+                    parsed: true,
+                    parseStatus: "ok",
+                    parseError: nil,
+                    parserState: jsonlParserState(previous: nil, parsed: nil, nextOffset: readResult.nextOffset)
+                )
+                return false
+            }
             let didResume = startOffset > 0
             let previousStateForParse = didResume ? previousState : nil
             let parsedSession: ParsedAgentSession?
-            if readResult.lines.isEmpty {
+            if deliveredLines == 0 {
                 parsedSession = nil
             } else {
-                let parsed = try parser(for: root.kind).parse(lines: readResult.lines, sourceURL: file)
+                let parsed = try streamParser.finish(sourceURL: file)
                 parsedSession = merge(
                     parsed,
                     with: previousStateForParse,
                     sourceKind: root.kind,
                     didResume: didResume,
-                    codexUsageIsCumulative: codexUsageIsCumulative(in: readResult.lines)
+                    codexUsageIsCumulative: streamParser.latestTokenUsageIsCumulative
                 )
             }
 
@@ -160,8 +216,8 @@ public final class LocalAgentScanner {
                 metadata: metadata,
                 runId: runId,
                 parsed: true,
-                parseStatus: "ok",
-                parseError: nil,
+                parseStatus: parseError == nil ? "ok" : "partial",
+                parseError: parseError,
                 parserState: nextState
             )
 
@@ -169,7 +225,7 @@ public final class LocalAgentScanner {
                 try repository.upsert(parsedSession, scanRootId: root.id, sourceFileId: fileId, runId: runId)
             }
 
-            return
+            return parseError != nil
         } catch {
             _ = try? upsertSourceFile(
                 rootId: root.id,
@@ -273,14 +329,14 @@ public final class LocalAgentScanner {
         return files.sorted { $0.path < $1.path }
     }
 
-    private func parser(for kind: SourceKind) throws -> LocalAgentSessionParser {
+    private func streamingParser(for kind: SourceKind) throws -> LocalAgentSessionStreamingParser {
         switch kind {
         case .claudeJSONL:
-            ClaudeCodeSessionParser()
+            ClaudeCodeStreamingParser()
         case .codexJSONL:
-            CodexSessionParser()
+            CodexStreamingParser()
         case .ompJSONL:
-            OmpSessionParser()
+            OmpStreamingParser()
         case .opencodeSQLite:
             throw LocalAgentParserError.unsupportedFormat
         }
@@ -577,6 +633,10 @@ public final class LocalAgentScanner {
         return latestTokenCountIsCumulative
     }
 
+    private func hasAnyString(in object: [String: Any], keys: [String]) -> Bool {
+        keys.contains { JSONDictionary.string(object, $0) != nil }
+    }
+
     private func add(_ lhs: Int64?, _ rhs: Int64?) -> Int64? {
         guard lhs != nil || rhs != nil else { return nil }
         return (lhs ?? 0) + (rhs ?? 0)
@@ -642,6 +702,10 @@ public final class LocalAgentScanner {
             return "parse failed: missing session key"
         case LocalAgentParserError.unsupportedFormat:
             return "parse failed: unsupported format"
+        case LocalAgentParserError.incompleteLine:
+            return "parse failed: incomplete line"
+        case is JSONLRootPartialError:
+            return "scan partial: one or more files failed"
         case is SQLiteDatabaseError:
             return "database operation failed"
         case is CocoaError:
@@ -658,6 +722,10 @@ public final class LocalAgentScanner {
     private func sqliteText(_ value: String?) -> SQLiteValue {
         value.map(SQLiteValue.text) ?? .null
     }
+}
+
+private struct JSONLRootPartialError: Error {
+    let failureCount: Int
 }
 
 private struct ScanRoot {

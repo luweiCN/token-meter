@@ -1,16 +1,18 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { DailyUsageFilter, SessionsFilter, SettingsPatch } from './renderer/api.js';
+
 
 contextBridge.exposeInMainWorld('tokenMeter', {
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
-    update: (patch: unknown, expectedVersion: number) => ipcRenderer.invoke('settings:update', patch, expectedVersion)
+    update: (patch: SettingsPatch, expectedVersion: number) => ipcRenderer.invoke('settings:update', patch, expectedVersion)
   },
   dashboard: {
-    queryOverview: (filter: unknown) => ipcRenderer.invoke('dashboard:overview', filter),
-    queryDailyUsage: (filter: unknown) => ipcRenderer.invoke('dashboard:dailyUsage', filter)
+    queryOverview: () => ipcRenderer.invoke('dashboard:overview'),
+    queryDailyUsage: (filter: DailyUsageFilter) => ipcRenderer.invoke('dashboard:dailyUsage', filter)
   },
   sessions: {
-    query: (filter: unknown) => ipcRenderer.invoke('sessions:query', filter)
+    query: (filter: SessionsFilter) => ipcRenderer.invoke('sessions:query', filter)
   },
   index: {
     status: () => ipcRenderer.invoke('index:status'),

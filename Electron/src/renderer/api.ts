@@ -15,16 +15,63 @@ export interface SettingsSnapshot {
   providerOverrides: ProviderConfigOverride[];
 }
 
+export interface SettingsPatch {
+  menuBarPrimaryProviderId?: string;
+  autoRefreshSeconds?: number;
+  enabledAgentKinds?: string[];
+}
+
 export interface SettingsApplyRequest {
   requestedVersion: number;
-  status: 'pending' | 'applied';
+  status: 'pending' | 'applied' | 'failed';
+  error?: {
+    requestedVersion: number;
+    message: string;
+  };
+}
+
+export interface DashboardModelBreakdownRow {
+  modelName: string;
+  sessionsCount: number;
+  tokensTotal: number;
+  costUsdMicros: number;
+}
+
+export interface DashboardProviderBreakdownRow {
+  providerId: string;
+  sessionsCount: number;
+  tokensTotal: number;
+}
+
+export interface DashboardDailyTrendRow {
+  usageDate: string;
+  tokensTotal: number;
+  sessionsCount: number;
 }
 
 export interface DashboardOverview {
-  providers: unknown[];
+  sessionCount: number;
   totalTokens: number;
+  activeModelCount: number;
+  totalCostUsdMicros: number;
+  modelBreakdown: DashboardModelBreakdownRow[];
+  providerBreakdown: DashboardProviderBreakdownRow[];
+  dailyTrend: DashboardDailyTrendRow[];
 }
 
+
+export interface DailyUsageFilter {
+  from: string;
+  to: string;
+  providerId?: string;
+  projectId?: number;
+}
+
+export interface SessionsFilter {
+  limit?: number;
+  offset?: number;
+  providerId?: string;
+}
 export interface DailyUsagePoint {
   usageDate: string;
   tokensTotal: number;
@@ -35,9 +82,52 @@ export interface SessionQueryResult {
   total: number;
 }
 
+export interface ScanRootSummary {
+  id: number;
+  kind: string;
+  rootPathLabel: string;
+  displayName: string;
+  enabled: boolean;
+  scanMode: string;
+  lastScanStartedAt: string | null;
+  lastScanFinishedAt: string | null;
+  lastSuccessfulCursor: string | null;
+  lastError: string | null;
+}
+
+export interface ScanRunSummary {
+  id: number;
+  scanRootId: number | null;
+  runKind: string;
+  startedAt: string;
+  finishedAt: string | null;
+  status: string;
+  filesSeen: number;
+  filesChanged: number;
+  filesDeleted: number;
+  sessionsAdded: number;
+  sessionsUpdated: number;
+  sessionsDeleted: number;
+  usageRowsAdded: number;
+  bytesRead: number;
+  cursorBefore: string | null;
+  cursorAfter: string | null;
+  errorSummary: string | null;
+}
+
+export interface FailedFileSummary {
+  id: number;
+  scanRootId: number;
+  relativePath: string;
+  fileType: string;
+  parseError: string | null;
+  updatedAt: string;
+}
+
 export interface IndexStatusResult {
-  runs: unknown[];
-  roots: unknown[];
+  runs: ScanRunSummary[];
+  roots: ScanRootSummary[];
+  failedFiles: FailedFileSummary[];
 }
 
 declare global {
@@ -45,14 +135,14 @@ declare global {
     tokenMeter: {
       settings: {
         get(): Promise<SettingsSnapshot>;
-        update(patch: unknown, expectedVersion: number): Promise<SettingsApplyRequest>;
+        update(patch: SettingsPatch, expectedVersion: number): Promise<SettingsApplyRequest>;
       };
       dashboard: {
-        queryOverview(filter: unknown): Promise<DashboardOverview>;
-        queryDailyUsage(filter: unknown): Promise<DailyUsagePoint[]>;
+        queryOverview(): Promise<DashboardOverview>;
+        queryDailyUsage(filter: DailyUsageFilter): Promise<DailyUsagePoint[]>;
       };
       sessions: {
-        query(filter: unknown): Promise<SessionQueryResult>;
+        query(filter: SessionsFilter): Promise<SessionQueryResult>;
       };
       index: {
         status(): Promise<IndexStatusResult>;

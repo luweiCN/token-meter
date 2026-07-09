@@ -105,6 +105,7 @@ public final class SettingsStore {
                 try set("scan.autoRefreshSeconds", value: .int(Int64(autoRefreshSeconds)), version: nextVersion, updatedBy: updatedBy)
             }
             if let enabledAgentKinds = patch.enabledAgentKinds {
+                try validateEnabledAgentKinds(enabledAgentKinds)
                 try setJSON("filters.enabledAgentKinds", json: jsonString(enabledAgentKinds), version: nextVersion, updatedBy: updatedBy)
             }
             try database.execute("COMMIT")
@@ -161,16 +162,27 @@ public final class SettingsStore {
             "SELECT value_json, value_type FROM settings WHERE key = ?",
             [.text(key)]
         ).first else { return nil }
-        guard row.string("value_type") == "string", let value = row.string("value_json") else { return nil }
-        return try decoder.decode(String.self, from: Data(value.utf8))
+        guard row.string("value_type") == "string", let value = row.string("value_json") else {
+            throw SettingsStoreError.invalidStoredValue(key)
+        }
+        do {
+            return try decoder.decode(String.self, from: Data(value.utf8))
+        } catch {
+            throw SettingsStoreError.invalidStoredValue(key)
+        }
     }
 
     private func settingInt(_ key: String) throws -> Int64? {
         guard let row = try database.query(
-            "SELECT value_json FROM settings WHERE key = ?",
+            "SELECT value_json, value_type FROM settings WHERE key = ?",
             [.text(key)]
         ).first else { return nil }
-        return row.string("value_json").flatMap(Int64.init)
+        guard row.string("value_type") == "int",
+              let rawValue = row.string("value_json"),
+              let value = Int64(rawValue) else {
+            throw SettingsStoreError.invalidStoredValue(key)
+        }
+        return value
     }
 
     private func settingStringArray(_ key: String) throws -> [String]? {
@@ -178,11 +190,26 @@ public final class SettingsStore {
             "SELECT value_json, value_type FROM settings WHERE key = ?",
             [.text(key)]
         ).first else { return nil }
-        guard row.string("value_type") == "json", let value = row.string("value_json") else { return nil }
+        guard row.string("value_type") == "json", let value = row.string("value_json") else {
+            throw SettingsStoreError.invalidStoredValue(key)
+        }
         do {
-            return try decoder.decode([String].self, from: Data(value.utf8))
+            let values = try decoder.decode([String].self, from: Data(value.utf8))
+            if key == "filters.enabledAgentKinds" {
+                try validateEnabledAgentKinds(values)
+            }
+            return values
+        } catch let error as SettingsStoreError {
+            throw error
         } catch {
             throw SettingsStoreError.invalidStoredValue(key)
+        }
+    }
+
+    private func validateEnabledAgentKinds(_ values: [String]) throws {
+        let supported = Set(LocalAgentKind.allCases.map(\.rawValue))
+        guard values.allSatisfy({ supported.contains($0) }) else {
+            throw SettingsStoreError.invalidValue("filters.enabledAgentKinds contains unsupported agent kind")
         }
     }
 

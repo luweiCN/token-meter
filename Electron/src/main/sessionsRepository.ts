@@ -39,11 +39,11 @@ interface CountRow {
 export class SessionsRepository {
   constructor(private readonly db: Database.Database) {}
 
-  query(filter: SessionsFilter = {}): SessionsResult {
-    const limit = normalizeLimit(filter.limit);
-    const offset = normalizeOffset(filter.offset);
-    const providerId = filter.providerId ?? null;
-
+  query(filter: unknown = {}): SessionsResult {
+    const validatedFilter = validateSessionsFilter(filter);
+    const limit = validatedFilter.limit ?? 50;
+    const offset = validatedFilter.offset ?? 0;
+    const providerId = validatedFilter.providerId ?? null;
     const items = this.db
       .prepare(
         `SELECT s.id AS id,
@@ -85,14 +85,25 @@ export class SessionsRepository {
   }
 }
 
-function normalizeLimit(limit: number | undefined) {
-  if (limit === undefined) return 50;
-  if (!Number.isInteger(limit) || limit < 1) return 50;
-  return Math.min(limit, 200);
-}
+function validateSessionsFilter(filter: unknown): SessionsFilter {
+  if (typeof filter !== 'object' || filter === null || Array.isArray(filter)) {
+    throw new Error('sessions filter must be an object');
+  }
 
-function normalizeOffset(offset: number | undefined) {
-  if (offset === undefined) return 0;
-  if (!Number.isInteger(offset) || offset < 0) return 0;
-  return offset;
+  const candidate = filter as Record<string, unknown>;
+  if (candidate.limit !== undefined && (!Number.isInteger(candidate.limit) || (candidate.limit as number) < 1)) {
+    throw new Error('sessions filter limit must be a positive integer');
+  }
+  if (candidate.offset !== undefined && (!Number.isInteger(candidate.offset) || (candidate.offset as number) < 0)) {
+    throw new Error('sessions filter offset must be a non-negative integer');
+  }
+  if (candidate.providerId !== undefined && (typeof candidate.providerId !== 'string' || candidate.providerId.length === 0)) {
+    throw new Error('sessions filter providerId must be a non-empty string');
+  }
+
+  return {
+    limit: candidate.limit === undefined ? undefined : Math.min(candidate.limit as number, 200),
+    offset: candidate.offset === undefined ? undefined : candidate.offset as number,
+    providerId: candidate.providerId === undefined ? undefined : candidate.providerId as string
+  };
 }

@@ -3,10 +3,10 @@ import type { ReactNode } from 'react';
 export type RouteName = 'dashboard' | 'sessions' | 'index' | 'settings';
 
 const navItems: Array<{ route: RouteName; label: string }> = [
-  { route: 'dashboard', label: 'Dashboard' },
-  { route: 'sessions', label: 'Sessions' },
-  { route: 'index', label: 'Index Status' },
-  { route: 'settings', label: 'Settings' }
+  { route: 'dashboard', label: '概览' },
+  { route: 'sessions', label: '会话' },
+  { route: 'index', label: '索引状态' },
+  { route: 'settings', label: '设置' }
 ];
 
 export function Layout({ route, onRoute, children }: { route: RouteName; onRoute: (route: RouteName) => void; children: ReactNode }) {
@@ -17,7 +17,7 @@ export function Layout({ route, onRoute, children }: { route: RouteName; onRoute
           <span className="brand-mark" aria-hidden="true">TM</span>
           <strong>TokenMeter</strong>
         </div>
-        <nav aria-label="Primary">
+        <nav aria-label="主导航">
           {navItems.map((item) => (
             <button
               key={item.route}

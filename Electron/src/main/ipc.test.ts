@@ -98,17 +98,26 @@ vi.mock('./tokenMeterSocketClient.js', () => ({
 
 vi.mock('electron', () => ({
   app: {
+    focus: vi.fn(),
     on: vi.fn(),
     quit: vi.fn(),
+    requestSingleInstanceLock: vi.fn(() => true),
     whenReady: vi.fn(() => ({ then: vi.fn() }))
   },
-  BrowserWindow: vi.fn(function BrowserWindowMock(options: BrowserWindowConstructorOptions) {
+  BrowserWindow: Object.assign(vi.fn(function BrowserWindowMock(options: BrowserWindowConstructorOptions) {
     mockElectron.windowOptions.push(options);
 
     return {
+      focus: vi.fn(),
+      isMinimized: vi.fn(() => false),
       loadFile: vi.fn(),
-      loadURL: vi.fn()
+      loadURL: vi.fn(),
+      on: vi.fn(),
+      restore: vi.fn(),
+      show: vi.fn()
     };
+  }), {
+    getAllWindows: vi.fn(() => [])
   }),
   contextBridge: {
     exposeInMainWorld: vi.fn((key: string, api: Record<string, unknown>) => {
@@ -256,15 +265,59 @@ describe('Electron secure scaffold', () => {
     expect(mockSwiftClient.notifySwift).toHaveBeenCalledWith('settingsChanged', { version: '4' });
   });
 
-  it('settings:update still returns the pending repository result when Swift notification fails', async () => {
+  it('settings:update surfaces Swift notification rejections with the requested version instead of returning silent pending', async () => {
     const patch = { autoRefreshSeconds: 60 };
     mockSwiftClient.notifySwift.mockRejectedValue(new Error('Swift IPC unavailable'));
     const updateHandler = registerAndFindHandler('settings:update');
 
-    await expect(updateHandler({} as never, patch, 3)).resolves.toEqual({ requestedVersion: 4, status: 'pending' });
+    await expect(updateHandler({} as never, patch, 3)).resolves.toMatchObject({
+      requestedVersion: 4,
+      status: 'failed',
+      error: {
+        requestedVersion: 4,
+        message: expect.stringContaining('Swift IPC unavailable')
+      }
+    });
 
     expect(mockSettingsRepository.update).toHaveBeenCalledWith(patch, 3);
     expect(mockSwiftClient.notifySwift).toHaveBeenCalledWith('settingsChanged', { version: '4' });
+  });
+
+  it('settings:update surfaces Swift failure responses with the requested version instead of reporting applied', async () => {
+    const patch = { autoRefreshSeconds: 60 };
+    mockSwiftClient.notifySwift.mockResolvedValue({ ok: false, error: 'settings reload failed' });
+    const updateHandler = registerAndFindHandler('settings:update');
+
+    await expect(updateHandler({} as never, patch, 3)).resolves.toMatchObject({
+      requestedVersion: 4,
+      status: 'failed',
+      error: {
+        requestedVersion: 4,
+        message: expect.stringContaining('settings reload failed')
+      }
+    });
+
+    expect(mockSettingsRepository.update).toHaveBeenCalledWith(patch, 3);
+    expect(mockSwiftClient.notifySwift).toHaveBeenCalledWith('settingsChanged', { version: '4' });
+  });
+
+  it('settings:update returns a structured failed result when SQLite settings update rejects', async () => {
+    const patch = { autoRefreshSeconds: 60 };
+    mockSettingsRepository.update.mockImplementationOnce(() => {
+      throw new Error('stale settings version: expected 3, actual 4');
+    });
+    const updateHandler = registerAndFindHandler('settings:update');
+
+    await expect(updateHandler({} as never, patch, 3)).resolves.toMatchObject({
+      requestedVersion: 3,
+      status: 'failed',
+      error: {
+        requestedVersion: 3,
+        message: expect.stringContaining('stale settings version')
+      }
+    });
+
+    expect(mockSwiftClient.notifySwift).not.toHaveBeenCalled();
   });
 
   it('dashboard:dailyUsage reads through DashboardRepository with renderer filter args', async () => {

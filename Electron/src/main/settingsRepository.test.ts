@@ -175,6 +175,7 @@ describe('SettingsRepository', () => {
     expect(() => repo.update({ autoRefreshSeconds: 29 }, 3)).toThrow(/autoRefreshSeconds|30/);
     expect(() => repo.update({ enabledAgentKinds: 'codex' } as never, 3)).toThrow(/enabledAgentKinds/);
     expect(() => repo.update({ menuBarPrimaryProviderId: 42 } as never, 3)).toThrow(/menuBarPrimaryProviderId/);
+    expect(() => repo.update({ enabledAgentKinds: ['claudeCode', 'cursor'] }, 3)).toThrow(/enabledAgentKinds|cursor|unsupported/i);
 
     expect(settingRows(db)).toEqual(before);
   });

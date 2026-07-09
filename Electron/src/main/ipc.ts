@@ -15,15 +15,33 @@ export function registerIpcHandlers() {
   const indexStatus = new IndexStatusRepository(db);
   ipcMain.handle('settings:get', async () => settings.get());
   ipcMain.handle('settings:update', async (_event, patch, expectedVersion) => {
-    const result = settings.update(patch, expectedVersion);
     try {
-      await notifySwift('settingsChanged', { version: String(result.requestedVersion) });
-      return { ...result, status: 'applied' };
-    } catch {
-      return result;
+      const result = settings.update(patch, expectedVersion);
+      try {
+        const response = await notifySwift('settingsChanged', { version: String(result.requestedVersion) });
+        if (!response.ok) {
+          throw new Error(response.error ?? 'TokenMeter Swift IPC returned an error');
+        }
+        return { ...result, status: 'applied' };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown Swift IPC failure';
+        return {
+          ...result,
+          status: 'failed',
+          error: { requestedVersion: result.requestedVersion, message }
+        };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown settings update failure';
+      const requestedVersion = typeof expectedVersion === 'number' && Number.isFinite(expectedVersion) ? expectedVersion : 0;
+      return {
+        requestedVersion,
+        status: 'failed',
+        error: { requestedVersion, message }
+      };
     }
   });
-  ipcMain.handle('dashboard:overview', async () => ({ providers: [], totalTokens: 0 }));
+  ipcMain.handle('dashboard:overview', async () => dashboard.overview());
   ipcMain.handle('dashboard:dailyUsage', async (_event, filter) => dashboard.dailyUsage(filter));
   ipcMain.handle('sessions:query', async (_event, filter) => sessions.query(filter));
   ipcMain.handle('index:status', async () => indexStatus.status());

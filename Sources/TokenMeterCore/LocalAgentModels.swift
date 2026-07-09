@@ -36,6 +36,11 @@ public struct SourceFileFingerprint: Codable, Equatable {
     }
 }
 
+public enum ParsedSessionUsageKind: String, Codable, Equatable {
+    case cumulativeSessionTotal
+    case perEventDelta
+}
+
 public struct ParsedSessionUsage: Codable, Equatable {
     public let inputTokens: Int64?
     public let outputTokens: Int64?
@@ -43,6 +48,7 @@ public struct ParsedSessionUsage: Codable, Equatable {
     public let cacheReadTokens: Int64?
     public let cacheWriteTokens: Int64?
     public let costUSDMicros: Int64?
+    public let kind: ParsedSessionUsageKind
 
     public var totalTokens: Int64 {
         (inputTokens ?? 0)
@@ -58,7 +64,8 @@ public struct ParsedSessionUsage: Codable, Equatable {
         reasoningTokens: Int64?,
         cacheReadTokens: Int64?,
         cacheWriteTokens: Int64?,
-        costUSDMicros: Int64?
+        costUSDMicros: Int64?,
+        kind: ParsedSessionUsageKind = .cumulativeSessionTotal
     ) {
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
@@ -66,6 +73,39 @@ public struct ParsedSessionUsage: Codable, Equatable {
         self.cacheReadTokens = cacheReadTokens
         self.cacheWriteTokens = cacheWriteTokens
         self.costUSDMicros = costUSDMicros
+        self.kind = kind
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case inputTokens
+        case outputTokens
+        case reasoningTokens
+        case cacheReadTokens
+        case cacheWriteTokens
+        case costUSDMicros
+        case kind
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        inputTokens = try container.decodeIfPresent(Int64.self, forKey: .inputTokens)
+        outputTokens = try container.decodeIfPresent(Int64.self, forKey: .outputTokens)
+        reasoningTokens = try container.decodeIfPresent(Int64.self, forKey: .reasoningTokens)
+        cacheReadTokens = try container.decodeIfPresent(Int64.self, forKey: .cacheReadTokens)
+        cacheWriteTokens = try container.decodeIfPresent(Int64.self, forKey: .cacheWriteTokens)
+        costUSDMicros = try container.decodeIfPresent(Int64.self, forKey: .costUSDMicros)
+        kind = try container.decodeIfPresent(ParsedSessionUsageKind.self, forKey: .kind) ?? .cumulativeSessionTotal
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(inputTokens, forKey: .inputTokens)
+        try container.encodeIfPresent(outputTokens, forKey: .outputTokens)
+        try container.encodeIfPresent(reasoningTokens, forKey: .reasoningTokens)
+        try container.encodeIfPresent(cacheReadTokens, forKey: .cacheReadTokens)
+        try container.encodeIfPresent(cacheWriteTokens, forKey: .cacheWriteTokens)
+        try container.encodeIfPresent(costUSDMicros, forKey: .costUSDMicros)
+        try container.encode(kind, forKey: .kind)
     }
 }
 

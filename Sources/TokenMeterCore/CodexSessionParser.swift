@@ -74,7 +74,7 @@ public struct CodexSessionParser: LocalAgentSessionParser {
                 }
 
                 guard let usageForLine else { continue }
-                usage = usageForLine.parsedUsage
+                usage = usageForLine.parsedUsage(kind: totalUsage == nil ? .perEventDelta : .cumulativeSessionTotal)
                 usageSequence += 1
                 usageOffset = line.offset
 
@@ -133,6 +133,141 @@ public struct CodexSessionParser: LocalAgentSessionParser {
     }
 }
 
+final class CodexStreamingParser: LocalAgentSessionStreamingParser {
+    private var sessionKey: String?
+    private var projectPath: String?
+    private var modelName: String?
+    private var startedAt: Date?
+    private var updatedAt: Date?
+    private var usage: ParsedSessionUsage?
+    private var usageSequence = 0
+    private var usageOffset: Int64?
+    private var previousTotalUsage: CodexTokenUsage?
+    private let dateFormatters: [ISO8601DateFormatter]
+
+    private(set) var latestTokenUsageIsCumulative = false
+
+    init() {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        dateFormatters = [fractional, ISO8601DateFormatter()]
+    }
+
+    func consume(_ line: JSONLLine) {
+        guard let object = JSONDictionary.object(from: line.text) else { return }
+        let type = JSONDictionary.string(object, "type")
+
+        if let timestamp = timestamp(in: object) {
+            updatedAt = timestamp
+            if startedAt == nil {
+                startedAt = timestamp
+            }
+        }
+
+        switch type {
+        case "session_meta":
+            guard let payload = JSONDictionary.dictionary(object, "payload") else { return }
+            sessionKey = firstString(in: payload, keys: ["id", "session_id", "sessionId"]) ?? sessionKey
+            projectPath = firstString(in: payload, keys: ["cwd", "project_path", "projectPath"]) ?? projectPath
+            modelName = firstString(in: payload, keys: ["model", "model_name", "modelName"]) ?? modelName
+            if let timestamp = timestamp(in: payload) {
+                startedAt = timestamp
+                updatedAt = timestamp
+            }
+
+        case "turn_context":
+            guard let payload = JSONDictionary.dictionary(object, "payload") else { return }
+            modelName = firstString(in: payload, keys: ["model", "model_name", "modelName"]) ?? modelName
+            projectPath = firstString(in: payload, keys: ["cwd", "project_path", "projectPath"]) ?? projectPath
+
+        case "event_msg":
+            guard let payload = JSONDictionary.dictionary(object, "payload"),
+                  JSONDictionary.string(payload, "type") == "token_count",
+                  let info = JSONDictionary.dictionary(payload, "info") else {
+                return
+            }
+            modelName = firstModel(in: payload, info: info) ?? modelName
+
+            let totalUsage = JSONDictionary.dictionary(info, "total_token_usage").map(CodexTokenUsage.init)
+            if let totalUsage {
+                latestTokenUsageIsCumulative = true
+                let totalDelta = totalUsage.delta(from: previousTotalUsage)
+                guard totalDelta.hasAnyTokens else {
+                    previousTotalUsage = totalUsage
+                    return
+                }
+            } else if JSONDictionary.dictionary(info, "last_token_usage") != nil {
+                latestTokenUsageIsCumulative = false
+            }
+
+            let usageForLine: CodexTokenUsage?
+            if let totalUsage {
+                usageForLine = totalUsage
+            } else if let lastUsageObject = JSONDictionary.dictionary(info, "last_token_usage") {
+                usageForLine = CodexTokenUsage(lastUsageObject)
+            } else {
+                usageForLine = nil
+            }
+
+            if let totalUsage {
+                previousTotalUsage = totalUsage
+            }
+
+            guard let usageForLine else { return }
+            usage = usageForLine.parsedUsage(kind: totalUsage == nil ? .perEventDelta : .cumulativeSessionTotal)
+            usageSequence += 1
+            usageOffset = line.offset
+
+        default:
+            return
+        }
+    }
+
+    func finish(sourceURL: URL) throws -> ParsedAgentSession {
+        let resolvedSessionKey = sessionKey ?? fallbackSessionKey(from: sourceURL)
+        return ParsedAgentSession(
+            sourceKind: .codexJSONL,
+            sessionKey: resolvedSessionKey,
+            projectPath: projectPath,
+            modelName: modelName ?? (usage == nil ? nil : "gpt-5"),
+            cliVersion: nil,
+            startedAt: startedAt,
+            updatedAt: updatedAt,
+            usage: usage,
+            usageSequence: usageSequence,
+            sourceOffset: usageOffset,
+            rawMeta: ["source": "codex"]
+        )
+    }
+
+    private func timestamp(in object: [String: Any]) -> Date? {
+        guard let value = firstString(in: object, keys: ["timestamp", "created_at", "createdAt"]) else { return nil }
+        return dateFormatters.lazy.compactMap { $0.date(from: value) }.first
+    }
+
+    private func firstString(in object: [String: Any], keys: [String]) -> String? {
+        for key in keys {
+            if let value = JSONDictionary.string(object, key), !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func firstModel(in payload: [String: Any], info: [String: Any]) -> String? {
+        firstString(in: payload, keys: ["model", "model_name", "modelName"])
+            ?? JSONDictionary.dictionary(payload, "metadata").flatMap { firstString(in: $0, keys: ["model", "model_name", "modelName"]) }
+            ?? firstString(in: info, keys: ["model", "model_name", "modelName"])
+            ?? JSONDictionary.dictionary(info, "metadata").flatMap { firstString(in: $0, keys: ["model", "model_name", "modelName"]) }
+    }
+
+    private func fallbackSessionKey(from sourceURL: URL) -> String {
+        let lastPathComponent = sourceURL.deletingPathExtension().lastPathComponent
+        if !lastPathComponent.isEmpty { return lastPathComponent }
+        return sourceURL.path
+    }
+}
+
 private struct CodexTokenUsage {
     let inputTokens: Int64?
     let outputTokens: Int64?
@@ -183,6 +318,10 @@ private struct CodexTokenUsage {
     }
 
     var parsedUsage: ParsedSessionUsage {
+        parsedUsage(kind: .cumulativeSessionTotal)
+    }
+
+    func parsedUsage(kind: ParsedSessionUsageKind) -> ParsedSessionUsage {
         let tokens = tokensWithTotalFallback
         return ParsedSessionUsage(
             inputTokens: tokens.inputTokens,
@@ -190,7 +329,8 @@ private struct CodexTokenUsage {
             reasoningTokens: tokens.reasoningTokens,
             cacheReadTokens: tokens.cacheReadTokens,
             cacheWriteTokens: tokens.cacheWriteTokens,
-            costUSDMicros: nil
+            costUSDMicros: nil,
+            kind: kind
         )
     }
 

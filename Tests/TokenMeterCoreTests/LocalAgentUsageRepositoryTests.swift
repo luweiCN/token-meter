@@ -90,6 +90,87 @@ final class LocalAgentUsageRepositoryTests: XCTestCase {
         XCTAssertFalse(rawMetadata.contains("SECRET_PROMPT_SHOULD_NOT_BE_PERSISTED"))
     }
 
+    func testRawMetadataFiltersPrivateKeysBeforePersistence() throws {
+        let database = try migratedDatabase()
+        let repository = LocalAgentUsageRepository(database: database)
+        let session = makeSession(
+            sessionKey: "metadata-privacy-session",
+            rawMeta: [
+                "source": "codex",
+                "safe_model_family": "gpt",
+                "prompt": "SECRET_PROMPT_SHOULD_NOT_BE_PERSISTED",
+                "message": "SECRET_MESSAGE_SHOULD_NOT_BE_PERSISTED",
+                "tool_output": "SECRET_TOOL_SHOULD_NOT_BE_PERSISTED",
+                "reasoning": "SECRET_REASONING_SHOULD_NOT_BE_PERSISTED",
+                "api_key": "sk-should-not-be-persisted",
+                "token_count": "SECRET_TOKEN_METADATA_SHOULD_NOT_BE_PERSISTED",
+                "credential_path": "/tmp/secret-credential",
+                "provider": "/Users/alice/.ssh/id_rsa",
+                "provider_file_url": "file:///Users/alice/Documents/acme-client",
+                "provider_relative": ".ssh/id_rsa",
+                "profile_relative": ".aws/credentials",
+                "agent_config_relative": ".config/opencode/token.json",
+                "provider_windows_relative": ".ssh\\id_rsa",
+                "profile_windows_relative": ".aws\\credentials",
+                "agent_config_windows_relative": ".config\\token.json",
+                "provider_padded_file_url": " file:///Users/alice/private",
+                "provider_padded_absolute": " /Users/alice/private",
+                "provider_embedded_file_url": "opened file:///Users/alice/private-project",
+                "safe_note": "opened .ssh/id_ed25519",
+                "safe_profile": "loaded .aws/credentials-prod",
+                "safe_config": "read .config/opencode/private-token.json",
+                "safe_windows_note": "opened .ssh\\id_ed25519",
+                "safe_windows_profile": "loaded .aws\\credentials-prod",
+                "safe_windows_config": "read .config\\opencode\\private-token.json"
+            ]
+        )
+
+        try repository.upsert(session, scanRootId: 1, sourceFileId: nil, runId: nil)
+
+        let rawMetadata = try XCTUnwrap(database.query("SELECT raw_meta_json FROM agent_sessions")[0].string("raw_meta_json"))
+        XCTAssertTrue(rawMetadata.contains("safe_model_family"))
+        for forbidden in [
+            "SECRET_PROMPT_SHOULD_NOT_BE_PERSISTED",
+            "SECRET_MESSAGE_SHOULD_NOT_BE_PERSISTED",
+            "SECRET_TOOL_SHOULD_NOT_BE_PERSISTED",
+            "SECRET_REASONING_SHOULD_NOT_BE_PERSISTED",
+            "sk-should-not-be-persisted",
+            "SECRET_TOKEN_METADATA_SHOULD_NOT_BE_PERSISTED",
+            "/Users/alice/.ssh/id_rsa",
+            "id_rsa",
+            "file:///Users/alice/Documents/acme-client",
+            "acme-client",
+            ".ssh",
+            ".aws",
+            ".config",
+            "credentials",
+            "token.json",
+            " file:///Users/alice/private",
+            " /Users/alice/private",
+            "opened file:///Users/alice/private-project",
+            "private-project",
+            "opened .ssh/id_ed25519",
+            "loaded .aws/credentials-prod",
+            "read .config/opencode/private-token.json",
+            "opened .ssh\\id_ed25519",
+            "loaded .aws\\credentials-prod",
+            "read .config\\opencode\\private-token.json",
+            "id_ed25519",
+            "credentials-prod",
+            "private-token.json",
+            "secret-credential",
+            "prompt",
+            "message",
+            "tool_output",
+            "reasoning",
+            "api_key",
+            "token_count",
+            "credential_path"
+        ] {
+            XCTAssertFalse(rawMetadata.contains(forbidden), "raw_meta_json unexpectedly persisted private metadata key or value: \(forbidden)")
+        }
+    }
+
     func testDailyRollupWithNilProjectDoesNotDuplicateRows() throws {
         let database = try migratedDatabase()
         let repository = LocalAgentUsageRepository(database: database)
@@ -187,6 +268,146 @@ final class LocalAgentUsageRepositoryTests: XCTestCase {
         XCTAssertEqual(rows[0].int("tokens_cache_read"), 4)
         XCTAssertEqual(rows[0].int("tokens_cache_write"), 5)
         XCTAssertEqual(rows[0].int("total_cost_usd_micros"), 4_321)
+    }
+
+    func testDeltaUsageRowsDoNotBecomeLatestAfterCumulativeRefresh() throws {
+        let database = try migratedDatabase()
+        let repository = LocalAgentUsageRepository(database: database)
+        let cumulativeUsage = ParsedSessionUsage(
+            inputTokens: 100,
+            outputTokens: 20,
+            reasoningTokens: nil,
+            cacheReadTokens: nil,
+            cacheWriteTokens: nil,
+            costUSDMicros: nil,
+            kind: .cumulativeSessionTotal
+        )
+        try repository.upsert(
+            makeSession(
+                sessionKey: "codex-delta-latest",
+                usageSequence: 1,
+                sourceOffset: 10,
+                usage: cumulativeUsage
+            ),
+            scanRootId: 1,
+            sourceFileId: nil,
+            runId: nil
+        )
+        try repository.upsert(
+            makeSession(
+                sessionKey: "codex-delta-latest",
+                updatedAt: "2026-07-03T01:20:00Z",
+                usageSequence: 2,
+                sourceOffset: 20,
+                usage: ParsedSessionUsage(
+                    inputTokens: 5,
+                    outputTokens: 2,
+                    reasoningTokens: nil,
+                    cacheReadTokens: nil,
+                    cacheWriteTokens: nil,
+                    costUSDMicros: nil,
+                    kind: .perEventDelta
+                )
+            ),
+            scanRootId: 1,
+            sourceFileId: nil,
+            runId: nil
+        )
+        try repository.upsert(
+            makeSession(
+                sessionKey: "codex-delta-latest",
+                updatedAt: "2026-07-03T01:30:00Z",
+                usageSequence: 1,
+                sourceOffset: 10,
+                usage: cumulativeUsage
+            ),
+            scanRootId: 1,
+            sourceFileId: nil,
+            runId: nil
+        )
+
+        let latest = try database.query(
+            """
+            SELECT u.usage_seq, u.is_cumulative, u.tokens_input, u.tokens_output
+            FROM session_usage_latest latest
+            JOIN session_usage u ON u.id = latest.session_usage_id
+            """
+        )[0]
+        XCTAssertEqual(latest.int("usage_seq"), 1)
+        XCTAssertEqual(latest.int("is_cumulative"), 1)
+        XCTAssertEqual(latest.int("tokens_input"), 100)
+        XCTAssertEqual(latest.int("tokens_output"), 20)
+
+        let rollup = try database.query("SELECT tokens_input, tokens_output FROM provider_daily_usage")[0]
+        XCTAssertEqual(rollup.int("tokens_input"), 100)
+        XCTAssertEqual(rollup.int("tokens_output"), 20)
+    }
+
+    func testDeltaUsageDoesNotOverwriteExistingCumulativeUsageRow() throws {
+        let database = try migratedDatabase()
+        let repository = LocalAgentUsageRepository(database: database)
+        try repository.upsert(
+            makeSession(
+                sessionKey: "codex-delta-rewrite",
+                usageSequence: 1,
+                sourceOffset: 10,
+                usage: ParsedSessionUsage(
+                    inputTokens: 100,
+                    outputTokens: 20,
+                    reasoningTokens: nil,
+                    cacheReadTokens: nil,
+                    cacheWriteTokens: nil,
+                    costUSDMicros: nil,
+                    kind: .cumulativeSessionTotal
+                )
+            ),
+            scanRootId: 1,
+            sourceFileId: nil,
+            runId: nil
+        )
+        try repository.upsert(
+            makeSession(
+                sessionKey: "codex-delta-rewrite",
+                updatedAt: "2026-07-03T01:20:00Z",
+                usageSequence: 1,
+                sourceOffset: 20,
+                usage: ParsedSessionUsage(
+                    inputTokens: 5,
+                    outputTokens: 2,
+                    reasoningTokens: nil,
+                    cacheReadTokens: nil,
+                    cacheWriteTokens: nil,
+                    costUSDMicros: nil,
+                    kind: .perEventDelta
+                )
+            ),
+            scanRootId: 1,
+            sourceFileId: nil,
+            runId: nil
+        )
+
+        let usageRows = try database.query(
+            """
+            SELECT usage_seq, source_offset, is_cumulative, tokens_input, tokens_output
+            FROM session_usage
+            ORDER BY id ASC
+            """
+        )
+        XCTAssertEqual(usageRows.count, 1)
+        XCTAssertEqual(usageRows[0].int("is_cumulative"), 1)
+        XCTAssertEqual(usageRows[0].int("tokens_input"), 100)
+        XCTAssertEqual(usageRows[0].int("tokens_output"), 20)
+
+        let latest = try database.query(
+            """
+            SELECT u.is_cumulative, u.tokens_input, u.tokens_output
+            FROM session_usage_latest latest
+            JOIN session_usage u ON u.id = latest.session_usage_id
+            """
+        )[0]
+        XCTAssertEqual(latest.int("is_cumulative"), 1)
+        XCTAssertEqual(latest.int("tokens_input"), 100)
+        XCTAssertEqual(latest.int("tokens_output"), 20)
     }
 }
 

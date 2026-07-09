@@ -48,7 +48,7 @@ final class AppDelegateRefreshTimerTests: XCTestCase {
             updatedBy: .swift
         )
 
-        store.reloadSettings()
+        try store.reloadSettings()
 
         let rescheduledTimer = try refreshTimer(in: delegate)
         XCTAssertEqual(

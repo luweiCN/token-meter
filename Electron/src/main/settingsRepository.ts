@@ -23,6 +23,14 @@ export interface SettingsPatch {
   enabledAgentKinds?: string[];
 }
 
+const LOCAL_AGENT_KIND_ALLOWED: Record<string, true> = {
+  claudeCode: true,
+  codex: true,
+  opencode: true,
+  omp: true
+};
+
+
 interface SettingRow {
   value_json: string;
   value_type: 'string' | 'int' | 'bool' | 'json';
@@ -87,22 +95,30 @@ export class SettingsRepository {
   private settingString(key: string): string | undefined {
     const row = this.settingRow(key);
     if (row === undefined) return undefined;
-    return JSON.parse(row.value_json) as string;
+    if (row.value_type !== 'string') throw new Error(`invalid stored setting type: ${key}`);
+    const value = JSON.parse(row.value_json) as unknown;
+    if (typeof value !== 'string') throw new Error(`invalid stored setting value: ${key}`);
+    return value;
   }
 
   private settingInt(key: string): number | undefined {
     const row = this.settingRow(key);
     if (row === undefined) return undefined;
-    return Number(JSON.parse(row.value_json));
+    if (row.value_type !== 'int') throw new Error(`invalid stored setting type: ${key}`);
+    const value = JSON.parse(row.value_json) as unknown;
+    if (!Number.isInteger(value)) throw new Error(`invalid stored setting value: ${key}`);
+    return value as number;
   }
 
   private settingStringArray(key: string): string[] {
     const row = this.settingRow(key);
     if (row === undefined) return [];
+    if (row.value_type !== 'json') throw new Error(`invalid stored setting type: ${key}`);
     const value = JSON.parse(row.value_json) as unknown;
     if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
       throw new Error(`invalid string array setting: ${key}`);
     }
+    if (key === 'filters.enabledAgentKinds') validateEnabledAgentKinds(value);
     return value;
   }
 
@@ -170,10 +186,18 @@ function validateSettingsPatch(patch: unknown): SettingsPatch {
     if (!Array.isArray(candidate.enabledAgentKinds) || !candidate.enabledAgentKinds.every((item) => typeof item === 'string')) {
       throw new Error('enabledAgentKinds must be an array of strings');
     }
+    validateEnabledAgentKinds(candidate.enabledAgentKinds);
     validated.enabledAgentKinds = candidate.enabledAgentKinds;
   }
 
   return validated;
+}
+
+function validateEnabledAgentKinds(values: string[]) {
+  const unsupported = values.find((value) => LOCAL_AGENT_KIND_ALLOWED[value] !== true);
+  if (unsupported !== undefined) {
+    throw new Error(`enabledAgentKinds contains unsupported agent kind: ${unsupported}`);
+  }
 }
 
 function hasPatchChanges(patch: SettingsPatch) {

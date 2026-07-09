@@ -128,11 +128,33 @@ final class TokenMeterIPCServer {
         case "ping":
             return IPCResponse(id: request.id, ok: true, result: ["status": "ok"], error: nil)
         case "settingsChanged":
-            store.reloadSettings()
-            return IPCResponse(id: request.id, ok: true, result: ["status": "settingsApplied"], error: nil)
+            guard let versionText = request.params?["version"], let version = Int(versionText), version > 0 else {
+                return IPCResponse(id: request.id, ok: false, result: nil, error: "invalid settings version")
+            }
+            do {
+                try store.reloadSettings(expectedVersion: version)
+                return IPCResponse(id: request.id, ok: true, result: ["status": "settingsApplied"], error: nil)
+            } catch {
+                return IPCResponse(id: request.id, ok: false, result: nil, error: "settings reload failed")
+            }
         case "scanNow":
-            await store.refreshLocalAgentIndex()
-            return IPCResponse(id: request.id, ok: true, result: ["status": store.localIndexStatusText], error: nil)
+            let result = await store.refreshLocalAgentIndex()
+            switch result.status {
+            case .failed, .unavailable:
+                return IPCResponse(id: request.id, ok: false, result: nil, error: "local session index update failed")
+            case .partial, .ok:
+                return IPCResponse(
+                    id: request.id,
+                    ok: true,
+                    result: [
+                        "status": result.status.rawValue,
+                        "message": result.message,
+                        "scanned": String(result.scanned),
+                        "failures": String(result.failures)
+                    ],
+                    error: nil
+                )
+            }
         default:
             return IPCResponse(id: request.id, ok: false, result: nil, error: "unknown method")
         }

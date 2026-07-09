@@ -110,6 +110,116 @@ public struct OmpSessionParser: LocalAgentSessionParser {
     }
 }
 
+final class OmpStreamingParser: LocalAgentSessionStreamingParser {
+    private var sessionKey: String?
+    private var projectPath: String?
+    private var modelName: String?
+    private var startedAt: Date?
+    private var updatedAt: Date?
+    private var usages: [OmpParsedUsage] = []
+    private var usageOffset: Int64?
+    private let dateFormatters: [ISO8601DateFormatter]
+
+    var latestTokenUsageIsCumulative: Bool { true }
+
+    init() {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        dateFormatters = [fractional, ISO8601DateFormatter()]
+    }
+
+    func consume(_ line: JSONLLine) {
+        guard let object = JSONDictionary.object(from: line.text) else { return }
+        let type = firstString(in: object, keys: ["type"])
+
+        if let timestamp = timestamp(in: object) {
+            if startedAt == nil {
+                startedAt = timestamp
+            }
+            updatedAt = timestamp
+        }
+
+        switch type {
+        case "session":
+            sessionKey = firstString(in: object, keys: ["id", "sessionId", "session_id"]) ?? sessionKey
+            projectPath = firstString(in: object, keys: ["cwd", "projectPath", "project_path"]) ?? projectPath
+            modelName = firstString(in: object, keys: ["model", "modelName", "model_name"]) ?? modelName
+
+        case "model_change", "modelChange":
+            modelName = firstString(in: object, keys: ["model", "modelName", "model_name"]) ?? modelName
+
+        case "message":
+            guard let message = JSONDictionary.dictionary(object, "message"),
+                  let usageObject = JSONDictionary.dictionary(message, "usage") else {
+                return
+            }
+            modelName = firstString(in: message, keys: ["model", "modelName", "model_name"]) ?? modelName
+            let usage = OmpParsedUsage(usageObject)
+            guard usage.hasAnyValue else { return }
+            usages.append(usage)
+            usageOffset = line.offset
+
+        default:
+            return
+        }
+    }
+
+    func finish(sourceURL: URL) throws -> ParsedAgentSession {
+        let resolvedSessionKey = sessionKey ?? fallbackSessionKey(from: sourceURL)
+        return ParsedAgentSession(
+            sourceKind: .ompJSONL,
+            sessionKey: resolvedSessionKey,
+            projectPath: projectPath,
+            modelName: modelName,
+            cliVersion: nil,
+            startedAt: startedAt,
+            updatedAt: updatedAt,
+            usage: aggregate(usages),
+            usageSequence: usages.count,
+            sourceOffset: usageOffset,
+            rawMeta: ["source": "omp"]
+        )
+    }
+
+    private func timestamp(in object: [String: Any]) -> Date? {
+        guard let value = firstString(in: object, keys: ["timestamp", "created_at", "createdAt"]) else { return nil }
+        return dateFormatters.lazy.compactMap { $0.date(from: value) }.first
+    }
+
+    private func firstString(in object: [String: Any], keys: [String]) -> String? {
+        for key in keys {
+            if let value = JSONDictionary.string(object, key), !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func aggregate(_ usages: [OmpParsedUsage]) -> ParsedSessionUsage? {
+        guard !usages.isEmpty else { return nil }
+        return ParsedSessionUsage(
+            inputTokens: sum(usages.map(\.inputTokens)),
+            outputTokens: sum(usages.map(\.outputTokens)),
+            reasoningTokens: sum(usages.map(\.reasoningTokens)),
+            cacheReadTokens: sum(usages.map(\.cacheReadTokens)),
+            cacheWriteTokens: sum(usages.map(\.cacheWriteTokens)),
+            costUSDMicros: sum(usages.map(\.costUSDMicros))
+        )
+    }
+
+    private func sum(_ values: [Int64?]) -> Int64? {
+        let numbers = values.compactMap { $0 }
+        guard !numbers.isEmpty else { return nil }
+        return numbers.reduce(0, +)
+    }
+
+    private func fallbackSessionKey(from sourceURL: URL) -> String {
+        let lastPathComponent = sourceURL.deletingPathExtension().lastPathComponent
+        if !lastPathComponent.isEmpty { return lastPathComponent }
+        return sourceURL.path
+    }
+}
+
 private struct OmpParsedUsage {
     let inputTokens: Int64?
     let outputTokens: Int64?

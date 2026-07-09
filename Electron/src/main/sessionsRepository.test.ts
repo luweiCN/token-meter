@@ -202,4 +202,25 @@ describe('SessionsRepository', () => {
     expect(result.items[0]).not.toHaveProperty('rawMeta');
     expect(JSON.stringify(result)).not.toMatch(/SECRET_|prompt|tool_output|reasoning|DELETED_SECRET/);
   });
+
+  it('rejects malformed renderer session filters instead of throwing TypeError or silently changing pagination', () => {
+    const repo = openRepo();
+    const invalidFilters: Array<{ name: string; filter: unknown }> = [
+      { name: 'null filter', filter: null },
+      { name: 'array filter', filter: [] },
+      { name: 'zero limit', filter: { limit: 0, offset: 0 } },
+      { name: 'negative limit', filter: { limit: -1, offset: 0 } },
+      { name: 'fractional limit', filter: { limit: 1.5, offset: 0 } },
+      { name: 'negative offset', filter: { limit: 10, offset: -1 } },
+      { name: 'fractional offset', filter: { limit: 10, offset: 0.5 } },
+      { name: 'array provider id', filter: { providerId: ['codex'], limit: 10, offset: 0 } }
+    ];
+
+    for (const { name, filter } of invalidFilters) {
+      expect(
+        () => repo.query(filter as never),
+        name
+      ).toThrow(/sessions filter/i);
+    }
+  });
 });

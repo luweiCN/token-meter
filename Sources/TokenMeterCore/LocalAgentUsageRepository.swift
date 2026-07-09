@@ -31,8 +31,10 @@ public final class LocalAgentUsageRepository {
 
             if let usage = session.usage {
                 try upsertUsage(usage, session: session, sessionId: sessionId)
-                try updateLatestUsagePointer(sessionId: sessionId)
-                try refreshDailyRollups(providerId: providerId, sourceKind: session.sourceKind)
+                if usage.kind == .cumulativeSessionTotal {
+                    try updateLatestUsagePointer(sessionId: sessionId)
+                    try refreshDailyRollups(providerId: providerId, sourceKind: session.sourceKind)
+                }
             }
 
             try database.execute("COMMIT")
@@ -137,7 +139,7 @@ public final class LocalAgentUsageRepository {
     private func upsertUsage(_ usage: ParsedSessionUsage, session: ParsedAgentSession, sessionId: Int64) throws {
         let usageSeq = Int64(max(session.usageSequence, 1))
         let observedAt = formatter.string(from: session.updatedAt ?? Date())
-        if let usageId = try existingUsageId(sessionId: sessionId, usageSeq: usageSeq, sourceOffset: session.sourceOffset) {
+        if let usageId = try existingUsageId(sessionId: sessionId, usageSeq: usageSeq, sourceOffset: session.sourceOffset, kind: usage.kind) {
             try database.execute(
                 """
                 UPDATE session_usage SET
@@ -150,7 +152,7 @@ public final class LocalAgentUsageRepository {
                     tokens_cache_write = ?,
                     cost_usd_micros = ?,
                     source_offset = ?,
-                    is_cumulative = 1
+                    is_cumulative = ?
                 WHERE id = ?
                 """,
                 usageParameters(
@@ -158,7 +160,31 @@ public final class LocalAgentUsageRepository {
                     usageSeq: usageSeq,
                     usage: usage,
                     sourceOffset: session.sourceOffset
-                ) + [.int(usageId)]
+                ) + [.int(usage.kind == .cumulativeSessionTotal ? 1 : 0), .int(usageId)]
+            )
+        } else if let conflictingUsageId = try existingUsageId(sessionId: sessionId, usageSeq: usageSeq, sourceOffset: session.sourceOffset) {
+            guard usage.kind == .cumulativeSessionTotal else { return }
+            try database.execute(
+                """
+                UPDATE session_usage SET
+                    observed_at = ?,
+                    usage_seq = ?,
+                    tokens_input = ?,
+                    tokens_output = ?,
+                    tokens_reasoning = ?,
+                    tokens_cache_read = ?,
+                    tokens_cache_write = ?,
+                    cost_usd_micros = ?,
+                    source_offset = ?,
+                    is_cumulative = ?
+                WHERE id = ?
+                """,
+                usageParameters(
+                    observedAt: observedAt,
+                    usageSeq: usageSeq,
+                    usage: usage,
+                    sourceOffset: session.sourceOffset
+                ) + [.int(1), .int(conflictingUsageId)]
             )
         } else {
             try database.execute(
@@ -175,20 +201,39 @@ public final class LocalAgentUsageRepository {
                     cost_usd_micros,
                     source_offset,
                     is_cumulative
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [.int(sessionId)] + usageParameters(
                     observedAt: observedAt,
                     usageSeq: usageSeq,
                     usage: usage,
                     sourceOffset: session.sourceOffset
-                )
+                ) + [.int(usage.kind == .cumulativeSessionTotal ? 1 : 0)]
             )
         }
     }
 
-    private func existingUsageId(sessionId: Int64, usageSeq: Int64, sourceOffset: Int64?) throws -> Int64? {
+    private func existingUsageId(
+        sessionId: Int64,
+        usageSeq: Int64,
+        sourceOffset: Int64?,
+        kind: ParsedSessionUsageKind? = nil
+    ) throws -> Int64? {
+        let cumulativeValue = kind.map { $0 == .cumulativeSessionTotal ? Int64(1) : Int64(0) }
         if let sourceOffset {
+            if let cumulativeValue {
+                return try database.query(
+                    """
+                    SELECT id
+                    FROM session_usage
+                    WHERE session_id = ? AND (usage_seq = ? OR source_offset = ?) AND is_cumulative = ?
+                    ORDER BY CASE WHEN usage_seq = ? THEN 0 ELSE 1 END, id DESC
+                    LIMIT 1
+                    """,
+                    [.int(sessionId), .int(usageSeq), .int(sourceOffset), .int(cumulativeValue), .int(usageSeq)]
+                ).first?.int("id")
+            }
+
             return try database.query(
                 """
                 SELECT id
@@ -198,6 +243,18 @@ public final class LocalAgentUsageRepository {
                 LIMIT 1
                 """,
                 [.int(sessionId), .int(usageSeq), .int(sourceOffset), .int(usageSeq)]
+            ).first?.int("id")
+        }
+
+        if let cumulativeValue {
+            return try database.query(
+                """
+                SELECT id
+                FROM session_usage
+                WHERE session_id = ? AND usage_seq = ? AND is_cumulative = ?
+                LIMIT 1
+                """,
+                [.int(sessionId), .int(usageSeq), .int(cumulativeValue)]
             ).first?.int("id")
         }
 
@@ -217,7 +274,7 @@ public final class LocalAgentUsageRepository {
             """
             SELECT id
             FROM session_usage
-            WHERE session_id = ?
+            WHERE session_id = ? AND is_cumulative = 1
             ORDER BY usage_seq DESC, observed_at DESC, id DESC
             LIMIT 1
             """,
@@ -323,10 +380,54 @@ public final class LocalAgentUsageRepository {
     }
 
     private func rawMetaJSON(_ rawMeta: [String: String]) -> String {
-        guard JSONSerialization.isValidJSONObject(rawMeta),
-              let data = try? JSONSerialization.data(withJSONObject: rawMeta, options: [.sortedKeys]) else {
+        let filtered = rawMeta.filter { key, value in
+            !isPrivateRawMeta(key: key, value: value)
+        }
+        guard JSONSerialization.isValidJSONObject(filtered),
+              let data = try? JSONSerialization.data(withJSONObject: filtered, options: [.sortedKeys]) else {
             return "{}"
         }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    private func isPrivateRawMeta(key: String, value: String) -> Bool {
+        let normalizedKey = key.lowercased()
+        let blockedKeyFragments = [
+            "prompt",
+            "message",
+            "content",
+            "tool",
+            "reasoning",
+            "api_key",
+            "apikey",
+            "key",
+            "token",
+            "credential",
+            "secret",
+            "cookie",
+            "attachment",
+            "response"
+        ]
+        if blockedKeyFragments.contains(where: normalizedKey.contains) {
+            return true
+        }
+
+        let normalizedValue = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalizedValue.contains("secret")
+            || normalizedValue.contains("api key")
+            || normalizedValue.hasPrefix("sk-")
+            || isPathLikePrivateValue(normalizedValue)
+    }
+
+    private func isPathLikePrivateValue(_ normalizedValue: String) -> Bool {
+        normalizedValue.hasPrefix("/")
+            || normalizedValue.hasPrefix("~/")
+            || normalizedValue.contains("file://")
+            || normalizedValue.contains(".ssh/")
+            || normalizedValue.contains(".aws/")
+            || normalizedValue.contains(".config/")
+            || normalizedValue.contains(".ssh\\")
+            || normalizedValue.contains(".aws\\")
+            || normalizedValue.contains(".config\\")
     }
 }

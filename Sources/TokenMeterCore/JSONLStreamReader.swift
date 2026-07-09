@@ -31,7 +31,34 @@ public enum JSONLStreamReader {
         try readLines(from: url, startingAt: offset, chunkSize: 64 * 1024)
     }
 
+    public static func readLines(
+        from url: URL,
+        startingAt offset: Int64,
+        onLine: @escaping (JSONLLine) throws -> Void
+    ) throws -> JSONLReadResult {
+        try readLines(from: url, startingAt: offset, chunkSize: 64 * 1024, retainingLines: false, onLine: onLine)
+    }
+
     static func readLines(from url: URL, startingAt offset: Int64, chunkSize: Int) throws -> JSONLReadResult {
+        try readLines(from: url, startingAt: offset, chunkSize: chunkSize, retainingLines: true, onLine: nil)
+    }
+
+    static func readLines(
+        from url: URL,
+        startingAt offset: Int64,
+        chunkSize: Int,
+        onLine: @escaping (JSONLLine) throws -> Void
+    ) throws -> JSONLReadResult {
+        try readLines(from: url, startingAt: offset, chunkSize: chunkSize, retainingLines: false, onLine: onLine)
+    }
+
+    private static func readLines(
+        from url: URL,
+        startingAt offset: Int64,
+        chunkSize: Int,
+        retainingLines: Bool,
+        onLine: ((JSONLLine) throws -> Void)?
+    ) throws -> JSONLReadResult {
         precondition(offset >= 0, "JSONL offset must be non-negative")
         precondition(chunkSize > 0, "JSONL chunk size must be positive")
 
@@ -49,13 +76,16 @@ public enum JSONLStreamReader {
                 if byte == newlineByte {
                     let nextOffset = cursor + 1
                     if !currentLine.isEmpty {
-                        lines.append(
-                            JSONLLine(
-                                text: String(decoding: currentLine, as: UTF8.self),
-                                offset: currentLineOffset,
-                                nextOffset: nextOffset
-                            )
+                        let line = JSONLLine(
+                            text: String(decoding: currentLine, as: UTF8.self),
+                            offset: currentLineOffset,
+                            nextOffset: nextOffset
                         )
+                        if retainingLines {
+                            lines.append(line)
+                        } else {
+                            try onLine?(line)
+                        }
                     }
                     currentLine.removeAll(keepingCapacity: true)
                     currentLineOffset = nextOffset

@@ -120,9 +120,14 @@ final class ProviderStore: ObservableObject {
         notificationCenter?.openNotificationSettings()
     }
 
-    func reloadSettings() {
-        settingsSnapshot = try? settingsStore?.snapshot()
-        refreshGate = RefreshGate(minimumInterval: TimeInterval(settingsSnapshot?.autoRefreshSeconds ?? 300))
+    func reloadSettings(expectedVersion: Int? = nil) throws {
+        guard let settingsStore else { throw ProviderStoreError.settingsUnavailable }
+        let snapshot = try settingsStore.snapshot()
+        if let expectedVersion, snapshot.version < expectedVersion {
+            throw ProviderStoreError.settingsVersionBehind(expected: expectedVersion, actual: snapshot.version)
+        }
+        settingsSnapshot = snapshot
+        refreshGate = RefreshGate(minimumInterval: TimeInterval(snapshot.autoRefreshSeconds))
     }
 
     func seedDefaultScanRoots() {
@@ -138,26 +143,31 @@ final class ProviderStore: ObservableObject {
         }
     }
 
-    func refreshLocalAgentIndex() async {
+    @discardableResult
+    func refreshLocalAgentIndex() async -> LocalIndexRefreshResult {
         guard let database, let scanner else {
             localIndexStatusText = "本地会话索引不可用"
-            return
+            return LocalIndexRefreshResult(scanned: 0, failures: 0, status: .unavailable, message: localIndexStatusText)
         }
 
         let roots: [SQLiteRow]
         do {
             roots = try database.query(
-                "SELECT id FROM scan_roots WHERE enabled = 1 AND scan_mode != 'disabled' ORDER BY display_name ASC"
+                "SELECT id, kind FROM scan_roots WHERE enabled = 1 AND scan_mode != 'disabled' ORDER BY display_name ASC"
             )
         } catch {
             localIndexStatusText = "本地会话索引不可用"
-            return
+            return LocalIndexRefreshResult(scanned: 0, failures: 0, status: .unavailable, message: localIndexStatusText)
         }
 
+        let enabledKinds = enabledSourceKinds()
         var scanned = 0
         var failures = 0
         for row in roots {
-            guard let id = row.int("id") else { continue }
+            guard let id = row.int("id"),
+                  let kindText = row.string("kind"),
+                  let kind = SourceKind(rawValue: kindText),
+                  enabledKinds.contains(kind) else { continue }
             do {
                 try await scanner.scanRoot(id: id)
                 scanned += 1
@@ -166,15 +176,31 @@ final class ProviderStore: ObservableObject {
             }
         }
 
+        let status: LocalIndexRefreshStatus
         if failures > 0, scanned > 0 {
             localIndexStatusText = "本地会话索引部分失败"
+            status = .partial
         } else if failures > 0 {
             localIndexStatusText = "本地会话索引更新失败"
+            status = .failed
         } else if scanned > 0 {
             localIndexStatusText = "已更新 \(scanned) 个本地会话来源"
+            status = .ok
         } else {
             localIndexStatusText = "没有已启用的本地会话来源"
+            status = .ok
         }
+
+        return LocalIndexRefreshResult(scanned: scanned, failures: failures, status: status, message: localIndexStatusText)
+    }
+
+    private func enabledSourceKinds() -> Set<SourceKind> {
+        guard let settingsSnapshot else {
+            return Set(SourceKind.allCasesForLocalIndex)
+        }
+        let enabledAgentKinds = settingsSnapshot.enabledAgentKinds.compactMap(LocalAgentKind.init(rawValue:))
+        guard !enabledAgentKinds.isEmpty else { return [] }
+        return Set(enabledAgentKinds.map(\.sourceKind))
     }
 
     nonisolated private static func loadConfig() -> TokenMeterConfig {
@@ -201,4 +227,44 @@ final class ProviderStore: ObservableObject {
             .homeDirectoryForCurrentUser
             .appendingPathComponent(".token-meter/cache/provider-snapshots.json")
     }
+}
+
+private extension SourceKind {
+    static var allCasesForLocalIndex: [SourceKind] {
+        [.claudeJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL]
+    }
+}
+
+private extension LocalAgentKind {
+    var sourceKind: SourceKind {
+        switch self {
+        case .claudeCode:
+            .claudeJSONL
+        case .codex:
+            .codexJSONL
+        case .opencode:
+            .opencodeSQLite
+        case .omp:
+            .ompJSONL
+        }
+    }
+}
+
+enum ProviderStoreError: Error {
+    case settingsUnavailable
+    case settingsVersionBehind(expected: Int, actual: Int)
+}
+
+enum LocalIndexRefreshStatus: String {
+    case ok
+    case partial
+    case failed
+    case unavailable
+}
+
+struct LocalIndexRefreshResult {
+    let scanned: Int
+    let failures: Int
+    let status: LocalIndexRefreshStatus
+    let message: String
 }

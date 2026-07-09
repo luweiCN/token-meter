@@ -109,6 +109,20 @@ final class CodexSessionParserTests: XCTestCase {
         XCTAssertEqual(parsed.sessionKey, "session-from-path")
     }
 
+    func testDoesNotTreatSingleCodexLastTokenUsageDeltaAsSessionTotal() throws {
+        let lines = [
+            JSONLLine(text: #"{"type":"session_meta","payload":{"id":"session-delta-only","cwd":"/repo"}}"#, offset: 0, nextOffset: 1),
+            JSONLLine(text: #"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":25,"output_tokens":5,"cached_input_tokens":3,"reasoning_output_tokens":2}}}}"#, offset: 1, nextOffset: 2)
+        ]
+
+        let parsed = try CodexSessionParser().parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/codex.jsonl"))
+
+        XCTAssertEqual(parsed.usage?.kind, .perEventDelta, "last_token_usage is a per-event delta; without total_token_usage it must not become a cumulative session total")
+        XCTAssertEqual(parsed.usage?.inputTokens, 25)
+        XCTAssertEqual(parsed.usageSequence, 1)
+        XCTAssertEqual(parsed.sourceOffset, 1)
+    }
+
     func testSkipsDuplicateCumulativeSnapshotEvenWhenLastUsageExists() throws {
         let lines = [
             JSONLLine(text: #"{"type":"session_meta","payload":{"id":"session-duplicate","cwd":"/repo"}}"#, offset: 0, nextOffset: 1),

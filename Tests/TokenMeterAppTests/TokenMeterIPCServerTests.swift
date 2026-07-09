@@ -106,6 +106,110 @@ final class TokenMeterIPCServerTests: XCTestCase {
         )
     }
 
+    func testSettingsChangedRejectsRequestedVersionNewerThanReloadedSQLiteSnapshot() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let server = try await startServer(store: fixture.store)
+        defer { server.stop() }
+
+        let current = try XCTUnwrap(fixture.store.settingsSnapshot)
+        let requestedVersion = current.version + 1
+
+        let response = try await sendJSONLine(
+            #"{"id":"settings-stale","method":"settingsChanged","params":{"version":"\#(requestedVersion)"}}"#,
+            to: try XCTUnwrap(server.boundPort)
+        )
+
+        XCTAssertLessThan(
+            fixture.store.settingsSnapshot?.version ?? 0,
+            requestedVersion,
+            "test setup must leave SQLite behind the Electron-requested settings version"
+        )
+        XCTAssertEqual(response.id, "settings-stale")
+        XCTAssertFalse(response.ok, "settingsChanged must not acknowledge a requested version that SQLite has not caught up to")
+    }
+
+    func testSettingsChangedRejectsMissingOrInvalidRequestedVersion() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+        let server = try await startServer(store: fixture.store)
+        defer { server.stop() }
+
+        let invalidVersionResponse = try await sendJSONLine(
+            #"{"id":"settings-invalid","method":"settingsChanged","params":{"version":"not-a-number"}}"#,
+            to: try XCTUnwrap(server.boundPort)
+        )
+        XCTAssertEqual(invalidVersionResponse.id, "settings-invalid")
+        XCTAssertFalse(invalidVersionResponse.ok, "settingsChanged must not acknowledge an unparsable requested version")
+        XCTAssertEqual(invalidVersionResponse.error, "invalid settings version")
+
+        let missingVersionResponse = try await sendJSONLine(
+            #"{"id":"settings-missing","method":"settingsChanged"}"#,
+            to: try XCTUnwrap(server.boundPort)
+        )
+        XCTAssertEqual(missingVersionResponse.id, "settings-missing")
+        XCTAssertFalse(missingVersionResponse.ok, "settingsChanged must not acknowledge a missing requested version")
+        XCTAssertEqual(missingVersionResponse.error, "invalid settings version")
+
+        let zeroVersionResponse = try await sendJSONLine(
+            #"{"id":"settings-zero","method":"settingsChanged","params":{"version":"0"}}"#,
+            to: try XCTUnwrap(server.boundPort)
+        )
+        XCTAssertEqual(zeroVersionResponse.id, "settings-zero")
+        XCTAssertFalse(zeroVersionResponse.ok, "settingsChanged must not acknowledge a nonpositive requested version")
+        XCTAssertEqual(zeroVersionResponse.error, "invalid settings version")
+
+        let negativeVersionResponse = try await sendJSONLine(
+            #"{"id":"settings-negative","method":"settingsChanged","params":{"version":"-1"}}"#,
+            to: try XCTUnwrap(server.boundPort)
+        )
+        XCTAssertEqual(negativeVersionResponse.id, "settings-negative")
+        XCTAssertFalse(negativeVersionResponse.ok, "settingsChanged must not acknowledge a negative requested version")
+        XCTAssertEqual(negativeVersionResponse.error, "invalid settings version")
+    }
+
+    func testScanNowReturnsFailureWhenLocalIndexIsUnavailable() async throws {
+        let store = ProviderStore(
+            config: TokenMeterConfig(menuBar: MenuBarConfig(primaryProviderId: nil), providers: []),
+            notificationCenter: nil,
+            databaseURL: nil
+        )
+        let server = try await startServer(store: store)
+        defer { server.stop() }
+
+        let response = try await sendJSONLine(
+            #"{"id":"scan-unavailable","method":"scanNow"}"#,
+            to: try XCTUnwrap(server.boundPort)
+        )
+
+        XCTAssertEqual(response.id, "scan-unavailable")
+        XCTAssertFalse(response.ok, "scanNow must surface local-index unavailability instead of reporting success")
+    }
+
+    func testScanNowReturnsFailureWhenEveryEnabledRootFails() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+
+        let failingRoot = fixture.homeDirectory.appendingPathComponent("broken-claude", isDirectory: true)
+        try FileManager.default.createDirectory(at: failingRoot, withIntermediateDirectories: true)
+        try Data(#"{"message":{"role":"assistant","usage":{"input_tokens":1}}}"#.utf8)
+            .write(to: failingRoot.appendingPathComponent("missing-session.jsonl"))
+
+        let database = try SQLiteDatabase(path: fixture.databaseURL.path)
+        try insertScanRoot(database, id: 1, kind: .claudeJSONL, rootPath: failingRoot.path, displayName: "Broken Claude")
+
+        let server = try await startServer(store: fixture.store)
+        defer { server.stop() }
+
+        let response = try await sendJSONLine(
+            #"{"id":"scan-all-fail","method":"scanNow"}"#,
+            to: try XCTUnwrap(server.boundPort)
+        )
+
+        XCTAssertEqual(response.id, "scan-all-fail")
+        XCTAssertFalse(response.ok, "scanNow must fail when every enabled scan root fails to parse")
+    }
+
     private func startServer(store: ProviderStore) async throws -> TokenMeterIPCServer {
         let server = TokenMeterIPCServer(store: store)
         try server.start(port: 0)
@@ -189,6 +293,28 @@ final class TokenMeterIPCServerTests: XCTestCase {
         }
         return addresses
     }
+}
+
+private func insertScanRoot(
+    _ database: SQLiteDatabase,
+    id: Int64,
+    kind: SourceKind,
+    rootPath: String,
+    displayName: String
+) throws {
+    try database.execute(
+        """
+        INSERT INTO scan_roots(id, kind, root_path, display_name, stable_source_key)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            .int(id),
+            .text(kind.rawValue),
+            .text(rootPath),
+            .text(displayName),
+            .text("\(kind.rawValue):\(rootPath)")
+        ]
+    )
 }
 
 @MainActor
