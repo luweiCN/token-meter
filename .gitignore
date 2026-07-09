@@ -8,3 +8,5 @@ build/
 *.xcworkspace/xcuserdata/
 
 config/token-meter.local.json
+
+.superpowers/
