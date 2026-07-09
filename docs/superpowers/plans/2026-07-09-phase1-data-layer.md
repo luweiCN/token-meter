@@ -3860,6 +3860,12 @@ git commit -m "feat: add full rescan with streaming progress"
 
 Phase 1 结束时应用必须仍能启动、旧 UI 仍能显示。UI **组件不改**，只把底下的 SQL 换到新表。
 
+> **勘误（实现时发现）：** 本节 Step 3 的 `dailyTrend` 查询多选了一列 `count(DISTINCT model_canonical) AS modelCount`，
+> 而本节自己的测试断言 `toEqual([{usageDate, tokensTotal, sessionsCount}])`。`better-sqlite3.all()` 返回所有被选中的列，
+> vitest 的 `toEqual` 不接受多余的键——照抄这段 SQL 会让本节自己的测试变红。`DashboardDailyTrendRow` 与 renderer 都不用它，实现时已删除该列。
+>
+> 同样在 `dailyTrend` 里，`sum(sessions_count)` 必须改成 `max(sessions_count)`：一个会话当天用了两个模型会占两行，求和就重复计数了。
+
 **Files:**
 - Modify: `Electron/src/main/dashboardRepository.ts`
 - Modify: `Electron/src/main/sessionsRepository.ts`
