@@ -147,20 +147,21 @@ public final class LocalAgentScanner {
         let relativePath = relativePath(for: file, rootURL: root.rootURL)
         let existing = try existingSourceFile(rootId: root.id, relativePath: relativePath)
 
-        // 大小 + mtime + 开头指纹都未变、上次已完整解析、且 usage_events 里确实已有该文件的
-        // 事件 → 跳过，不重读。指纹挡住"同大小同 mtime 的原地改写"这种 size/mtime 看不出的情况。
-        // 这里大小相等，所以取样窗口一致，直接比整串指纹即可（无需 oldPrefixIntact 那套重算）。
-        // `let existingFingerprint` 让缺指纹（旧行无指纹，或本次读不出）走 fail closed —— 重读而非跳过，
-        // 顺带在 v1→v2 升级时补上指纹。最后一条（有事件）也是升级关键：v1 把 source_files 全标成 ok，
-        // 但 v2 的 usage_events 还空着；只看 ok 会把每个文件都跳过，导致升级后一条事件都不落。
+        // 上次已完整解析（ok）、size 与 mtime 均未变、且已有 v2 的 parser_state → 跳过，不重读。
+        // parser_state 非 nil 兼作 v1→v2 升级判据：v1 行的 parser_state 是旧格式，解不成 v2 的
+        // ParserState（decodeParserState 返回 nil）→ 不跳过 → 重读补上 v2 事件与游标。
+        //
+        // 这里【不】做指纹校验，是刻意的取舍：指纹要打开文件读 4 KB 再哈希，而本进程常驻、每分钟
+        // 自动刷新，跳过路径上给每个文件都开一次（~2 万次/分钟）只为发现"什么都没变"，代价过高。
+        // 代价是：一次**同时**保持精确字节长度【和】mtime_ns 不变的原地改写会被误跳过、其数字将
+        // 一直陈旧到下次全量重扫。我们接受它——检测它要给每文件每次扫描加一次 open，而向 session
+        // 日志追加的东西没有一个会这么改写。改写风险真正致命的是【续读】路径（把新字节接到旧解析
+        // 状态与旧会话身份上），那条路只对"变大的"文件跑，指纹校验留在 shouldResume 里守住。
         if let existing,
            existing.parseStatus == "ok",
-           existing.lastParsedRunId != nil,
            existing.sizeBytes == metadata.sizeBytes,
            existing.mtimeNanoseconds == metadata.mtimeNanoseconds,
-           let existingFingerprint = existing.contentFingerprint,
-           existingFingerprint == metadata.contentFingerprint,
-           try writer.lastSourceOffset(sourceFileId: existing.id) != nil {
+           existing.parserState != nil {
             try markSourceFileSeen(sourceFileId: existing.id, runId: runId)
             return false
         }
@@ -327,6 +328,7 @@ public final class LocalAgentScanner {
         // step 3：单独一条语句推进游标并置 ok/partial。
         try finishSourceFile(
             fileId: fileId,
+            file: file,
             metadata: metadata,
             parseStatus: hasResidual ? "partial" : "ok",
             parseError: hasResidual ? "parse partial: incomplete line" : nil,
@@ -625,11 +627,11 @@ public final class LocalAgentScanner {
 
     /// I2 step 1：确保 source_files 行存在、拿到 id，并置为 pending。
     ///
-    /// 关键：对**已存在**的行【不】推进 size/mtime/resumeOffset/fingerprint/parser_state。
-    /// 事件写入（step 2）与游标推进（step 3）是两次独立提交；若在两者之间硬崩溃，行必须仍是
-    /// pending + 旧游标，下次扫描据此走全量重读（skip 要求 ok、shouldResume 要求 ok），
-    /// deleteEvents 清掉这次写了一半的事件，从头重来——不丢也不重。
-    /// 新行则以当前 size/mtime/fingerprint 落地（pending 同样保证崩溃后被重读），last_parsed_run_id 留空。
+    /// 崩溃安全靠的只有一件事：`parse_status='pending'`。skip 与 shouldResume 都要求 'ok'，
+    /// 所以只要还是 pending，下次扫描必定全量重读、deleteEvents 清掉写了一半的事件，从头重来。
+    /// 这里【碰不到】游标：`beginSourceFile` 根本不接受 parser_state 参数，resumeOffset 无从推进；
+    /// 新行 INSERT 的 size/mtime 是否"当前"也无所谓——pending 已经保证它会被重读。
+    /// content_fingerprint 留空，由 step 3 的 finishSourceFile 在文件读完后一并算好写入。
     private func beginSourceFile(
         rootId: Int64,
         relativePath: String,
@@ -642,9 +644,9 @@ public final class LocalAgentScanner {
             """
             INSERT INTO source_files(
                 scan_root_id, relative_path, canonical_path, file_type,
-                size_bytes, mtime_ns, inode, dev, content_fingerprint,
+                size_bytes, mtime_ns, inode, dev,
                 first_seen_run_id, last_seen_run_id, last_parsed_run_id, disappeared_at, parse_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'pending')
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'pending')
             ON CONFLICT(scan_root_id, relative_path) DO UPDATE SET
                 last_seen_run_id = excluded.last_seen_run_id,
                 disappeared_at = NULL,
@@ -660,7 +662,6 @@ public final class LocalAgentScanner {
                 .int(metadata.mtimeNanoseconds),
                 sqliteInt(metadata.inode),
                 sqliteInt(metadata.dev),
-                sqliteText(metadata.contentFingerprint),
                 .int(runId),
                 .int(runId)
             ]
@@ -672,8 +673,10 @@ public final class LocalAgentScanner {
     }
 
     /// I2 step 3：事件已提交后，单独一条语句推进游标（size/mtime/fingerprint/parser_state）并置 ok/partial。
+    /// 指纹在这里按需计算（文件刚被完整读过，多读 4 KB 是噪声），只有真正落地成 ok 的文件才有指纹。
     private func finishSourceFile(
         fileId: Int64,
+        file: URL,
         metadata: FileMetadata,
         parseStatus: String,
         parseError: String?,
@@ -700,7 +703,7 @@ public final class LocalAgentScanner {
                 .int(metadata.mtimeNanoseconds),
                 sqliteInt(metadata.inode),
                 sqliteInt(metadata.dev),
-                sqliteText(metadata.contentFingerprint),
+                sqliteText(contentFingerprint(for: file, sizeBytes: metadata.sizeBytes)),
                 sqliteText(encodeParserState(parserState)),
                 .text(parseStatus),
                 sqliteText(parseError),
@@ -734,7 +737,6 @@ public final class LocalAgentScanner {
                 mtime_ns,
                 inode,
                 dev,
-                content_fingerprint,
                 first_seen_run_id,
                 last_seen_run_id,
                 last_parsed_run_id,
@@ -742,7 +744,7 @@ public final class LocalAgentScanner {
                 parse_status,
                 parse_error,
                 parser_state
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
             ON CONFLICT(scan_root_id, relative_path) DO UPDATE SET
                 canonical_path = excluded.canonical_path,
                 file_type = excluded.file_type,
@@ -750,7 +752,6 @@ public final class LocalAgentScanner {
                 mtime_ns = excluded.mtime_ns,
                 inode = excluded.inode,
                 dev = excluded.dev,
-                content_fingerprint = excluded.content_fingerprint,
                 last_seen_run_id = excluded.last_seen_run_id,
                 last_parsed_run_id = excluded.last_parsed_run_id,
                 disappeared_at = NULL,
@@ -768,7 +769,6 @@ public final class LocalAgentScanner {
                 .int(metadata.mtimeNanoseconds),
                 sqliteInt(metadata.inode),
                 sqliteInt(metadata.dev),
-                sqliteText(metadata.contentFingerprint),
                 .int(runId),
                 .int(runId),
                 parsed ? .int(runId) : .null,
@@ -805,6 +805,9 @@ public final class LocalAgentScanner {
         return String(decoding: data, as: UTF8.self)
     }
 
+    /// 纯 stat：只取 size/mtime/inode/dev，绝不打开文件。指纹是 I/O 不是属性，不放这里——
+    /// 否则常驻扫描每分钟会给每个文件平白开一次。指纹只在真正需要它的 shouldResume / finishSourceFile
+    /// 里按需计算。
     private func fileMetadata(for url: URL) throws -> FileMetadata {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         let sizeBytes = (attributes[.size] as? NSNumber)?.int64Value ?? 0
@@ -814,8 +817,7 @@ public final class LocalAgentScanner {
             sizeBytes: sizeBytes,
             mtimeNanoseconds: Int64((modifiedAt.timeIntervalSince1970 * 1_000_000_000).rounded()),
             inode: (attributes[.systemFileNumber] as? NSNumber)?.int64Value,
-            dev: (attributes[.systemNumber] as? NSNumber)?.int64Value,
-            contentFingerprint: contentFingerprint(for: url, sizeBytes: sizeBytes)
+            dev: (attributes[.systemNumber] as? NSNumber)?.int64Value
         )
     }
 
@@ -961,5 +963,4 @@ private struct FileMetadata {
     let mtimeNanoseconds: Int64
     let inode: Int64?
     let dev: Int64?
-    let contentFingerprint: String?
 }
