@@ -12,6 +12,12 @@ public final class ClaudeCodeUsageEventParser: UsageEventParser {
 
     public init(resuming state: ParserState?) {
         eventSeq = state?.lastEventSeq ?? 0
+        // 续读的追加片段里若缺 sessionId / cwd / version，从 state 恢复，避免丢会话身份。
+        sessionKey = state?.sessionKey
+        projectPath = state?.projectPath
+        cliVersion = state?.cliVersion
+        startedAt = state?.startedAt
+        updatedAt = state?.updatedAt
     }
 
     public func consume(_ line: JSONLLine) {
@@ -78,7 +84,18 @@ public final class ClaudeCodeUsageEventParser: UsageEventParser {
             events: events,
             rawMeta: ["source": "claude-code"]
         )
-        return (session, ParserState(lastEventSeq: eventSeq, lastCumulative: nil))
+        return (
+            session,
+            ParserState(
+                lastEventSeq: eventSeq,
+                lastCumulative: nil,
+                sessionKey: sessionKey,
+                projectPath: projectPath,
+                cliVersion: cliVersion,
+                startedAt: startedAt,
+                updatedAt: updatedAt
+            )
+        )
     }
 
     /// Claude 新版把缓存写入拆成 5 分钟 / 1 小时两档，两档单价不同。

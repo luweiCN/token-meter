@@ -75,7 +75,7 @@ final class PrivacyIndexingTests: XCTestCase {
         try await LocalAgentScanner(database: database).scanRoot(id: 1)
 
         let persistedText = try localAgentTextDump(database)
-        XCTAssertTrue(persistedText.contains("lastOffset"), "privacy text dump must include source_files.parser_state")
+        XCTAssertTrue(persistedText.contains("lastEventSeq"), "privacy text dump must include source_files.parser_state")
         for forbidden in ["SECRET_PROMPT", "SECRET_TOOL_OUTPUT", "SECRET_REASONING", "api_key", "sk-should-not-persist"] {
             XCTAssertFalse(persistedText.contains(forbidden), "Persisted DB text unexpectedly contained \(forbidden)")
         }
@@ -126,6 +126,10 @@ private func localAgentTextDump(_ database: SQLiteDatabase) throws -> String {
           UNION ALL SELECT source_revision FROM agent_sessions
           UNION ALL SELECT raw_meta_json FROM agent_sessions
           UNION ALL SELECT parser_state FROM source_files
+          UNION ALL SELECT parse_error FROM source_files
+          UNION ALL SELECT model_name FROM usage_events
+          UNION ALL SELECT model_canonical FROM usage_events
+          UNION ALL SELECT dedupe_key FROM usage_events
           UNION ALL SELECT project_key FROM projects
           UNION ALL SELECT canonical_path FROM projects
           UNION ALL SELECT display_name FROM projects

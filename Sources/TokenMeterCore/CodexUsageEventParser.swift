@@ -14,6 +14,13 @@ public final class CodexUsageEventParser: UsageEventParser {
     public init(resuming state: ParserState?) {
         eventSeq = state?.lastEventSeq ?? 0
         cumulative = state?.lastCumulative
+        // session_meta / turn_context 只在文件开头出现一次；续读的追加片段里没有它们，
+        // 必须从 state 恢复会话身份，否则 finish() 会缺 sessionKey、事件也会丢掉 model。
+        sessionKey = state?.sessionKey
+        projectPath = state?.projectPath
+        modelName = state?.modelName
+        startedAt = state?.startedAt
+        updatedAt = state?.updatedAt
     }
 
     public func consume(_ line: JSONLLine) {
@@ -98,7 +105,18 @@ public final class CodexUsageEventParser: UsageEventParser {
             events: events,
             rawMeta: ["source": "codex"]
         )
-        return (session, ParserState(lastEventSeq: eventSeq, lastCumulative: cumulative))
+        return (
+            session,
+            ParserState(
+                lastEventSeq: eventSeq,
+                lastCumulative: cumulative,
+                sessionKey: sessionKey,
+                projectPath: projectPath,
+                modelName: modelName,
+                startedAt: startedAt,
+                updatedAt: updatedAt
+            )
+        )
     }
 
     private func timestamp(in object: [String: Any]) -> Date? {

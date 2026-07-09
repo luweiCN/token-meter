@@ -2,12 +2,17 @@ import Foundation
 
 public final class LocalAgentScanner {
     private let database: SQLiteDatabase
-    private let repository: LocalAgentUsageRepository
+    private let writer: UsageEventWriter
+    private let rollupBuilder: RollupBuilder
     private let isoFormatter = ISO8601DateFormatter()
 
     public init(database: SQLiteDatabase) {
         self.database = database
-        self.repository = LocalAgentUsageRepository(database: database)
+        // 定价来自随包快照；缺失时退化为空表（成本按 unknown 记，仍能正确落 usage_events）。
+        let snapshot = (try? PricingSnapshot.loadBundled())
+            ?? PricingSnapshot(snapshotVersion: "unavailable", source: "builtin", models: [:])
+        self.writer = UsageEventWriter(database: database, costCalculator: CostCalculator(snapshot: snapshot))
+        self.rollupBuilder = RollupBuilder(database: database)
     }
 
     public static func seedDefaultScanRoots(
@@ -72,6 +77,10 @@ public final class LocalAgentScanner {
             )
             throw error
         }
+
+        // 两张汇总表是 usage_events 的纯函数投影，扫完整体重建即可。全量重建是幂等的，
+        // 多根扫描时每根扫完各重建一次会收敛到同一结果（Task 15 再把它提到"整轮一次"）。
+        try rollupBuilder.rebuildAll()
     }
 
     private func loadEnabledRoot(id rootId: Int64) throws -> ScanRoot? {
@@ -107,7 +116,13 @@ public final class LocalAgentScanner {
         for file in try jsonlFiles(under: root.rootURL) {
             progress.filesSeen += 1
             do {
-                if try scanJSONLFile(file, root: root, runId: runId, progress: progress) {
+                // 每个文件包一层 autoreleasepool：JSONSerialization / FileManager 返回的是
+                // autoreleased 的 Foundation 对象，一个大 root（Codex 近 2 万文件、单文件 25 万行）
+                // 若不逐文件排干，临时对象会堆到数 GB。
+                let hadIssue = try autoreleasepool {
+                    try scanJSONLFile(file, root: root, runId: runId, progress: progress)
+                }
+                if hadIssue {
                     failureCount += 1
                 }
             } catch {
@@ -120,112 +135,65 @@ public final class LocalAgentScanner {
         }
     }
 
+    /// 返回 true 表示该文件解析有问题（残行/失败），调用方据此把整根标记为 partial。
     private func scanJSONLFile(_ file: URL, root: ScanRoot, runId: Int64, progress: ScanProgress) throws -> Bool {
         let metadata = try fileMetadata(for: file)
         let relativePath = relativePath(for: file, rootURL: root.rootURL)
         let existing = try existingSourceFile(rootId: root.id, relativePath: relativePath)
 
+        // 指纹未变、上次已完整解析、且 usage_events 里确实已有该文件的事件 → 跳过，不重读。
+        // 最后一条是 v1→v2 升级的关键：v1 把 source_files 全标成了 ok，但 v2 的 usage_events
+        // 还是空的；只看 ok 会把每个文件都跳过，导致升级后一条事件都不落。
         if let existing,
            existing.parseStatus == "ok",
            existing.lastParsedRunId != nil,
            existing.sizeBytes == metadata.sizeBytes,
            existing.mtimeNanoseconds == metadata.mtimeNanoseconds,
-           existing.parserState?.lastOffset == metadata.sizeBytes {
+           try writer.lastSourceOffset(sourceFileId: existing.id) != nil {
             try markSourceFileSeen(sourceFileId: existing.id, runId: runId)
             return false
         }
 
-        let previousState = existing?.parserState
-        let startOffset = jsonlStartOffset(existing: existing, metadata: metadata, previousState: previousState)
         progress.filesChanged += 1
 
+        // 续读游标按【文件】取：一个 session 横跨父 jsonl 与多个 subagent jsonl，
+        // 各文件偏移互不相干，绝不能按 session_id 取。只有存在旧行时才可能续读，
+        // 此时 existing.id 一定有——新文件没有旧事件，续读无从谈起。
+        // +1 让 reader 从"上次最后一条事件那一行"的中途开始——那半行解析不出对象、被 parser
+        // 跳过，从而既不重复计已记事件，又能读到其后追加的新行。
+        let planResume = shouldResume(existing: existing, metadata: metadata)
+        let startOffset: Int64
+        if planResume, let existingId = existing?.id {
+            startOffset = (try writer.lastSourceOffset(sourceFileId: existingId)).map { $0 + 1 } ?? 0
+        } else {
+            startOffset = 0
+        }
+        // 只有真正续读（startOffset>0）才把上次的 parser_state 传给 parser；否则全量重读、状态清零。
+        let resumeState = startOffset > 0 ? existing?.parserState : nil
+        if startOffset == 0, let existingId = existing?.id {
+            // 全量重读：清掉这个文件旧的事件，避免"改小/改写"后残留过时行。
+            try deleteEvents(sourceFileId: existingId)
+        }
+
+        let parser = try makeParser(for: root.kind, resuming: resumeState)
+        var sawLine = false
+        // Claude 有大量非 session 的辅助文件（skill 注入、hook 日志），它们没有 sessionId 也没有 usage。
+        // 用便宜的子串探测区分"辅助文件"(跳过)与"缺 sessionId 的真会话文件"(失败)。
+        var sawClaudeUsage = false
+
+        let readResult: JSONLReadResult
         do {
-            let streamParser = try streamingParser(for: root.kind)
-            var deliveredLines = 0
-            var malformedLineCount = 0
-            var hasClaudeSessionIdentifier = false
-            var hasClaudeUsageRecord = false
-            let readResult = try JSONLStreamReader.readLines(from: file, startingAt: startOffset) { line in
-                if let object = JSONDictionary.object(from: line.text) {
-                    if root.kind == .claudeJSONL {
-                        hasClaudeSessionIdentifier = hasClaudeSessionIdentifier || self.hasAnyString(in: object, keys: ["sessionId", "session_id", "leafUuid", "leaf_uuid"])
-                        if let message = JSONDictionary.dictionary(object, "message"),
-                           JSONDictionary.dictionary(message, "usage") != nil {
-                            hasClaudeUsageRecord = true
-                        }
-                    }
-                } else {
-                    malformedLineCount += 1
+            readResult = try JSONLStreamReader.readLines(
+                from: file,
+                startingAt: startOffset,
+                markers: markers(for: root.kind)
+            ) { line in
+                sawLine = true
+                if root.kind == .claudeJSONL, !sawClaudeUsage, line.text.contains("\"usage\"") {
+                    sawClaudeUsage = true
                 }
-                deliveredLines += 1
-                streamParser.consume(line)
+                parser.consume(line)
             }
-            progress.bytesRead += max(0, readResult.nextOffset - startOffset)
-            if deliveredLines == 0, readResult.residual != nil {
-                throw LocalAgentParserError.incompleteLine
-            }
-            let hasResidualLine = readResult.residual != nil
-            let residualParseError = hasResidualLine ? "parse partial: incomplete line" : nil
-            let parseError = malformedLineCount > 0 ? "parse partial: malformed JSONL lines" : residualParseError
-
-            if root.kind == .claudeJSONL,
-               deliveredLines > 0,
-               parseError == nil,
-               !hasClaudeSessionIdentifier,
-               !hasClaudeUsageRecord {
-                _ = try upsertSourceFile(
-                    rootId: root.id,
-                    relativePath: relativePath,
-                    canonicalPath: metadata.canonicalPath,
-                    fileType: "jsonl_session",
-                    metadata: metadata,
-                    runId: runId,
-                    parsed: true,
-                    parseStatus: "ok",
-                    parseError: nil,
-                    parserState: jsonlParserState(previous: nil, parsed: nil, nextOffset: readResult.nextOffset)
-                )
-                return false
-            }
-            let didResume = startOffset > 0
-            let previousStateForParse = didResume ? previousState : nil
-            let parsedSession: ParsedAgentSession?
-            if deliveredLines == 0 {
-                parsedSession = nil
-            } else {
-                let parsed = try streamParser.finish(sourceURL: file)
-                parsedSession = merge(
-                    parsed,
-                    with: previousStateForParse,
-                    sourceKind: root.kind,
-                    didResume: didResume,
-                    codexUsageIsCumulative: streamParser.latestTokenUsageIsCumulative
-                )
-            }
-
-            let nextState = jsonlParserState(
-                previous: previousStateForParse,
-                parsed: parsedSession,
-                nextOffset: readResult.nextOffset
-            )
-            let fileId = try upsertSourceFile(
-                rootId: root.id,
-                relativePath: relativePath,
-                canonicalPath: metadata.canonicalPath,
-                fileType: "jsonl_session",
-                metadata: metadata,
-                runId: runId,
-                parsed: true,
-                parseStatus: parseError == nil ? "ok" : "partial",
-                parseError: parseError,
-                parserState: nextState
-            )
-
-            if let parsedSession {
-                try repository.upsert(parsedSession, scanRootId: root.id, sourceFileId: fileId, runId: runId)
-            }
-
-            return parseError != nil
         } catch {
             _ = try? upsertSourceFile(
                 rootId: root.id,
@@ -237,10 +205,118 @@ public final class LocalAgentScanner {
                 parsed: false,
                 parseStatus: "failed",
                 parseError: sanitizedError(error),
-                parserState: previousState
+                parserState: existing?.parserState
             )
             throw error
         }
+
+        progress.bytesRead += max(0, readResult.nextOffset - startOffset)
+
+        // 整段读取里一条完整行都没有（reader 的 nextOffset 没前进）却留下了残行：
+        // 整个文件就是一条没有换行收尾的不完整行，视为失败（与 v1 的 incompleteLine 一致）。
+        // 注意用 nextOffset 而非 sawLine：Codex 的 marker 预筛也会让 sawLine 为 false，
+        // 但那种情况 nextOffset 已经越过了那些被过滤的完整行。
+        if readResult.nextOffset == startOffset, readResult.residual != nil {
+            _ = try? upsertSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: metadata.canonicalPath,
+                fileType: "jsonl_session",
+                metadata: metadata,
+                runId: runId,
+                parsed: false,
+                parseStatus: "failed",
+                parseError: sanitizedError(LocalAgentParserError.incompleteLine),
+                parserState: existing?.parserState
+            )
+            throw LocalAgentParserError.incompleteLine
+        }
+
+        // 没有任何行被投递（空文件，或 Codex 下整文件无 marker 行）：记为 ok，不产生 session。
+        guard sawLine else {
+            _ = try upsertSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: metadata.canonicalPath,
+                fileType: "jsonl_session",
+                metadata: metadata,
+                runId: runId,
+                parsed: true,
+                parseStatus: "ok",
+                parseError: nil,
+                parserState: resumeState ?? ParserState()
+            )
+            return false
+        }
+
+        let outcome: (session: ParsedSession, state: ParserState)
+        do {
+            outcome = try parser.finish(sourceURL: file)
+        } catch LocalAgentParserError.missingSessionKey where root.kind == .claudeJSONL && !sawClaudeUsage {
+            // Claude 辅助文件：无 sessionId 且无 usage，不是会话——记 ok 并跳过，不把整根拖成 partial。
+            _ = try upsertSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: metadata.canonicalPath,
+                fileType: "jsonl_session",
+                metadata: metadata,
+                runId: runId,
+                parsed: true,
+                parseStatus: "ok",
+                parseError: nil,
+                parserState: resumeState ?? ParserState()
+            )
+            return false
+        } catch {
+            _ = try? upsertSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: metadata.canonicalPath,
+                fileType: "jsonl_session",
+                metadata: metadata,
+                runId: runId,
+                parsed: false,
+                parseStatus: "failed",
+                parseError: sanitizedError(error),
+                parserState: existing?.parserState
+            )
+            throw error
+        }
+
+        // 残行（最后一行没有换行符收尾）：解析剩余事件仍写入，但标 partial，让整根变 partial。
+        let hasResidual = readResult.residual != nil
+        // 先落 source_files（拿到 id，满足 usage_events 的外键），再写事件。
+        let fileId = try upsertSourceFile(
+            rootId: root.id,
+            relativePath: relativePath,
+            canonicalPath: metadata.canonicalPath,
+            fileType: "jsonl_session",
+            metadata: metadata,
+            runId: runId,
+            parsed: true,
+            parseStatus: hasResidual ? "partial" : "ok",
+            parseError: hasResidual ? "parse partial: incomplete line" : nil,
+            parserState: outcome.state
+        )
+
+        do {
+            try writer.write(outcome.session, scanRootId: root.id, sourceFileId: fileId, runId: runId)
+        } catch {
+            _ = try? upsertSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: metadata.canonicalPath,
+                fileType: "jsonl_session",
+                metadata: metadata,
+                runId: runId,
+                parsed: false,
+                parseStatus: "failed",
+                parseError: sanitizedError(error),
+                parserState: existing?.parserState
+            )
+            throw error
+        }
+        return hasResidual
     }
 
     private func scanOpenCodeRoot(_ root: ScanRoot, runId: Int64, progress: ScanProgress) throws {
@@ -258,10 +334,11 @@ public final class LocalAgentScanner {
         do {
             let sourceDatabase = try SQLiteDatabase(path: databaseURL.path)
             defer { try? sourceDatabase.close() }
-            let sessions = try OpenCodeSessionAdapter(sourceDatabase: sourceDatabase)
+            let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: sourceDatabase)
                 .changedSessions(after: root.lastSuccessfulCursor)
 
-            let fileId = try upsertSourceFile(
+            // .db 本身：只做指纹/解析状态跟踪，事件挂在每个 session 各自的 source_file 上。
+            _ = try upsertSourceFile(
                 rootId: root.id,
                 relativePath: relativePath,
                 canonicalPath: metadata.canonicalPath,
@@ -280,8 +357,18 @@ public final class LocalAgentScanner {
                 progress.bytesRead = metadata.sizeBytes
             }
 
+            // 每个 opencode session 各占一个 source_file：event_seq 每 session 从 1 起，
+            // UNIQUE(source_file_id, event_seq) 要求不同 session 落在不同 source_file 上才不撞。
             for session in sessions {
-                try repository.upsert(session, scanRootId: root.id, sourceFileId: fileId, runId: runId)
+                let sessionFileId = try upsertOpenCodeSessionFile(
+                    rootId: root.id,
+                    dbRelativePath: relativePath,
+                    dbCanonicalPath: metadata.canonicalPath,
+                    sessionKey: session.sessionKey,
+                    metadata: metadata,
+                    runId: runId
+                )
+                try writer.write(session, scanRootId: root.id, sourceFileId: sessionFileId, runId: runId)
             }
 
             progress.cursorAfter = latestCursor(in: sessions) ?? root.lastSuccessfulCursor
@@ -329,17 +416,46 @@ public final class LocalAgentScanner {
         return files.sorted { $0.path < $1.path }
     }
 
-    private func streamingParser(for kind: SourceKind) throws -> LocalAgentSessionStreamingParser {
+    private func makeParser(for kind: SourceKind, resuming state: ParserState?) throws -> UsageEventParser {
         switch kind {
         case .claudeJSONL:
-            ClaudeCodeStreamingParser()
+            return ClaudeCodeUsageEventParser(resuming: state)
         case .codexJSONL:
-            CodexStreamingParser()
+            return CodexUsageEventParser(resuming: state)
         case .ompJSONL:
-            OmpStreamingParser()
+            return OmpUsageEventParser(resuming: state)
         case .opencodeSQLite:
             throw LocalAgentParserError.unsupportedFormat
         }
+    }
+
+    /// 只有 Codex 传 marker。它 3+ GB 的 session 绝大多数是 function_call / function_call_output
+    /// 行，一条都不含 token_count / session_meta / turn_context，按原始字节预筛能几乎白跳过它们。
+    /// Claude 与 omp 把 sessionId / cwd / version 散落在多种行类型里，固定 marker 过滤会漏掉这些
+    /// 元数据，所以返回 nil（不过滤）。
+    private func markers(for kind: SourceKind) -> [String]? {
+        switch kind {
+        case .codexJSONL:
+            return ["token_count", "session_meta", "turn_context"]
+        case .claudeJSONL, .ompJSONL, .opencodeSQLite:
+            return nil
+        }
+    }
+
+    /// 续读条件：上次 ok、文件变大、且 inode/dev 未变（同一个物理文件被追加，而非改写）。
+    private func shouldResume(existing: ExistingSourceFile?, metadata: FileMetadata) -> Bool {
+        guard let existing,
+              existing.parseStatus == "ok",
+              metadata.sizeBytes > existing.sizeBytes,
+              existing.inode == metadata.inode,
+              existing.dev == metadata.dev else {
+            return false
+        }
+        return true
+    }
+
+    private func deleteEvents(sourceFileId: Int64) throws {
+        try database.execute("DELETE FROM usage_events WHERE source_file_id = ?", [.int(sourceFileId)])
     }
 
     private func startRun(rootId: Int64, runKind: String, cursorBefore: String?) throws -> Int64 {
@@ -461,6 +577,29 @@ public final class LocalAgentScanner {
         )
     }
 
+    private func upsertOpenCodeSessionFile(
+        rootId: Int64,
+        dbRelativePath: String,
+        dbCanonicalPath: String,
+        sessionKey: String,
+        metadata: FileMetadata,
+        runId: Int64
+    ) throws -> Int64 {
+        try upsertSourceFile(
+            rootId: rootId,
+            relativePath: "\(dbRelativePath)#\(sessionKey)",
+            canonicalPath: "\(dbCanonicalPath)#\(sessionKey)",
+            fileType: "sqlite_db",
+            metadata: metadata,
+            runId: runId,
+            parsed: true,
+            parseStatus: "ok",
+            parseError: nil,
+            parserState: nil
+        )
+    }
+
+    @discardableResult
     private func upsertSourceFile(
         rootId: Int64,
         relativePath: String,
@@ -471,7 +610,7 @@ public final class LocalAgentScanner {
         parsed: Bool,
         parseStatus: String,
         parseError: String?,
-        parserState: JSONLParserState?
+        parserState: ParserState?
     ) throws -> Int64 {
         try database.execute(
             """
@@ -534,120 +673,12 @@ public final class LocalAgentScanner {
         )[0].int("id") ?? 0
     }
 
-    private func jsonlStartOffset(existing: ExistingSourceFile?, metadata: FileMetadata, previousState: JSONLParserState?) -> Int64 {
-        guard let existing,
-              existing.parseStatus == "ok",
-              let previousState,
-              previousState.lastOffset == existing.sizeBytes,
-              metadata.sizeBytes > existing.sizeBytes,
-              existing.inode == metadata.inode,
-              existing.dev == metadata.dev else {
-            return 0
-        }
-        return previousState.lastOffset
-    }
-
-    private func jsonlParserState(previous: JSONLParserState?, parsed: ParsedAgentSession?, nextOffset: Int64) -> JSONLParserState {
-        JSONLParserState(
-            lastOffset: nextOffset,
-            sessionKey: parsed?.sessionKey ?? previous?.sessionKey,
-            projectPath: parsed?.projectPath ?? previous?.projectPath,
-            modelName: retainedModelName(parsed: parsed, previous: previous),
-            cliVersion: parsed?.cliVersion ?? previous?.cliVersion,
-            startedAt: parsed?.startedAt ?? previous?.startedAt,
-            updatedAt: parsed?.updatedAt ?? previous?.updatedAt,
-            lastUsageSeq: parsed?.usage == nil ? (previous?.lastUsageSeq ?? 0) : parsed?.usageSequence ?? previous?.lastUsageSeq ?? 0,
-            lastUsage: parsed?.usage ?? previous?.lastUsage
-        )
-    }
-
-    private func merge(
-        _ parsed: ParsedAgentSession,
-        with state: JSONLParserState?,
-        sourceKind: SourceKind,
-        didResume: Bool,
-        codexUsageIsCumulative: Bool
-    ) -> ParsedAgentSession {
-        guard didResume, let state else { return parsed }
-        let usage = mergedUsage(parsed.usage, previous: state.lastUsage, sourceKind: sourceKind, codexUsageIsCumulative: codexUsageIsCumulative)
-        let usageSequence = usage == nil ? state.lastUsageSeq : state.lastUsageSeq + parsed.usageSequence
-        return ParsedAgentSession(
-            sourceKind: parsed.sourceKind,
-            sessionKey: state.sessionKey ?? parsed.sessionKey,
-            projectPath: parsed.projectPath ?? state.projectPath,
-            modelName: retainedModelName(parsed: parsed, previous: state),
-            cliVersion: parsed.cliVersion ?? state.cliVersion,
-            startedAt: parsed.startedAt ?? state.startedAt,
-            updatedAt: parsed.updatedAt ?? state.updatedAt,
-            usage: usage,
-            usageSequence: usageSequence,
-            sourceOffset: parsed.sourceOffset,
-            rawMeta: parsed.rawMeta
-        )
-    }
-    private func retainedModelName(parsed: ParsedAgentSession?, previous: JSONLParserState?) -> String? {
-        guard let parsed else { return previous?.modelName }
-        guard let parsedModel = parsed.modelName else { return previous?.modelName }
-        if parsed.sourceKind == .codexJSONL, parsedModel == "gpt-5" {
-            return previous?.modelName ?? parsedModel
-        }
-        return parsedModel
-    }
-
-
-    private func mergedUsage(
-        _ usage: ParsedSessionUsage?,
-        previous: ParsedSessionUsage?,
-        sourceKind: SourceKind,
-        codexUsageIsCumulative: Bool
-    ) -> ParsedSessionUsage? {
-        guard let usage else { return nil }
-        if codexUsageIsCumulative, sourceKind == .codexJSONL, usage == previous { return nil }
-        guard sourceKind == .claudeJSONL || sourceKind == .ompJSONL, let previous else { return usage }
-        return ParsedSessionUsage(
-            inputTokens: add(previous.inputTokens, usage.inputTokens),
-            outputTokens: add(previous.outputTokens, usage.outputTokens),
-            reasoningTokens: add(previous.reasoningTokens, usage.reasoningTokens),
-            cacheReadTokens: add(previous.cacheReadTokens, usage.cacheReadTokens),
-            cacheWriteTokens: add(previous.cacheWriteTokens, usage.cacheWriteTokens),
-            costUSDMicros: add(previous.costUSDMicros, usage.costUSDMicros)
-        )
-    }
-
-    private func codexUsageIsCumulative(in lines: [JSONLLine]) -> Bool {
-        var latestTokenCountIsCumulative = false
-        for line in lines {
-            guard let object = JSONDictionary.object(from: line.text),
-                  JSONDictionary.string(object, "type") == "event_msg",
-                  let payload = JSONDictionary.dictionary(object, "payload"),
-                  JSONDictionary.string(payload, "type") == "token_count",
-                  let info = JSONDictionary.dictionary(payload, "info") else {
-                continue
-            }
-            if JSONDictionary.dictionary(info, "total_token_usage") != nil {
-                latestTokenCountIsCumulative = true
-            } else if JSONDictionary.dictionary(info, "last_token_usage") != nil {
-                latestTokenCountIsCumulative = false
-            }
-        }
-        return latestTokenCountIsCumulative
-    }
-
-    private func hasAnyString(in object: [String: Any], keys: [String]) -> Bool {
-        keys.contains { JSONDictionary.string(object, $0) != nil }
-    }
-
-    private func add(_ lhs: Int64?, _ rhs: Int64?) -> Int64? {
-        guard lhs != nil || rhs != nil else { return nil }
-        return (lhs ?? 0) + (rhs ?? 0)
-    }
-
-    private func decodeParserState(_ json: String?) -> JSONLParserState? {
+    private func decodeParserState(_ json: String?) -> ParserState? {
         guard let json, let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(JSONLParserState.self, from: data)
+        return try? JSONDecoder().decode(ParserState.self, from: data)
     }
 
-    private func encodeParserState(_ state: JSONLParserState?) -> String? {
+    private func encodeParserState(_ state: ParserState?) -> String? {
         guard let state,
               let data = try? JSONEncoder().encode(state) else { return nil }
         return String(decoding: data, as: UTF8.self)
@@ -681,7 +712,7 @@ public final class LocalAgentScanner {
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && !isDirectory.boolValue
     }
 
-    private func latestCursor(in sessions: [ParsedAgentSession]) -> String? {
+    private func latestCursor(in sessions: [ParsedSession]) -> String? {
         guard let latestDate = sessions.compactMap({ $0.updatedAt ?? $0.startedAt }).max() else { return nil }
         return preciseCursor(from: latestDate)
     }
@@ -748,28 +779,15 @@ private final class ScanProgress {
     }
 }
 
-
 private struct ExistingSourceFile {
     let id: Int64
     let sizeBytes: Int64
     let mtimeNanoseconds: Int64
     let inode: Int64?
     let dev: Int64?
-    let parserState: JSONLParserState?
+    let parserState: ParserState?
     let parseStatus: String
     let lastParsedRunId: Int64?
-}
-
-private struct JSONLParserState: Codable {
-    let lastOffset: Int64
-    let sessionKey: String?
-    let projectPath: String?
-    let modelName: String?
-    let cliVersion: String?
-    let startedAt: Date?
-    let updatedAt: Date?
-    let lastUsageSeq: Int
-    let lastUsage: ParsedSessionUsage?
 }
 
 private struct FileMetadata {

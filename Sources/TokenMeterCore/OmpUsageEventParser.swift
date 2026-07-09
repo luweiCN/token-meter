@@ -12,6 +12,12 @@ public final class OmpUsageEventParser: UsageEventParser {
 
     public init(resuming state: ParserState?) {
         eventSeq = state?.lastEventSeq ?? 0
+        // session / model_change 行只在文件开头出现；续读片段没有它们，从 state 恢复会话身份。
+        sessionKey = state?.sessionKey
+        projectPath = state?.projectPath
+        modelName = state?.modelName
+        startedAt = state?.startedAt
+        updatedAt = state?.updatedAt
     }
 
     public func consume(_ line: JSONLLine) {
@@ -95,7 +101,18 @@ public final class OmpUsageEventParser: UsageEventParser {
             events: events,
             rawMeta: ["source": "omp"]
         )
-        return (session, ParserState(lastEventSeq: eventSeq, lastCumulative: nil))
+        return (
+            session,
+            ParserState(
+                lastEventSeq: eventSeq,
+                lastCumulative: nil,
+                sessionKey: resolvedSessionKey,
+                projectPath: projectPath,
+                modelName: modelName,
+                startedAt: startedAt,
+                updatedAt: updatedAt
+            )
+        )
     }
 
     /// cost == 0 表示 omp 不知道单价（套餐制），交给 CostCalculator 自算。

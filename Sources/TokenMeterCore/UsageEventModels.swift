@@ -121,12 +121,38 @@ public struct CumulativeTokenTotals: Equatable, Codable {
 }
 
 /// 持久化到 `source_files.parser_state`，用于单文件断点续读。
+///
+/// 除了续读所需的 `lastEventSeq` / `lastCumulative`，还必须带上会话身份
+/// （`sessionKey` 等）：Codex 的 `session_meta` 只在文件开头出现一次，续读时读到的
+/// 追加片段里没有它，若不把 `sessionKey` 存进来，`finish()` 会因缺少 session key 抛错，
+/// 且 `projectPath` / `modelName` 也会在续读写库时被 NULL 覆盖掉。
 public struct ParserState: Equatable, Codable {
     public var lastEventSeq: Int
     public var lastCumulative: CumulativeTokenTotals?
+    public var sessionKey: String?
+    public var projectPath: String?
+    public var modelName: String?
+    public var cliVersion: String?
+    public var startedAt: Date?
+    public var updatedAt: Date?
 
-    public init(lastEventSeq: Int = 0, lastCumulative: CumulativeTokenTotals? = nil) {
+    public init(
+        lastEventSeq: Int = 0,
+        lastCumulative: CumulativeTokenTotals? = nil,
+        sessionKey: String? = nil,
+        projectPath: String? = nil,
+        modelName: String? = nil,
+        cliVersion: String? = nil,
+        startedAt: Date? = nil,
+        updatedAt: Date? = nil
+    ) {
         self.lastEventSeq = lastEventSeq
         self.lastCumulative = lastCumulative
+        self.sessionKey = sessionKey
+        self.projectPath = projectPath
+        self.modelName = modelName
+        self.cliVersion = cliVersion
+        self.startedAt = startedAt
+        self.updatedAt = updatedAt
     }
 }
