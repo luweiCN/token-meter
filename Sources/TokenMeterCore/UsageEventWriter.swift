@@ -158,6 +158,11 @@ public final class UsageEventWriter {
 
         let (costMicros, costSource) = costCalculator.cost(for: event)
 
+        // ON CONFLICT(source_file_id, event_seq) DO UPDATE 提供的是**幂等重放**，不是防重复计数：
+        // 崩溃恢复（见 LocalAgentScanner 的 I2）会从头全量重读同一文件，重新写出相同的
+        // (source_file_id, event_seq)+相同取值，DO UPDATE 让这次重写成为无副作用的覆盖
+        // （DO NOTHING 也可；抛错则会把正常恢复变成硬失败）。防重复计数靠的是 resumeOffset
+        // 的正确与 parser_state 同步推进——被错误续读重读的行会拿到新 seq，绕过本约束。
         try database.execute(
             """
             INSERT INTO usage_events(

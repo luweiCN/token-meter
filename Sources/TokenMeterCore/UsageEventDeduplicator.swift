@@ -11,8 +11,12 @@ public enum UsageEventDeduplicator {
     ///   本机 5,492 个 session 文件、334,941 行中，零个 messageId 出现在多个
     ///   requestId 下。保留它是因为重复计费是静默错误，而代价只有几行。
     ///
-    /// 没有 `dedupeKey` 的事件（如 Codex）原样保留，它们的唯一性由数据库的
-    /// `UNIQUE(source_file_id, event_seq)` 保证。
+    /// 没有 `dedupeKey` 的事件（如 Codex）原样放行，不在这里去重。
+    ///
+    /// 注意：`UNIQUE(source_file_id, event_seq)` **不是**防重复计数的机制。它只保证同一个
+    /// (file, seq) 至多一行——让"同一行被原样重写"变幂等（崩溃恢复时的重放）。但被错误续读
+    /// 而重读的行会拿到**新的** `event_seq`，直接绕过这个约束（见 scanner 的 whitespace 测试）。
+    /// 真正防重复计数的是 `resumeOffset` 的正确性与 `parser_state` 的同步推进（见 LocalAgentScanner）。
     ///
     /// 输出按 `eventSeq` 升序，保证下游写入顺序确定。
     public static func deduplicate(_ events: [UsageEvent]) -> [UsageEvent] {
@@ -38,7 +42,7 @@ public enum UsageEventDeduplicator {
             guard let messageId = event.messageId else {
                 // dedupeKey 非 nil 蕴含 messageId 非 nil，今天到不了这里。
                 // 但若 dedupeKey 的定义将来放宽，`continue` 会静默丢掉一条真实用量。
-                // 宁可放行一条重复（数据库还有 UNIQUE(source_file_id, event_seq) 兜底），
+                // 宁可放行（这些事件在文件内各有自己的 event_seq，不会撞库），
                 // 也不能凭空少算 token。
                 passthrough.append(event)
                 continue
