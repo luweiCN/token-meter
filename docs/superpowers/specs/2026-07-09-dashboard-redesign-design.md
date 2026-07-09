@@ -183,11 +183,11 @@ public protocol LocalAgentSessionParser {
 | Claude Code | 每条消息独立 delta | `message.usage.{input_tokens, output_tokens, cache_read_input_tokens}` + `cache_creation.{ephemeral_5m_input_tokens, ephemeral_1h_input_tokens}` |
 | Codex | **累计值**，需相邻差分 | `payload.info.last_token_usage`（增量，优先）或对 `total_token_usage` 做差 |
 | omp | 每条消息独立 delta，**自带成本** | `message.usage.{input, output, cacheRead, cacheWrite, reasoningTokens}` + `message.usage.cost.total` |
+| OpenCode | SQLite，`message.data` 是 JSON 文本 | 解析 `data` 后取 tokens 与 cost |
 
 omp 的会话元信息在 **`"type":"session"`** 行里（`id`、`cwd`、`timestamp`，有时含 `title` / `parentSession`），46/46 个抽样文件全部存在。**不是 `session_meta`**——那是 Codex 的结构，omp 的 `.jsonl` 里一次都没出现过。照抄会让 `projectPath` 永远为 nil，omp 的用量无法归属任何项目，而且没有任何测试会红，因为 fixture 也是照抄的。
 
 **也不能顺手接受 `"type":"session_init"`。** 943/1002 个 omp 文件是子 agent 文件，同时包含 `session` 行（UUID + `cwd`）与随后的 `session_init` 行（8 位短 spawn id、无 `cwd`）。解析时这两个分支不是在「识别」而是在「赋值」，后命中的覆盖先命中的，`sessionKey` 会从 UUID 退化成短串。多接受一种输入并非总是免费的——当处理带副作用时，宽容的匹配等于让最后一个说话的人赢。
-| OpenCode | SQLite，`message.data` 是 JSON 文本 | 解析 `data` 后取 tokens 与 cost |
 
 `resuming state:` 参数服务于增量续读：Codex 的差分需要知道上一条的累计值。`source_files.parser_state` 字段已预留位置。
 
