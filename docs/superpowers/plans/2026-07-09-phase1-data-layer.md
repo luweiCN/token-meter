@@ -1004,17 +1004,42 @@ final class CostCalculatorTests: XCTestCase {
         XCTAssertEqual(result.source, .computed)
     }
 
-    func testFallsBackToFamily() {
-        // fixture 里没有 "claude-opus-4-9"，但家族名 opus 能命中
+    func testDoesNotFallBackToFamilyPricing() {
+        // fixture 里没有 claude-opus-4-9。真实快照里 opus 家族价格跨度 3 倍、
+        // gpt-5 家族跨度 100 倍。借一个价格算出来的金额会被标成 computed，
+        // 用户看到精确到分的数字却无从分辨它来自哪个模型。宁可说不知道。
         let result = makeCalculator().cost(for: event(model: "claude-opus-4-9", input: 1_000_000))
-        XCTAssertEqual(result.micros, 10_000_000)
-        XCTAssertEqual(result.source, .computed)
+        XCTAssertNil(result.micros)
+        XCTAssertEqual(result.source, .unknown)
     }
 
     func testUnknownModelYieldsNilNotZero() {
         let result = makeCalculator().cost(for: event(model: "some-unlisted-model", input: 1_000_000))
         XCTAssertNil(result.micros)
         XCTAssertEqual(result.source, .unknown)
+    }
+
+    func testCanonicalCollisionPrefersBareNameDeterministically() {
+        // 两个 key 归一后都是 claude-3-opus，必须稳定地选中裸名
+        let snapshot = PricingSnapshot(snapshotVersion: "test", source: "litellm", models: [
+            "claude-3-opus": ModelPricing(inputPerMTok: 15, outputPerMTok: 75, cacheReadPerMTok: 1.5,
+                                          cacheWrite5mPerMTok: 18.75, cacheWrite1hPerMTok: 30),
+            "claude-3-opus-20240229": ModelPricing(inputPerMTok: 99, outputPerMTok: 99, cacheReadPerMTok: 99,
+                                                   cacheWrite5mPerMTok: 99, cacheWrite1hPerMTok: 99)
+        ])
+        let result = CostCalculator(snapshot: snapshot).cost(for: event(model: "claude-3-opus", input: 1_000_000))
+        XCTAssertEqual(result.micros, 15_000_000)
+    }
+
+    func testResolvesGlmThroughZaiPrefix() {
+        // OpenCode 上报裸 glm-4.6；快照 key 是 zai/glm-4.6
+        let snapshot = PricingSnapshot(snapshotVersion: "test", source: "litellm", models: [
+            "zai/glm-4.6": ModelPricing(inputPerMTok: 0.6, outputPerMTok: 2.2, cacheReadPerMTok: 0.11,
+                                        cacheWrite5mPerMTok: 0, cacheWrite1hPerMTok: 1.2)
+        ])
+        let result = CostCalculator(snapshot: snapshot).cost(for: event(model: "glm-4.6", input: 1_000_000))
+        XCTAssertEqual(result.micros, 600_000)
+        XCTAssertEqual(result.source, .computed)
     }
 
     func testReasoningTokensAreNotPricedSeparately() {
@@ -1051,18 +1076,18 @@ public enum CostSource: String, Equatable {
 }
 
 public struct CostCalculator {
-    /// 家族兜底的匹配顺序。靠前的先匹配，避免 "claude-opus-4-8" 同时命中多个家族。
-    private static let families = ["fable", "opus", "sonnet", "haiku", "gpt-5", "glm"]
-
-    private let models: [String: ModelPricing]
     private let canonicalIndex: [String: ModelPricing]
 
     public init(snapshot: PricingSnapshot) {
-        models = snapshot.models
         var index: [String: ModelPricing] = [:]
-        // LiteLLM 的 key 是原始名，先建一份归一化索引
+        // LiteLLM 的 key 是原始名。归一化后会撞名：claude-3-opus 与
+        // claude-3-opus-20240229 都归到 claude-3-opus。按字典序取第一个——
+        // 裸名总排在带日期后缀的前面，且同一份快照总是得到同一结果。
         for (key, pricing) in snapshot.models.sorted(by: { $0.key < $1.key }) {
-            index[ModelNameNormalizer.canonical(key)] = pricing
+            let canonical = ModelNameNormalizer.canonical(key)
+            if index[canonical] == nil {
+                index[canonical] = pricing
+            }
         }
         canonicalIndex = index
     }
@@ -1071,7 +1096,11 @@ public struct CostCalculator {
         if let reported = event.reportedCostUSDMicros {
             return (reported, .reported)
         }
-        guard let pricing = resolve(ModelNameNormalizer.canonical(event.modelName)) else {
+
+        // 不做家族兜底。同家族价格能差 100 倍（gpt-5 $0.05 vs gpt-5.5 $5.00），
+        // 借来的价格会被标成 computed，用户无从分辨那是不是真的。
+        // 匹配不到就诚实地说不知道，让人去跑 scripts/update-pricing.sh。
+        guard let pricing = canonicalIndex[ModelNameNormalizer.canonical(event.modelName)] else {
             return (nil, .unknown)
         }
 
@@ -1087,19 +1116,6 @@ public struct CostCalculator {
 
     private func perMillion(_ tokens: Int64, _ pricePerMTok: Double) -> Double {
         Double(tokens) / 1_000_000.0 * pricePerMTok
-    }
-
-    private func resolve(_ canonical: String) -> ModelPricing? {
-        if let exact = canonicalIndex[canonical] { return exact }
-        if let exact = models[canonical] { return exact }
-
-        for family in Self.families where canonical.contains(family) {
-            // sorted 保证同一输入总是得到同一结果
-            if let match = canonicalIndex.keys.sorted().first(where: { $0.contains(family) }) {
-                return canonicalIndex[match]
-            }
-        }
-        return nil
     }
 }
 ```

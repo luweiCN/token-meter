@@ -258,12 +258,24 @@ CREATE TABLE model_pricing (
 
 ### 5.2 模型名解析
 
-`model_canonical` 的解析顺序（照搬 ccgauge 已验证的规则）：
+`model_canonical` 的解析顺序：
 
 1. 精确匹配
 2. 去掉日期后缀 `-YYYYMMDD`
-3. 去掉 provider 前缀 `vertex_ai/`、`bedrock/`、`anthropic/`
-4. 按家族名兜底（fable / opus / sonnet / haiku / gpt-5 …）
+3. 去掉 provider 前缀 `vertex_ai/`、`bedrock/`、`anthropic/`、`zai/`
+
+**不做家族兜底。** ccgauge 在匹配不到时会借用同家族任意模型的价格。在本机快照上实测，这会给出离谱的数字：
+
+| 家族 | 变体数 | input 价跨度 | 兜底会选中 |
+|---|---|---|---|
+| `gpt-5` | 25 | $0.05 – $5.00（**100×**） | `gpt-5` ($1.25) |
+| `glm` | 13 | $0.10 – $2.20（**22×**） | `glm-4-32b` ($0.10) |
+| `haiku` | 17 | $0.25 – $1.20（4.8×） | `claude-3-5-haiku` ($0.80) |
+| `opus` | 18 | $5.00 – $15.00（3×） | `anthropic.claude-3-opus` ($15.00) |
+
+用 `gpt-5` 的价格给 `gpt-5.5` 计价会低估 4 倍；用 2024 年的 `claude-3-opus` 给现代 opus 计价会高估 3 倍。更糟的是这些结果会被标成 `cost_source = 'computed'`，用户看到一个精确到分的金额，无从知道它来自一个毫不相干的模型。
+
+匹配不到就是匹配不到：`cost_usd_micros` 记 NULL，`cost_source` 记 `'unknown'`，UI 显示「定价未知」。这会促使人去跑 `scripts/update-pricing.sh`，而不是默默接受一个错误的数字。
 
 缓存费率**优先取 LiteLLM 的真实字段**（`cache_read_input_token_cost`、`cache_creation_input_token_cost`、`cache_creation_input_token_cost_above_1hr`，分别覆盖 669 / 225 / 113 个模型）。仅在字段缺失时才回落到派生值：`cache_read = input × 0.1`，`cache_write_5m = input × 1.25`，`cache_write_1h = input × 2`。
 
