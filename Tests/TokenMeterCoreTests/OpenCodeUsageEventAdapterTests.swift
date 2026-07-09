@@ -46,9 +46,42 @@ final class OpenCodeUsageEventAdapterTests: XCTestCase {
 
         XCTAssertEqual(session.events[1].cacheWrite5mTokens, 300)
         XCTAssertEqual(session.events[1].reasoningTokens, 5)
-        // reasoning 是 output 的子集：200 + 20 + 300 = 520，不是 525
-        XCTAssertEqual(session.events[1].totalTokens, 520)
+        // OpenCode 的 output 不含 reasoning，adapter 归一：outputTokens = 20 + 5 = 25。
+        // totalTokens = input(200) + output(25) + cacheWrite(300) = 525。
+        XCTAssertEqual(session.events[1].outputTokens, 25)
+        XCTAssertEqual(session.events[1].totalTokens, 525)
         XCTAssertEqual(session.events[1].eventSeq, 2)
+    }
+
+    func testOutputIncludesReasoningWhenReasoningExceedsOutput() throws {
+        // 实测 OpenCode 有 716 条 output < reasoning（如 output=53, reasoning=226, glm-5.1）：
+        // 子集不可能大于超集，故 OpenCode 的 output **不含** reasoning，违反 spec §4.3.1。
+        // adapter 必须在边界处归一：outputTokens = output + reasoning，reasoning 仅留作展示子集。
+        let database = try makeDatabase()
+        try insert(database, id: "m1", sessionId: "s1", createdMs: 1_000,
+            data: #"{"id":"m1","sessionID":"s1","role":"assistant","modelID":"glm-5.1","cost":0,"time":{"created":1000},"tokens":{"input":100,"output":53,"reasoning":226,"cache":{"read":0,"write":0}}}"#)
+
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
+        let event = sessions[0].events[0]
+
+        XCTAssertEqual(event.outputTokens, 279, "output(53) + reasoning(226)")
+        XCTAssertEqual(event.reasoningTokens, 226, "reasoning 仍作信息性子集保留")
+        // totalTokens = input(100) + output(279) + cacheRead(0) + write(0)
+        XCTAssertEqual(event.totalTokens, 379)
+    }
+
+    func testReasoningZeroDoesNotInflateOutput() throws {
+        // reasoning == 0：归一是加法，加 0 不改变 output，绝不重复计数。
+        let database = try makeDatabase()
+        try insert(database, id: "m1", sessionId: "s1", createdMs: 1_000,
+            data: #"{"id":"m1","sessionID":"s1","role":"assistant","modelID":"glm-4.6","cost":0,"time":{"created":1000},"tokens":{"input":100,"output":40,"reasoning":0,"cache":{"read":0,"write":0}}}"#)
+
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
+        let event = sessions[0].events[0]
+
+        XCTAssertEqual(event.outputTokens, 40)
+        XCTAssertEqual(event.reasoningTokens, 0)
+        XCTAssertEqual(event.totalTokens, 140)
     }
 
     func testZeroCostFallsThroughToComputed() throws {

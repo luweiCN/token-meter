@@ -67,8 +67,12 @@ public final class OpenCodeUsageEventAdapter {
                         dedupeKey: nil,
                         // cache 独立于 input，原样取值，绝不像 Codex 那样减 cached。
                         inputTokens: parsed.inputTokens,
-                        // output 已含 reasoning，reasoning 仅做展示不进总量。
-                        outputTokens: parsed.outputTokens,
+                        // spec §4.3.1 要求 outputTokens 是「含 reasoning 的完整输出」，Codex/omp/Claude
+                        // 天然满足。OpenCode 不满足：实测 716 条 output < reasoning，子集不可能大于超集，
+                        // 故它的 output 不含 reasoning。在此边界归一：outputTokens = output + reasoning，
+                        // reasoning 仍作信息性子集保留。归一只在 adapter 做，不碰 tokens_total 生成列、
+                        // 也不在下游按 source 特判。
+                        outputTokens: parsed.outputTokens + parsed.reasoningTokens,
                         reasoningTokens: parsed.reasoningTokens,
                         cacheReadTokens: parsed.cacheReadTokens,
                         // OpenCode 不区分缓存写入档位，整笔归 5m。
