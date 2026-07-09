@@ -1,0 +1,125 @@
+import XCTest
+@testable import TokenMeterCore
+
+final class OpenCodeUsageEventAdapterTests: XCTestCase {
+    private func makeDatabase() throws -> SQLiteDatabase {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try database.execute(
+            """
+            CREATE TABLE message (
+              id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL,
+              time_created INTEGER NOT NULL,
+              time_updated INTEGER NOT NULL,
+              data TEXT NOT NULL
+            )
+            """
+        )
+        return database
+    }
+
+    private func insert(_ database: SQLiteDatabase, id: String, sessionId: String, createdMs: Int64, data: String) throws {
+        try database.execute(
+            "INSERT INTO message(id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+            [.text(id), .text(sessionId), .int(createdMs), .int(createdMs), .text(data)]
+        )
+    }
+
+    func testEmitsOneEventPerMessageInsteadOfMerging() throws {
+        let database = try makeDatabase()
+        try insert(database, id: "m1", sessionId: "s1", createdMs: 1_000,
+            data: #"{"id":"m1","sessionID":"s1","role":"assistant","modelID":"glm-4.6","providerID":"zhipuai-coding-plan","cost":0,"time":{"created":1000},"tokens":{"input":100,"output":10,"reasoning":0,"cache":{"read":900,"write":0}}}"#)
+        try insert(database, id: "m2", sessionId: "s1", createdMs: 2_000,
+            data: #"{"id":"m2","sessionID":"s1","role":"assistant","modelID":"glm-4.6","cost":0.5,"time":{"created":2000},"tokens":{"input":200,"output":20,"reasoning":5,"cache":{"read":0,"write":300}}}"#)
+
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
+
+        XCTAssertEqual(sessions.count, 1)
+        let session = sessions[0]
+        XCTAssertEqual(session.sessionKey, "s1")
+        XCTAssertEqual(session.events.count, 2, "两条消息必须是两个事件，不能合并成一条")
+
+        XCTAssertEqual(session.events[0].inputTokens, 100, "cache 独立于 input，不做减法")
+        XCTAssertEqual(session.events[0].cacheReadTokens, 900)
+        XCTAssertEqual(session.events[0].totalTokens, 1010)
+        XCTAssertEqual(session.events[0].eventSeq, 1)
+
+        XCTAssertEqual(session.events[1].cacheWrite5mTokens, 300)
+        XCTAssertEqual(session.events[1].reasoningTokens, 5)
+        // reasoning 是 output 的子集：200 + 20 + 300 = 520，不是 525
+        XCTAssertEqual(session.events[1].totalTokens, 520)
+        XCTAssertEqual(session.events[1].eventSeq, 2)
+    }
+
+    func testZeroCostFallsThroughToComputed() throws {
+        let database = try makeDatabase()
+        try insert(database, id: "m1", sessionId: "s1", createdMs: 1_000,
+            data: #"{"id":"m1","sessionID":"s1","role":"assistant","modelID":"glm-4.6","cost":0,"time":{"created":1000},"tokens":{"input":100,"output":10,"cache":{"read":0,"write":0}}}"#)
+
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
+
+        // 套餐制下 OpenCode 报 0，那是「不知道单价」，不是「免费」
+        XCTAssertNil(sessions[0].events[0].reportedCostUSDMicros)
+    }
+
+    func testPositiveCostIsReported() throws {
+        let database = try makeDatabase()
+        try insert(database, id: "m1", sessionId: "s1", createdMs: 1_000,
+            data: #"{"id":"m1","sessionID":"s1","role":"assistant","modelID":"glm-4.6","cost":0.25,"time":{"created":1000},"tokens":{"input":100,"output":10,"cache":{"read":0,"write":0}}}"#)
+
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
+
+        XCTAssertEqual(sessions[0].events[0].reportedCostUSDMicros, 250_000)
+    }
+
+    func testEventTimestampsComeFromMessageCreatedTime() throws {
+        let database = try makeDatabase()
+        try insert(database, id: "m1", sessionId: "s1", createdMs: 1_765_980_154_045,
+            data: #"{"id":"m1","sessionID":"s1","role":"assistant","modelID":"glm-4.6","cost":0,"time":{"created":1765980154045},"tokens":{"input":1,"output":1,"cache":{"read":0,"write":0}}}"#)
+
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
+
+        XCTAssertEqual(sessions[0].events[0].observedEpochMilliseconds, 1_765_980_154_045)
+    }
+
+    func testSkipsMessagesWithoutTokens() throws {
+        let database = try makeDatabase()
+        try insert(database, id: "m1", sessionId: "s1", createdMs: 1_000,
+            data: #"{"id":"m1","sessionID":"s1","role":"user","time":{"created":1000}}"#)
+
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
+
+        XCTAssertTrue(sessions.isEmpty)
+    }
+
+    func testEventsAreOrderedByCreationTimeWithinASession() throws {
+        let database = try makeDatabase()
+        // 插入顺序与时间顺序相反
+        try insert(database, id: "mB", sessionId: "s1", createdMs: 2_000,
+            data: #"{"id":"mB","sessionID":"s1","role":"assistant","modelID":"m","cost":0,"time":{"created":2000},"tokens":{"input":2,"output":0,"cache":{"read":0,"write":0}}}"#)
+        try insert(database, id: "mA", sessionId: "s1", createdMs: 1_000,
+            data: #"{"id":"mA","sessionID":"s1","role":"assistant","modelID":"m","cost":0,"time":{"created":1000},"tokens":{"input":1,"output":0,"cache":{"read":0,"write":0}}}"#)
+
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
+
+        XCTAssertEqual(sessions[0].events.map(\.eventSeq), [1, 2])
+        XCTAssertEqual(sessions[0].events[0].inputTokens, 1, "eventSeq 必须按 time.created 排序")
+        XCTAssertEqual(sessions[0].events[1].inputTokens, 2)
+    }
+
+    func testSeparatesSessions() throws {
+        let database = try makeDatabase()
+        try insert(database, id: "m1", sessionId: "s1", createdMs: 1_000,
+            data: #"{"id":"m1","sessionID":"s1","role":"assistant","modelID":"m","cost":0,"time":{"created":1000},"tokens":{"input":1,"output":0,"cache":{"read":0,"write":0}}}"#)
+        try insert(database, id: "m2", sessionId: "s2", createdMs: 2_000,
+            data: #"{"id":"m2","sessionID":"s2","role":"assistant","modelID":"m","cost":0,"time":{"created":2000},"tokens":{"input":1,"output":0,"cache":{"read":0,"write":0}}}"#)
+
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
+
+        XCTAssertEqual(sessions.count, 2)
+        XCTAssertEqual(sessions.map(\.sessionKey).sorted(), ["s1", "s2"])
+        // 每个 session 的 eventSeq 各自从 1 开始
+        XCTAssertEqual(sessions[0].events[0].eventSeq, 1)
+        XCTAssertEqual(sessions[1].events[0].eventSeq, 1)
+    }
+}
