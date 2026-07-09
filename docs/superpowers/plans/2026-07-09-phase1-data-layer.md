@@ -4036,95 +4036,58 @@ git commit -m "feat: query rollup tables from electron"
 
 ---
 
-## Task 17: 与 ccusage 对账
+## Task 17: 把对账固化成可重复的脚本
 
-最强的正确性验证：一个成熟的独立实现作为参照。两者定价表同源（LiteLLM）、去重键同构（`messageId::requestId`），数字应当吻合。
+对账本身已在 Task 14c–14h 期间完成，并直接产出了五个正确性缺陷的修复。本任务只做一件事：**把它变成任何人任何时候都能跑一遍的脚本**，否则下一次改动会悄悄破坏它，而没有人知道。
 
-对账范围限于 ccusage 也支持的源：**Claude Code、Codex、OpenCode**。ccusage 不支持 omp。
+已达成的状态（三个源与 ccusage 在同一分钟内各采样一次）：
+
+| 源 | 我们 | ccusage | 差 |
+|---|---:|---:|---|
+| Codex | 18,455,520,473 | 18,455,520,473 | **0** |
+| Claude Code | 10,389,457,197 | 10,389,406,577 | +50,620（0.00049%）|
+| OpenCode | 1,572,548,852 | 1,572,519,757 | +29,095（0.0018%）|
+| omp | 4,968,233,477 | ccusage 不支持 | — |
 
 **Files:**
 - Create: `scripts/reconcile-with-ccusage.sh`
 
-- [ ] **Step 1: 跑一次真实的全量重扫**
+### 脚本必须遵守的三条纪律
+
+这三条都是在对账过程中付出代价学到的，写进脚本的注释里：
+
+1. **同一时刻采样两侧。** Claude 的语料是活的。跑 ccusage → 跑扫描 → 再跑一次 ccusage，若前后两次 ccusage 不等，说明期间语料变动，本次对账作废、重跑。拿几小时前的基线比刚跑完的扫描，差值里混着语料增长。
+2. **绝不写用户数据。** `~/.claude/`、`~/.codex/`、`~/.omp/` 只读；`opencode.db` 以 `mode=ro&immutable=1` 打开，脚本结束时校验 md5 未变（`d27179d88a6ee5c9233541aee4708e0e`）。
+3. **扫进临时库，不碰生产库。** 用 `mktemp -d`，退出时清理。
+
+- [ ] **Step 1: 写脚本**
+
+`scripts/reconcile-with-ccusage.sh`，行为：
+
+- 对 `claude` / `codex` / `opencode` 各跑 `ccusage <agent> daily --json`，求 `sum(totalTokens)`。
+- 扫描进临时 SQLite，按 `provider_id` 聚合 `usage_events.tokens_total`。
+- 逐源打印：我们的值、ccusage 的值、绝对差、相对差。
+- **退出码**：任一源的相对差超过阈值则非零退出。阈值：codex `0`（静态语料，必须精确相等）、claude `0.01%`、opencode 允许固定的 `+29,095`（见下）。
+- 打印 ccusage 版本号（`ccusage --version`）。数字随它的版本变化，无版本号的对账结果不可复现。
+
+### 已知的、允许存在的差
+
+- **OpenCode `+29,095`（0.0018%）。** 我们把 OpenCode 的 `reasoning` 全部计入 `outputTokens`（§4.3.1，716 条 `output < reasoning` 反证了子集关系），ccusage 似乎只计入其中一部分。已排除「按 role 过滤」这一假设：702,828 个 reasoning token 全部落在 `role=assistant` 上。这个差**当前认定为 ccusage 的口径问题，不是我们的缺陷**。脚本把它作为已知常量放行，但要在超出时报警——一旦它变了，说明有一侧改了行为。
+- **Claude 的漂移。** 只要同一分钟内前后两次 ccusage 读数相同，剩余的 `+50,620`（0.00049%）就不是语料增长。原因未定位，量级在万分之五以内。脚本用 `0.01%` 作为阈值。
+
+- [ ] **Step 2: 一条脚本抓不到的东西**
+
+对账验证的是**全量扫描**。它**不能**证明增量路径正确——一次流式响应的所有帧在同一批解析里就被内存去重折叠了，`UsageEventWriter` 的去重分支根本不会触发（这正是 §9.3.5 里那个缺陷藏了这么久的原因）。
+
+因此脚本之外，另需一条增量断言，放在 `LocalAgentScannerTests` 里而不是脚本里：截断一个含流式帧的文件、扫描、补全、再扫描，断言最终帧胜出。Task 14h 已建立这条测试；本任务只需确认它存在且在跑。
+
+- [ ] **Step 3: 提交**
 
 ```bash
-swift run -c release TokenMeterApp --full-rescan
+git add scripts/reconcile-with-ccusage.sh
+git commit -m "test: add a repeatable ccusage reconciliation script"
 ```
 
-Expected: 进度输出至完成。首次处理约 12.8 GB，耗时以分钟计。
-
-- [ ] **Step 2: 写对账脚本**
-
-`scripts/reconcile-with-ccusage.sh`：
-
-```bash
-#!/usr/bin/env bash
-# 用 ccusage 作为 oracle 校验 daily_rollup 的 token 与成本。
-# 用法: scripts/reconcile-with-ccusage.sh 20260601 20260630
-set -euo pipefail
-
-SINCE="${1:?usage: $0 <YYYYMMDD> <YYYYMMDD>}"
-UNTIL="${2:?usage: $0 <YYYYMMDD> <YYYYMMDD>}"
-DB="${TOKENMETER_DB:-$HOME/.token-meter/token-meter.db}"
-
-command -v ccusage >/dev/null || { echo "ccusage not installed: npm i -g ccusage"; exit 1; }
-
-echo "== ccusage (claude) =="
-ccusage daily --json --since "$SINCE" --until "$UNTIL" \
-  | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-for row in d.get('daily', []):
-    tok = row['inputTokens']+row['outputTokens']+row['cacheCreationTokens']+row['cacheReadTokens']
-    print(f\"{row['date']}\t{tok}\t{row['totalCost']:.4f}\")
-" | sort > /tmp/ccusage-daily.tsv
-
-echo "== token-meter (claude-code) =="
-sqlite3 -separator $'\t' "$DB" "
-  SELECT usage_date,
-         sum(tokens_input + tokens_output + tokens_cache_read + tokens_cache_write_5m + tokens_cache_write_1h),
-         printf('%.4f', sum(cost_usd_micros) / 1000000.0)
-  FROM daily_rollup
-  WHERE provider_id = 'claude-code'
-    AND replace(usage_date, '-', '') BETWEEN '$SINCE' AND '$UNTIL'
-  GROUP BY usage_date
-  ORDER BY usage_date;
-" > /tmp/tokenmeter-daily.tsv
-
-echo
-echo "== diff（空输出 = 完全一致） =="
-diff /tmp/ccusage-daily.tsv /tmp/tokenmeter-daily.tsv && echo "  ✅ 对账通过"
-```
-
-- [ ] **Step 3: 运行对账**
-
-```bash
-chmod +x scripts/reconcile-with-ccusage.sh
-./scripts/reconcile-with-ccusage.sh 20260601 20260630
-```
-
-Expected: `✅ 对账通过`
-
-**若有差异，按此顺序排查：**
-
-1. **日期整体偏移一天** → 时区问题。ccusage 默认用系统本地时区，检查 `RollupBuilder` 的 `'localtime'` 是否生效。
-2. **token 数偏大约 2 倍（仅 Codex）** → `inputTokens = input_tokens - cached_input_tokens` 这个减法没做（Task 8）。
-3. **token 数偏大且含 reasoning** → `tokens_total` 生成列错误地加了 `tokens_reasoning`（Task 3）。
-4. **成本偏低** → cache 分档计价缺失，或 `cost_source = 'unknown'` 的事件被当成 0（检查 `cost_unknown_events`）。
-5. **token 数偏大且集中在少数会话** → sidechain 重放未被去重（Task 7 规则二）。
-
-- [ ] **Step 4: 记录基线**
-
-把对账结果与首次全量扫描耗时写入 `docs/superpowers/plans/2026-07-09-phase1-data-layer.md` 末尾的「实测记录」小节。
-
-- [ ] **Step 5: 提交**
-
-```bash
-git add scripts/reconcile-with-ccusage.sh docs/superpowers/plans/2026-07-09-phase1-data-layer.md
-git commit -m "test: add ccusage reconciliation script"
-```
-
----
 
 ## Task 18: 清理 v1 遗留（schema v3 + 旧 parser）
 
