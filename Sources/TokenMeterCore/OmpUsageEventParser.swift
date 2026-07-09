@@ -24,7 +24,10 @@ public final class OmpUsageEventParser: UsageEventParser {
         }
 
         switch JSONDictionary.string(object, "type") {
-        case "session_meta":
+        // omp 真实用的是 "session"（46/46 抽样文件都有，带 id + cwd）。
+        // "session_meta" 是 Codex 的结构，omp 里一次都没出现过——照抄它会让
+        // projectPath 永远为 nil，而 fixture 若也照抄，测试永远绿着。
+        case "session", "session_init", "session_meta":
             sessionKey = firstString(in: object, keys: ["id", "sessionId", "session_id"]) ?? sessionKey
             projectPath = firstString(in: object, keys: ["cwd", "directory"]) ?? projectPath
             modelName = firstString(in: object, keys: ["model", "modelName"]) ?? modelName

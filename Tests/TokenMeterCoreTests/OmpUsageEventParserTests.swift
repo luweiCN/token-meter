@@ -6,7 +6,7 @@ final class OmpUsageEventParserTests: XCTestCase {
         JSONLLine(text: text, offset: offset, nextOffset: offset + 1)
     }
 
-    private let meta = #"{"type":"session_meta","id":"omp-1","timestamp":"2026-07-08T01:00:00Z"}"#
+    private let meta = #"{"type":"session","version":3,"id":"omp-1","timestamp":"2026-07-08T01:00:00Z","cwd":"/repo","title":"t","titleSource":"auto"}"#
 
     func testDoesNotSubtractCacheFromInput() throws {
         // omp: total = input + output + cacheRead。cache 独立于 input，
@@ -100,6 +100,23 @@ final class OmpUsageEventParserTests: XCTestCase {
         )
 
         XCTAssertTrue(session.events.isEmpty)
+    }
+
+    func testExtractsSessionIdAndProjectPathFromSessionLine() throws {
+        // 真实 omp 用 "type":"session"。若只匹配 "session_meta"，
+        // sessionKey 会回落到文件名、projectPath 会永远是 nil，
+        // omp 的用量就无法归属任何项目——而且没有任何测试会红。
+        let lines = [
+            line(meta, offset: 0),
+            line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","model":"m","usage":{"input":1}}}"#, offset: 1)
+        ]
+
+        let (session, _) = try OmpUsageEventParser.parse(
+            lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/should-not-be-used.jsonl"), resuming: nil
+        )
+
+        XCTAssertEqual(session.sessionKey, "omp-1", "必须用 session 行的 id，而不是文件名")
+        XCTAssertEqual(session.projectPath, "/repo", "必须从 session 行的 cwd 取项目路径")
     }
 
     func testFallsBackToFileNameForSessionKey() throws {
