@@ -35,7 +35,14 @@ public enum UsageEventDeduplicator {
 
         var byMessageId: [String: UsageEvent] = [:]
         for event in byExactKey.values {
-            guard let messageId = event.messageId else { continue }
+            guard let messageId = event.messageId else {
+                // dedupeKey 非 nil 蕴含 messageId 非 nil，今天到不了这里。
+                // 但若 dedupeKey 的定义将来放宽，`continue` 会静默丢掉一条真实用量。
+                // 宁可放行一条重复（数据库还有 UNIQUE(source_file_id, event_seq) 兜底），
+                // 也不能凭空少算 token。
+                passthrough.append(event)
+                continue
+            }
             guard let existing = byMessageId[messageId] else {
                 byMessageId[messageId] = event
                 continue
