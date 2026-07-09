@@ -1,0 +1,2400 @@
+{
+  "models": {
+    "ai21.j2-mid-v1": {
+      "cacheReadPerMTok": 1.25,
+      "cacheWrite1hPerMTok": 25.0,
+      "cacheWrite5mPerMTok": 15.625,
+      "inputPerMTok": 12.5,
+      "outputPerMTok": 12.5
+    },
+    "ai21.j2-ultra-v1": {
+      "cacheReadPerMTok": 1.88,
+      "cacheWrite1hPerMTok": 37.6,
+      "cacheWrite5mPerMTok": 23.5,
+      "inputPerMTok": 18.8,
+      "outputPerMTok": 18.8
+    },
+    "ai21.jamba-1-5-large-v1:0": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 8.0
+    },
+    "ai21.jamba-1-5-mini-v1:0": {
+      "cacheReadPerMTok": 0.02,
+      "cacheWrite1hPerMTok": 0.4,
+      "cacheWrite5mPerMTok": 0.25,
+      "inputPerMTok": 0.2,
+      "outputPerMTok": 0.4
+    },
+    "ai21.jamba-instruct-v1:0": {
+      "cacheReadPerMTok": 0.05,
+      "cacheWrite1hPerMTok": 1.0,
+      "cacheWrite5mPerMTok": 0.625,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 0.7
+    },
+    "amazon.titan-text-express-v1": {
+      "cacheReadPerMTok": 0.13,
+      "cacheWrite1hPerMTok": 2.6,
+      "cacheWrite5mPerMTok": 1.625,
+      "inputPerMTok": 1.3,
+      "outputPerMTok": 1.7
+    },
+    "amazon.titan-text-lite-v1": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 0.4
+    },
+    "amazon.titan-text-premier-v1:0": {
+      "cacheReadPerMTok": 0.05,
+      "cacheWrite1hPerMTok": 1.0,
+      "cacheWrite5mPerMTok": 0.625,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 1.5
+    },
+    "anthropic.claude-3-5-haiku-20241022-v1:0": {
+      "cacheReadPerMTok": 0.08,
+      "cacheWrite1hPerMTok": 1.6,
+      "cacheWrite5mPerMTok": 1.0,
+      "inputPerMTok": 0.8,
+      "outputPerMTok": 4.0
+    },
+    "anthropic.claude-3-5-sonnet-20240620-v1:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "anthropic.claude-3-5-sonnet-20241022-v2:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "anthropic.claude-3-7-sonnet-20240620-v1:0": {
+      "cacheReadPerMTok": 0.36,
+      "cacheWrite1hPerMTok": 7.2,
+      "cacheWrite5mPerMTok": 4.5,
+      "inputPerMTok": 3.6,
+      "outputPerMTok": 18.0
+    },
+    "anthropic.claude-3-haiku-20240307-v1:0": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.5,
+      "cacheWrite5mPerMTok": 0.3125,
+      "inputPerMTok": 0.25,
+      "outputPerMTok": 1.25
+    },
+    "anthropic.claude-3-opus-20240229-v1:0": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 75.0
+    },
+    "anthropic.claude-3-sonnet-20240229-v1:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "anthropic.claude-instant-v1": {
+      "cacheReadPerMTok": 0.08,
+      "cacheWrite1hPerMTok": 1.6,
+      "cacheWrite5mPerMTok": 1.0,
+      "inputPerMTok": 0.8,
+      "outputPerMTok": 2.4
+    },
+    "anthropic.claude-v1": {
+      "cacheReadPerMTok": 0.8,
+      "cacheWrite1hPerMTok": 16.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 24.0
+    },
+    "anthropic.claude-v2:1": {
+      "cacheReadPerMTok": 0.8,
+      "cacheWrite1hPerMTok": 16.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 24.0
+    },
+    "apac.anthropic.claude-3-5-sonnet-20240620-v1:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "apac.anthropic.claude-3-5-sonnet-20241022-v2:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "apac.anthropic.claude-3-haiku-20240307-v1:0": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.5,
+      "cacheWrite5mPerMTok": 0.3125,
+      "inputPerMTok": 0.25,
+      "outputPerMTok": 1.25
+    },
+    "apac.anthropic.claude-3-sonnet-20240229-v1:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "bedrock/ap-northeast-1/anthropic.claude-instant-v1": {
+      "cacheReadPerMTok": 0.223,
+      "cacheWrite1hPerMTok": 4.46,
+      "cacheWrite5mPerMTok": 2.7875,
+      "inputPerMTok": 2.23,
+      "outputPerMTok": 7.55
+    },
+    "bedrock/ap-northeast-1/anthropic.claude-v1": {
+      "cacheReadPerMTok": 0.8,
+      "cacheWrite1hPerMTok": 16.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 24.0
+    },
+    "bedrock/ap-northeast-1/anthropic.claude-v2:1": {
+      "cacheReadPerMTok": 0.8,
+      "cacheWrite1hPerMTok": 16.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 24.0
+    },
+    "bedrock/ap-northeast-1/deepseek.v3.2": {
+      "cacheReadPerMTok": 0.074,
+      "cacheWrite1hPerMTok": 1.48,
+      "cacheWrite5mPerMTok": 0.925,
+      "inputPerMTok": 0.74,
+      "outputPerMTok": 2.22
+    },
+    "bedrock/ap-northeast-1/minimax.minimax-m2.1": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/ap-northeast-1/minimax.minimax-m2.5": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/ap-northeast-1/moonshotai.kimi-k2-thinking": {
+      "cacheReadPerMTok": 0.073,
+      "cacheWrite1hPerMTok": 1.46,
+      "cacheWrite5mPerMTok": 0.9125,
+      "inputPerMTok": 0.73,
+      "outputPerMTok": 3.03
+    },
+    "bedrock/ap-northeast-1/moonshotai.kimi-k2.5": {
+      "cacheReadPerMTok": 0.072,
+      "cacheWrite1hPerMTok": 1.44,
+      "cacheWrite5mPerMTok": 0.9,
+      "inputPerMTok": 0.72,
+      "outputPerMTok": 3.6
+    },
+    "bedrock/ap-northeast-1/qwen.qwen3-coder-next": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/ap-south-1/deepseek.v3.2": {
+      "cacheReadPerMTok": 0.074,
+      "cacheWrite1hPerMTok": 1.48,
+      "cacheWrite5mPerMTok": 0.925,
+      "inputPerMTok": 0.74,
+      "outputPerMTok": 2.22
+    },
+    "bedrock/ap-south-1/meta.llama3-70b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.318,
+      "cacheWrite1hPerMTok": 6.36,
+      "cacheWrite5mPerMTok": 3.975,
+      "inputPerMTok": 3.18,
+      "outputPerMTok": 4.2
+    },
+    "bedrock/ap-south-1/meta.llama3-8b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 0.72
+    },
+    "bedrock/ap-south-1/minimax.minimax-m2.1": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/ap-south-1/minimax.minimax-m2.5": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/ap-south-1/moonshotai.kimi-k2-thinking": {
+      "cacheReadPerMTok": 0.071,
+      "cacheWrite1hPerMTok": 1.42,
+      "cacheWrite5mPerMTok": 0.8875,
+      "inputPerMTok": 0.71,
+      "outputPerMTok": 2.94
+    },
+    "bedrock/ap-south-1/moonshotai.kimi-k2.5": {
+      "cacheReadPerMTok": 0.072,
+      "cacheWrite1hPerMTok": 1.44,
+      "cacheWrite5mPerMTok": 0.9,
+      "inputPerMTok": 0.72,
+      "outputPerMTok": 3.6
+    },
+    "bedrock/ap-south-1/qwen.qwen3-coder-next": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/ap-southeast-2/minimax.minimax-m2.5": {
+      "cacheReadPerMTok": 0.0309,
+      "cacheWrite1hPerMTok": 0.618,
+      "cacheWrite5mPerMTok": 0.38625,
+      "inputPerMTok": 0.309,
+      "outputPerMTok": 1.236
+    },
+    "bedrock/ap-southeast-3/deepseek.v3.2": {
+      "cacheReadPerMTok": 0.074,
+      "cacheWrite1hPerMTok": 1.48,
+      "cacheWrite5mPerMTok": 0.925,
+      "inputPerMTok": 0.74,
+      "outputPerMTok": 2.22
+    },
+    "bedrock/ap-southeast-3/minimax.minimax-m2.1": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/ap-southeast-3/minimax.minimax-m2.5": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/ap-southeast-3/moonshotai.kimi-k2.5": {
+      "cacheReadPerMTok": 0.072,
+      "cacheWrite1hPerMTok": 1.44,
+      "cacheWrite5mPerMTok": 0.9,
+      "inputPerMTok": 0.72,
+      "outputPerMTok": 3.6
+    },
+    "bedrock/ap-southeast-3/qwen.qwen3-coder-next": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/ca-central-1/meta.llama3-70b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.305,
+      "cacheWrite1hPerMTok": 6.1,
+      "cacheWrite5mPerMTok": 3.8125,
+      "inputPerMTok": 3.05,
+      "outputPerMTok": 4.03
+    },
+    "bedrock/ca-central-1/meta.llama3-8b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.035,
+      "cacheWrite1hPerMTok": 0.7,
+      "cacheWrite5mPerMTok": 0.4375,
+      "inputPerMTok": 0.35,
+      "outputPerMTok": 0.69
+    },
+    "bedrock/eu-central-1/anthropic.claude-instant-v1": {
+      "cacheReadPerMTok": 0.248,
+      "cacheWrite1hPerMTok": 4.96,
+      "cacheWrite5mPerMTok": 3.1,
+      "inputPerMTok": 2.48,
+      "outputPerMTok": 8.38
+    },
+    "bedrock/eu-central-1/anthropic.claude-v1": {
+      "cacheReadPerMTok": 0.8,
+      "cacheWrite1hPerMTok": 16.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 24.0
+    },
+    "bedrock/eu-central-1/anthropic.claude-v2:1": {
+      "cacheReadPerMTok": 0.8,
+      "cacheWrite1hPerMTok": 16.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 24.0
+    },
+    "bedrock/eu-central-1/minimax.minimax-m2.1": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/eu-central-1/minimax.minimax-m2.5": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/eu-central-1/qwen.qwen3-coder-next": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/eu-north-1/deepseek.v3.2": {
+      "cacheReadPerMTok": 0.074,
+      "cacheWrite1hPerMTok": 1.48,
+      "cacheWrite5mPerMTok": 0.925,
+      "inputPerMTok": 0.74,
+      "outputPerMTok": 2.22
+    },
+    "bedrock/eu-north-1/minimax.minimax-m2.1": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/eu-north-1/minimax.minimax-m2.5": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/eu-north-1/moonshotai.kimi-k2.5": {
+      "cacheReadPerMTok": 0.072,
+      "cacheWrite1hPerMTok": 1.44,
+      "cacheWrite5mPerMTok": 0.9,
+      "inputPerMTok": 0.72,
+      "outputPerMTok": 3.6
+    },
+    "bedrock/eu-south-1/minimax.minimax-m2.1": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/eu-south-1/minimax.minimax-m2.5": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/eu-south-1/qwen.qwen3-coder-next": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/eu-west-1/meta.llama3-70b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.286,
+      "cacheWrite1hPerMTok": 5.72,
+      "cacheWrite5mPerMTok": 3.575,
+      "inputPerMTok": 2.86,
+      "outputPerMTok": 3.78
+    },
+    "bedrock/eu-west-1/meta.llama3-8b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.032,
+      "cacheWrite1hPerMTok": 0.64,
+      "cacheWrite5mPerMTok": 0.4,
+      "inputPerMTok": 0.32,
+      "outputPerMTok": 0.65
+    },
+    "bedrock/eu-west-1/minimax.minimax-m2.1": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/eu-west-1/minimax.minimax-m2.5": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/eu-west-1/qwen.qwen3-coder-next": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/eu-west-2/meta.llama3-70b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.345,
+      "cacheWrite1hPerMTok": 6.9,
+      "cacheWrite5mPerMTok": 4.3125,
+      "inputPerMTok": 3.45,
+      "outputPerMTok": 4.55
+    },
+    "bedrock/eu-west-2/meta.llama3-8b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.039,
+      "cacheWrite1hPerMTok": 0.78,
+      "cacheWrite5mPerMTok": 0.4875,
+      "inputPerMTok": 0.39,
+      "outputPerMTok": 0.78
+    },
+    "bedrock/eu-west-2/minimax.minimax-m2.1": {
+      "cacheReadPerMTok": 0.047,
+      "cacheWrite1hPerMTok": 0.94,
+      "cacheWrite5mPerMTok": 0.5875,
+      "inputPerMTok": 0.47,
+      "outputPerMTok": 1.86
+    },
+    "bedrock/eu-west-2/minimax.minimax-m2.5": {
+      "cacheReadPerMTok": 0.047,
+      "cacheWrite1hPerMTok": 0.94,
+      "cacheWrite5mPerMTok": 0.5875,
+      "inputPerMTok": 0.47,
+      "outputPerMTok": 1.86
+    },
+    "bedrock/eu-west-2/qwen.qwen3-coder-next": {
+      "cacheReadPerMTok": 0.078,
+      "cacheWrite1hPerMTok": 1.56,
+      "cacheWrite5mPerMTok": 0.975,
+      "inputPerMTok": 0.78,
+      "outputPerMTok": 1.86
+    },
+    "bedrock/eu-west-3/mistral.mistral-7b-instruct-v0:2": {
+      "cacheReadPerMTok": 0.02,
+      "cacheWrite1hPerMTok": 0.4,
+      "cacheWrite5mPerMTok": 0.25,
+      "inputPerMTok": 0.2,
+      "outputPerMTok": 0.26
+    },
+    "bedrock/eu-west-3/mistral.mistral-large-2402-v1:0": {
+      "cacheReadPerMTok": 1.04,
+      "cacheWrite1hPerMTok": 20.8,
+      "cacheWrite5mPerMTok": 13.0,
+      "inputPerMTok": 10.4,
+      "outputPerMTok": 31.2
+    },
+    "bedrock/eu-west-3/mistral.mixtral-8x7b-instruct-v0:1": {
+      "cacheReadPerMTok": 0.059,
+      "cacheWrite1hPerMTok": 1.18,
+      "cacheWrite5mPerMTok": 0.7375,
+      "inputPerMTok": 0.59,
+      "outputPerMTok": 0.91
+    },
+    "bedrock/invoke/anthropic.claude-3-5-sonnet-20240620-v1:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "bedrock/moonshotai.kimi-k2-thinking": {
+      "cacheReadPerMTok": 0.073,
+      "cacheWrite1hPerMTok": 1.46,
+      "cacheWrite5mPerMTok": 0.9125,
+      "inputPerMTok": 0.73,
+      "outputPerMTok": 3.03
+    },
+    "bedrock/moonshotai.kimi-k2.5": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 3.03
+    },
+    "bedrock/sa-east-1/deepseek.v3.2": {
+      "cacheReadPerMTok": 0.074,
+      "cacheWrite1hPerMTok": 1.48,
+      "cacheWrite5mPerMTok": 0.925,
+      "inputPerMTok": 0.74,
+      "outputPerMTok": 2.22
+    },
+    "bedrock/sa-east-1/meta.llama3-70b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.445,
+      "cacheWrite1hPerMTok": 8.9,
+      "cacheWrite5mPerMTok": 5.5625,
+      "inputPerMTok": 4.45,
+      "outputPerMTok": 5.88
+    },
+    "bedrock/sa-east-1/meta.llama3-8b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.05,
+      "cacheWrite1hPerMTok": 1.0,
+      "cacheWrite5mPerMTok": 0.625,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 1.01
+    },
+    "bedrock/sa-east-1/minimax.minimax-m2.1": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/sa-east-1/minimax.minimax-m2.5": {
+      "cacheReadPerMTok": 0.036,
+      "cacheWrite1hPerMTok": 0.72,
+      "cacheWrite5mPerMTok": 0.45,
+      "inputPerMTok": 0.36,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/sa-east-1/moonshotai.kimi-k2-thinking": {
+      "cacheReadPerMTok": 0.073,
+      "cacheWrite1hPerMTok": 1.46,
+      "cacheWrite5mPerMTok": 0.9125,
+      "inputPerMTok": 0.73,
+      "outputPerMTok": 3.03
+    },
+    "bedrock/sa-east-1/moonshotai.kimi-k2.5": {
+      "cacheReadPerMTok": 0.072,
+      "cacheWrite1hPerMTok": 1.44,
+      "cacheWrite5mPerMTok": 0.9,
+      "inputPerMTok": 0.72,
+      "outputPerMTok": 3.6
+    },
+    "bedrock/sa-east-1/qwen.qwen3-coder-next": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 1.44
+    },
+    "bedrock/us-east-1/anthropic.claude-instant-v1": {
+      "cacheReadPerMTok": 0.08,
+      "cacheWrite1hPerMTok": 1.6,
+      "cacheWrite5mPerMTok": 1.0,
+      "inputPerMTok": 0.8,
+      "outputPerMTok": 2.4
+    },
+    "bedrock/us-east-1/anthropic.claude-v1": {
+      "cacheReadPerMTok": 0.8,
+      "cacheWrite1hPerMTok": 16.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 24.0
+    },
+    "bedrock/us-east-1/anthropic.claude-v2:1": {
+      "cacheReadPerMTok": 0.8,
+      "cacheWrite1hPerMTok": 16.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 24.0
+    },
+    "bedrock/us-east-1/deepseek.v3.2": {
+      "cacheReadPerMTok": 0.062,
+      "cacheWrite1hPerMTok": 1.24,
+      "cacheWrite5mPerMTok": 0.775,
+      "inputPerMTok": 0.62,
+      "outputPerMTok": 1.85
+    },
+    "bedrock/us-east-1/meta.llama3-70b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.265,
+      "cacheWrite1hPerMTok": 5.3,
+      "cacheWrite5mPerMTok": 3.3125,
+      "inputPerMTok": 2.65,
+      "outputPerMTok": 3.5
+    },
+    "bedrock/us-east-1/meta.llama3-8b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 0.6
+    },
+    "bedrock/us-east-1/minimax.minimax-m2.1": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2
+    },
+    "bedrock/us-east-1/minimax.minimax-m2.5": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2
+    },
+    "bedrock/us-east-1/mistral.mistral-7b-instruct-v0:2": {
+      "cacheReadPerMTok": 0.015,
+      "cacheWrite1hPerMTok": 0.3,
+      "cacheWrite5mPerMTok": 0.1875,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.2
+    },
+    "bedrock/us-east-1/mistral.mistral-large-2402-v1:0": {
+      "cacheReadPerMTok": 0.8,
+      "cacheWrite1hPerMTok": 16.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 24.0
+    },
+    "bedrock/us-east-1/mistral.mixtral-8x7b-instruct-v0:1": {
+      "cacheReadPerMTok": 0.045,
+      "cacheWrite1hPerMTok": 0.9,
+      "cacheWrite5mPerMTok": 0.5625,
+      "inputPerMTok": 0.45,
+      "outputPerMTok": 0.7
+    },
+    "bedrock/us-east-1/moonshotai.kimi-k2-thinking": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.5
+    },
+    "bedrock/us-east-1/moonshotai.kimi-k2.5": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 3.0
+    },
+    "bedrock/us-east-1/qwen.qwen3-coder-next": {
+      "cacheReadPerMTok": 0.05,
+      "cacheWrite1hPerMTok": 1.0,
+      "cacheWrite5mPerMTok": 0.625,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 1.2
+    },
+    "bedrock/us-east-1/zai.glm-5": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 3.2
+    },
+    "bedrock/us-east-2/deepseek.v3.2": {
+      "cacheReadPerMTok": 0.062,
+      "cacheWrite1hPerMTok": 1.24,
+      "cacheWrite5mPerMTok": 0.775,
+      "inputPerMTok": 0.62,
+      "outputPerMTok": 1.85
+    },
+    "bedrock/us-east-2/minimax.minimax-m2.1": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2
+    },
+    "bedrock/us-east-2/minimax.minimax-m2.5": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2
+    },
+    "bedrock/us-east-2/moonshotai.kimi-k2-thinking": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.5
+    },
+    "bedrock/us-east-2/moonshotai.kimi-k2.5": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 3.0
+    },
+    "bedrock/us-east-2/qwen.qwen3-coder-next": {
+      "cacheReadPerMTok": 0.05,
+      "cacheWrite1hPerMTok": 1.0,
+      "cacheWrite5mPerMTok": 0.625,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 1.2
+    },
+    "bedrock/us-gov-east-1/amazon.nova-pro-v1:0": {
+      "cacheReadPerMTok": 0.096,
+      "cacheWrite1hPerMTok": 1.92,
+      "cacheWrite5mPerMTok": 1.2,
+      "inputPerMTok": 0.96,
+      "outputPerMTok": 3.84
+    },
+    "bedrock/us-gov-east-1/amazon.titan-text-express-v1": {
+      "cacheReadPerMTok": 0.13,
+      "cacheWrite1hPerMTok": 2.6,
+      "cacheWrite5mPerMTok": 1.625,
+      "inputPerMTok": 1.3,
+      "outputPerMTok": 1.7
+    },
+    "bedrock/us-gov-east-1/amazon.titan-text-lite-v1": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 0.4
+    },
+    "bedrock/us-gov-east-1/amazon.titan-text-premier-v1:0": {
+      "cacheReadPerMTok": 0.05,
+      "cacheWrite1hPerMTok": 1.0,
+      "cacheWrite5mPerMTok": 0.625,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 1.5
+    },
+    "bedrock/us-gov-east-1/anthropic.claude-3-5-sonnet-20240620-v1:0": {
+      "cacheReadPerMTok": 0.36,
+      "cacheWrite1hPerMTok": 7.2,
+      "cacheWrite5mPerMTok": 4.5,
+      "inputPerMTok": 3.6,
+      "outputPerMTok": 18.0
+    },
+    "bedrock/us-gov-east-1/anthropic.claude-3-haiku-20240307-v1:0": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.5
+    },
+    "bedrock/us-gov-east-1/anthropic.claude-haiku-4-5-20251001-v1:0": {
+      "cacheReadPerMTok": 0.12,
+      "cacheWrite1hPerMTok": 2.4,
+      "cacheWrite5mPerMTok": 1.5,
+      "inputPerMTok": 1.2,
+      "outputPerMTok": 6.0
+    },
+    "bedrock/us-gov-east-1/anthropic.claude-sonnet-4-5-20250929-v1:0": {
+      "cacheReadPerMTok": 0.36,
+      "cacheWrite1hPerMTok": 7.2,
+      "cacheWrite5mPerMTok": 4.5,
+      "inputPerMTok": 3.6,
+      "outputPerMTok": 18.0
+    },
+    "bedrock/us-gov-east-1/claude-sonnet-4-5-20250929-v1:0": {
+      "cacheReadPerMTok": 0.36,
+      "cacheWrite1hPerMTok": 7.2,
+      "cacheWrite5mPerMTok": 4.5,
+      "inputPerMTok": 3.6,
+      "outputPerMTok": 18.0
+    },
+    "bedrock/us-gov-east-1/meta.llama3-70b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.265,
+      "cacheWrite1hPerMTok": 5.3,
+      "cacheWrite5mPerMTok": 3.3125,
+      "inputPerMTok": 2.65,
+      "outputPerMTok": 3.5
+    },
+    "bedrock/us-gov-east-1/meta.llama3-8b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.65
+    },
+    "bedrock/us-gov-west-1/amazon.nova-pro-v1:0": {
+      "cacheReadPerMTok": 0.096,
+      "cacheWrite1hPerMTok": 1.92,
+      "cacheWrite5mPerMTok": 1.2,
+      "inputPerMTok": 0.96,
+      "outputPerMTok": 3.84
+    },
+    "bedrock/us-gov-west-1/amazon.titan-text-express-v1": {
+      "cacheReadPerMTok": 0.13,
+      "cacheWrite1hPerMTok": 2.6,
+      "cacheWrite5mPerMTok": 1.625,
+      "inputPerMTok": 1.3,
+      "outputPerMTok": 1.7
+    },
+    "bedrock/us-gov-west-1/amazon.titan-text-lite-v1": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 0.4
+    },
+    "bedrock/us-gov-west-1/amazon.titan-text-premier-v1:0": {
+      "cacheReadPerMTok": 0.05,
+      "cacheWrite1hPerMTok": 1.0,
+      "cacheWrite5mPerMTok": 0.625,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 1.5
+    },
+    "bedrock/us-gov-west-1/anthropic.claude-3-5-sonnet-20240620-v1:0": {
+      "cacheReadPerMTok": 0.36,
+      "cacheWrite1hPerMTok": 7.2,
+      "cacheWrite5mPerMTok": 4.5,
+      "inputPerMTok": 3.6,
+      "outputPerMTok": 18.0
+    },
+    "bedrock/us-gov-west-1/anthropic.claude-3-7-sonnet-20250219-v1:0": {
+      "cacheReadPerMTok": 0.36,
+      "cacheWrite1hPerMTok": 7.2,
+      "cacheWrite5mPerMTok": 4.5,
+      "inputPerMTok": 3.6,
+      "outputPerMTok": 18.0
+    },
+    "bedrock/us-gov-west-1/anthropic.claude-3-haiku-20240307-v1:0": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.5
+    },
+    "bedrock/us-gov-west-1/anthropic.claude-haiku-4-5-20251001-v1:0": {
+      "cacheReadPerMTok": 0.12,
+      "cacheWrite1hPerMTok": 2.4,
+      "cacheWrite5mPerMTok": 1.5,
+      "inputPerMTok": 1.2,
+      "outputPerMTok": 6.0
+    },
+    "bedrock/us-gov-west-1/anthropic.claude-sonnet-4-5-20250929-v1:0": {
+      "cacheReadPerMTok": 0.36,
+      "cacheWrite1hPerMTok": 7.2,
+      "cacheWrite5mPerMTok": 4.5,
+      "inputPerMTok": 3.6,
+      "outputPerMTok": 18.0
+    },
+    "bedrock/us-gov-west-1/claude-sonnet-4-5-20250929-v1:0": {
+      "cacheReadPerMTok": 0.36,
+      "cacheWrite1hPerMTok": 7.2,
+      "cacheWrite5mPerMTok": 4.5,
+      "inputPerMTok": 3.6,
+      "outputPerMTok": 18.0
+    },
+    "bedrock/us-gov-west-1/meta.llama3-70b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.265,
+      "cacheWrite1hPerMTok": 5.3,
+      "cacheWrite5mPerMTok": 3.3125,
+      "inputPerMTok": 2.65,
+      "outputPerMTok": 3.5
+    },
+    "bedrock/us-gov-west-1/meta.llama3-8b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.65
+    },
+    "bedrock/us-west-1/meta.llama3-70b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.265,
+      "cacheWrite1hPerMTok": 5.3,
+      "cacheWrite5mPerMTok": 3.3125,
+      "inputPerMTok": 2.65,
+      "outputPerMTok": 3.5
+    },
+    "bedrock/us-west-1/meta.llama3-8b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 0.6
+    },
+    "bedrock/us-west-2/anthropic.claude-instant-v1": {
+      "cacheReadPerMTok": 0.08,
+      "cacheWrite1hPerMTok": 1.6,
+      "cacheWrite5mPerMTok": 1.0,
+      "inputPerMTok": 0.8,
+      "outputPerMTok": 2.4
+    },
+    "bedrock/us-west-2/anthropic.claude-v1": {
+      "cacheReadPerMTok": 0.8,
+      "cacheWrite1hPerMTok": 16.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 24.0
+    },
+    "bedrock/us-west-2/anthropic.claude-v2:1": {
+      "cacheReadPerMTok": 0.8,
+      "cacheWrite1hPerMTok": 16.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 24.0
+    },
+    "bedrock/us-west-2/deepseek.v3.2": {
+      "cacheReadPerMTok": 0.062,
+      "cacheWrite1hPerMTok": 1.24,
+      "cacheWrite5mPerMTok": 0.775,
+      "inputPerMTok": 0.62,
+      "outputPerMTok": 1.85
+    },
+    "bedrock/us-west-2/minimax.minimax-m2.1": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2
+    },
+    "bedrock/us-west-2/minimax.minimax-m2.5": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2
+    },
+    "bedrock/us-west-2/mistral.mistral-7b-instruct-v0:2": {
+      "cacheReadPerMTok": 0.015,
+      "cacheWrite1hPerMTok": 0.3,
+      "cacheWrite5mPerMTok": 0.1875,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.2
+    },
+    "bedrock/us-west-2/mistral.mistral-large-2402-v1:0": {
+      "cacheReadPerMTok": 0.8,
+      "cacheWrite1hPerMTok": 16.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 24.0
+    },
+    "bedrock/us-west-2/mistral.mixtral-8x7b-instruct-v0:1": {
+      "cacheReadPerMTok": 0.045,
+      "cacheWrite1hPerMTok": 0.9,
+      "cacheWrite5mPerMTok": 0.5625,
+      "inputPerMTok": 0.45,
+      "outputPerMTok": 0.7
+    },
+    "bedrock/us-west-2/moonshotai.kimi-k2-thinking": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.5
+    },
+    "bedrock/us-west-2/moonshotai.kimi-k2.5": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 3.0
+    },
+    "bedrock/us-west-2/qwen.qwen3-coder-next": {
+      "cacheReadPerMTok": 0.05,
+      "cacheWrite1hPerMTok": 1.0,
+      "cacheWrite5mPerMTok": 0.625,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 1.2
+    },
+    "bedrock/us-west-2/zai.glm-5": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 3.2
+    },
+    "bedrock/us.anthropic.claude-3-5-haiku-20241022-v1:0": {
+      "cacheReadPerMTok": 0.08,
+      "cacheWrite1hPerMTok": 1.6,
+      "cacheWrite5mPerMTok": 1.0,
+      "inputPerMTok": 0.8,
+      "outputPerMTok": 4.0
+    },
+    "chatgpt-4o-latest": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 15.0
+    },
+    "claude-3-7-sonnet-20250219": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "claude-3-haiku-20240307": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.5,
+      "cacheWrite5mPerMTok": 0.3,
+      "inputPerMTok": 0.25,
+      "outputPerMTok": 1.25
+    },
+    "claude-3-opus-20240229": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 75.0
+    },
+    "claude-4-opus-20250514": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 75.0
+    },
+    "claude-4-sonnet-20250514": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "claude-fable-5": {
+      "cacheReadPerMTok": 1.0,
+      "cacheWrite1hPerMTok": 20.0,
+      "cacheWrite5mPerMTok": 12.5,
+      "inputPerMTok": 10.0,
+      "outputPerMTok": 50.0
+    },
+    "claude-haiku-4-5": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 5.0
+    },
+    "claude-haiku-4-5-20251001": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 5.0
+    },
+    "claude-opus-4-1": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 75.0
+    },
+    "claude-opus-4-1-20250805": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 75.0
+    },
+    "claude-opus-4-20250514": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 75.0
+    },
+    "claude-opus-4-5": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "claude-opus-4-5-20251101": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "claude-opus-4-6": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "claude-opus-4-6-20260205": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "claude-opus-4-7": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "claude-opus-4-7-20260416": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "claude-opus-4-8": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "claude-sonnet-4-20250514": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "claude-sonnet-4-5": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "claude-sonnet-4-5-20250929": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "claude-sonnet-4-5-20250929-v1:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "claude-sonnet-4-6": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "claude-sonnet-5": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 10.0
+    },
+    "cohere.command-light-text-v14": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 0.6
+    },
+    "cohere.command-r-plus-v1:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "cohere.command-r-v1:0": {
+      "cacheReadPerMTok": 0.05,
+      "cacheWrite1hPerMTok": 1.0,
+      "cacheWrite5mPerMTok": 0.625,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 1.5
+    },
+    "cohere.command-text-v14": {
+      "cacheReadPerMTok": 0.15,
+      "cacheWrite1hPerMTok": 3.0,
+      "cacheWrite5mPerMTok": 1.875,
+      "inputPerMTok": 1.5,
+      "outputPerMTok": 2.0
+    },
+    "eu.anthropic.claude-3-5-haiku-20241022-v1:0": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.5,
+      "cacheWrite5mPerMTok": 0.3125,
+      "inputPerMTok": 0.25,
+      "outputPerMTok": 1.25
+    },
+    "eu.anthropic.claude-3-5-sonnet-20240620-v1:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "eu.anthropic.claude-3-5-sonnet-20241022-v2:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "eu.anthropic.claude-3-7-sonnet-20250219-v1:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "eu.anthropic.claude-3-haiku-20240307-v1:0": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.5,
+      "cacheWrite5mPerMTok": 0.3125,
+      "inputPerMTok": 0.25,
+      "outputPerMTok": 1.25
+    },
+    "eu.anthropic.claude-3-opus-20240229-v1:0": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 75.0
+    },
+    "eu.anthropic.claude-3-sonnet-20240229-v1:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "eu.meta.llama3-2-1b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.013,
+      "cacheWrite1hPerMTok": 0.26,
+      "cacheWrite5mPerMTok": 0.1625,
+      "inputPerMTok": 0.13,
+      "outputPerMTok": 0.13
+    },
+    "eu.meta.llama3-2-3b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.019,
+      "cacheWrite1hPerMTok": 0.38,
+      "cacheWrite5mPerMTok": 0.2375,
+      "inputPerMTok": 0.19,
+      "outputPerMTok": 0.19
+    },
+    "ft:gpt-3.5-turbo": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 6.0
+    },
+    "ft:gpt-3.5-turbo-0125": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 6.0
+    },
+    "ft:gpt-3.5-turbo-0613": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 6.0
+    },
+    "ft:gpt-3.5-turbo-1106": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 6.0
+    },
+    "ft:gpt-4-0613": {
+      "cacheReadPerMTok": 3.0,
+      "cacheWrite1hPerMTok": 60.0,
+      "cacheWrite5mPerMTok": 37.5,
+      "inputPerMTok": 30.0,
+      "outputPerMTok": 60.0
+    },
+    "ft:gpt-4.1-2025-04-14": {
+      "cacheReadPerMTok": 0.75,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 12.0
+    },
+    "ft:gpt-4.1-mini-2025-04-14": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 1.6,
+      "cacheWrite5mPerMTok": 1.0,
+      "inputPerMTok": 0.8,
+      "outputPerMTok": 3.2
+    },
+    "ft:gpt-4.1-nano-2025-04-14": {
+      "cacheReadPerMTok": 0.05,
+      "cacheWrite1hPerMTok": 0.4,
+      "cacheWrite5mPerMTok": 0.25,
+      "inputPerMTok": 0.2,
+      "outputPerMTok": 0.8
+    },
+    "ft:gpt-4o-2024-08-06": {
+      "cacheReadPerMTok": 1.875,
+      "cacheWrite1hPerMTok": 7.5,
+      "cacheWrite5mPerMTok": 4.6875,
+      "inputPerMTok": 3.75,
+      "outputPerMTok": 15.0
+    },
+    "ft:gpt-4o-2024-11-20": {
+      "cacheReadPerMTok": 0.375,
+      "cacheWrite1hPerMTok": 7.5,
+      "cacheWrite5mPerMTok": 1.875,
+      "inputPerMTok": 3.75,
+      "outputPerMTok": 15.0
+    },
+    "ft:gpt-4o-mini-2024-07-18": {
+      "cacheReadPerMTok": 0.15,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2
+    },
+    "ft:o4-mini-2025-04-16": {
+      "cacheReadPerMTok": 1.0,
+      "cacheWrite1hPerMTok": 8.0,
+      "cacheWrite5mPerMTok": 5.0,
+      "inputPerMTok": 4.0,
+      "outputPerMTok": 16.0
+    },
+    "gpt-3.5-turbo": {
+      "cacheReadPerMTok": 0.05,
+      "cacheWrite1hPerMTok": 1.0,
+      "cacheWrite5mPerMTok": 0.625,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 1.5
+    },
+    "gpt-3.5-turbo-0125": {
+      "cacheReadPerMTok": 0.05,
+      "cacheWrite1hPerMTok": 1.0,
+      "cacheWrite5mPerMTok": 0.625,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 1.5
+    },
+    "gpt-3.5-turbo-1106": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 2.0
+    },
+    "gpt-3.5-turbo-16k": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 4.0
+    },
+    "gpt-4": {
+      "cacheReadPerMTok": 3.0,
+      "cacheWrite1hPerMTok": 60.0,
+      "cacheWrite5mPerMTok": 37.5,
+      "inputPerMTok": 30.0,
+      "outputPerMTok": 60.0
+    },
+    "gpt-4-0125-preview": {
+      "cacheReadPerMTok": 1.0,
+      "cacheWrite1hPerMTok": 20.0,
+      "cacheWrite5mPerMTok": 12.5,
+      "inputPerMTok": 10.0,
+      "outputPerMTok": 30.0
+    },
+    "gpt-4-0314": {
+      "cacheReadPerMTok": 3.0,
+      "cacheWrite1hPerMTok": 60.0,
+      "cacheWrite5mPerMTok": 37.5,
+      "inputPerMTok": 30.0,
+      "outputPerMTok": 60.0
+    },
+    "gpt-4-0613": {
+      "cacheReadPerMTok": 3.0,
+      "cacheWrite1hPerMTok": 60.0,
+      "cacheWrite5mPerMTok": 37.5,
+      "inputPerMTok": 30.0,
+      "outputPerMTok": 60.0
+    },
+    "gpt-4-1106-preview": {
+      "cacheReadPerMTok": 1.0,
+      "cacheWrite1hPerMTok": 20.0,
+      "cacheWrite5mPerMTok": 12.5,
+      "inputPerMTok": 10.0,
+      "outputPerMTok": 30.0
+    },
+    "gpt-4-turbo": {
+      "cacheReadPerMTok": 1.0,
+      "cacheWrite1hPerMTok": 20.0,
+      "cacheWrite5mPerMTok": 12.5,
+      "inputPerMTok": 10.0,
+      "outputPerMTok": 30.0
+    },
+    "gpt-4-turbo-2024-04-09": {
+      "cacheReadPerMTok": 1.0,
+      "cacheWrite1hPerMTok": 20.0,
+      "cacheWrite5mPerMTok": 12.5,
+      "inputPerMTok": 10.0,
+      "outputPerMTok": 30.0
+    },
+    "gpt-4-turbo-preview": {
+      "cacheReadPerMTok": 1.0,
+      "cacheWrite1hPerMTok": 20.0,
+      "cacheWrite5mPerMTok": 12.5,
+      "inputPerMTok": 10.0,
+      "outputPerMTok": 30.0
+    },
+    "gpt-4.1": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 8.0
+    },
+    "gpt-4.1-2025-04-14": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 8.0
+    },
+    "gpt-4.1-mini": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 0.8,
+      "cacheWrite5mPerMTok": 0.5,
+      "inputPerMTok": 0.4,
+      "outputPerMTok": 1.6
+    },
+    "gpt-4.1-mini-2025-04-14": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 0.8,
+      "cacheWrite5mPerMTok": 0.5,
+      "inputPerMTok": 0.4,
+      "outputPerMTok": 1.6
+    },
+    "gpt-4.1-nano": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 0.125,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.4
+    },
+    "gpt-4.1-nano-2025-04-14": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 0.125,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.4
+    },
+    "gpt-4o": {
+      "cacheReadPerMTok": 1.25,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 10.0
+    },
+    "gpt-4o-2024-05-13": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 15.0
+    },
+    "gpt-4o-2024-08-06": {
+      "cacheReadPerMTok": 1.25,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 10.0
+    },
+    "gpt-4o-2024-11-20": {
+      "cacheReadPerMTok": 1.25,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 10.0
+    },
+    "gpt-4o-audio-preview": {
+      "cacheReadPerMTok": 0.25,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 10.0
+    },
+    "gpt-4o-audio-preview-2024-12-17": {
+      "cacheReadPerMTok": 0.25,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 10.0
+    },
+    "gpt-4o-audio-preview-2025-06-03": {
+      "cacheReadPerMTok": 0.25,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 10.0
+    },
+    "gpt-4o-mini": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 0.3,
+      "cacheWrite5mPerMTok": 0.1875,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.6
+    },
+    "gpt-4o-mini-2024-07-18": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 0.3,
+      "cacheWrite5mPerMTok": 0.1875,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.6
+    },
+    "gpt-4o-mini-audio-preview": {
+      "cacheReadPerMTok": 0.015,
+      "cacheWrite1hPerMTok": 0.3,
+      "cacheWrite5mPerMTok": 0.1875,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.6
+    },
+    "gpt-4o-mini-audio-preview-2024-12-17": {
+      "cacheReadPerMTok": 0.015,
+      "cacheWrite1hPerMTok": 0.3,
+      "cacheWrite5mPerMTok": 0.1875,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.6
+    },
+    "gpt-4o-mini-realtime-preview": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.4
+    },
+    "gpt-4o-mini-realtime-preview-2024-12-17": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.4
+    },
+    "gpt-4o-mini-search-preview": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 0.3,
+      "cacheWrite5mPerMTok": 0.1875,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.6
+    },
+    "gpt-4o-mini-search-preview-2025-03-11": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 0.3,
+      "cacheWrite5mPerMTok": 0.1875,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.6
+    },
+    "gpt-4o-realtime-preview": {
+      "cacheReadPerMTok": 2.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 20.0
+    },
+    "gpt-4o-realtime-preview-2024-12-17": {
+      "cacheReadPerMTok": 2.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 20.0
+    },
+    "gpt-4o-realtime-preview-2025-06-03": {
+      "cacheReadPerMTok": 2.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 20.0
+    },
+    "gpt-4o-search-preview": {
+      "cacheReadPerMTok": 1.25,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 10.0
+    },
+    "gpt-4o-search-preview-2025-03-11": {
+      "cacheReadPerMTok": 1.25,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 10.0
+    },
+    "gpt-5": {
+      "cacheReadPerMTok": 0.125,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 10.0
+    },
+    "gpt-5-2025-08-07": {
+      "cacheReadPerMTok": 0.125,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 10.0
+    },
+    "gpt-5-chat": {
+      "cacheReadPerMTok": 0.125,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 10.0
+    },
+    "gpt-5-chat-latest": {
+      "cacheReadPerMTok": 0.125,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 10.0
+    },
+    "gpt-5-mini": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.5,
+      "cacheWrite5mPerMTok": 0.3125,
+      "inputPerMTok": 0.25,
+      "outputPerMTok": 2.0
+    },
+    "gpt-5-mini-2025-08-07": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.5,
+      "cacheWrite5mPerMTok": 0.3125,
+      "inputPerMTok": 0.25,
+      "outputPerMTok": 2.0
+    },
+    "gpt-5-nano": {
+      "cacheReadPerMTok": 0.005,
+      "cacheWrite1hPerMTok": 0.1,
+      "cacheWrite5mPerMTok": 0.0625,
+      "inputPerMTok": 0.05,
+      "outputPerMTok": 0.4
+    },
+    "gpt-5-nano-2025-08-07": {
+      "cacheReadPerMTok": 0.005,
+      "cacheWrite1hPerMTok": 0.1,
+      "cacheWrite5mPerMTok": 0.0625,
+      "inputPerMTok": 0.05,
+      "outputPerMTok": 0.4
+    },
+    "gpt-5-search-api": {
+      "cacheReadPerMTok": 0.125,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 10.0
+    },
+    "gpt-5-search-api-2025-10-14": {
+      "cacheReadPerMTok": 0.125,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 10.0
+    },
+    "gpt-5.1": {
+      "cacheReadPerMTok": 0.125,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 10.0
+    },
+    "gpt-5.1-2025-11-13": {
+      "cacheReadPerMTok": 0.125,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 10.0
+    },
+    "gpt-5.1-chat-latest": {
+      "cacheReadPerMTok": 0.125,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 10.0
+    },
+    "gpt-5.2": {
+      "cacheReadPerMTok": 0.175,
+      "cacheWrite1hPerMTok": 3.5,
+      "cacheWrite5mPerMTok": 2.1875,
+      "inputPerMTok": 1.75,
+      "outputPerMTok": 14.0
+    },
+    "gpt-5.2-2025-12-11": {
+      "cacheReadPerMTok": 0.175,
+      "cacheWrite1hPerMTok": 3.5,
+      "cacheWrite5mPerMTok": 2.1875,
+      "inputPerMTok": 1.75,
+      "outputPerMTok": 14.0
+    },
+    "gpt-5.2-chat-latest": {
+      "cacheReadPerMTok": 0.175,
+      "cacheWrite1hPerMTok": 3.5,
+      "cacheWrite5mPerMTok": 2.1875,
+      "inputPerMTok": 1.75,
+      "outputPerMTok": 14.0
+    },
+    "gpt-5.3-chat-latest": {
+      "cacheReadPerMTok": 0.175,
+      "cacheWrite1hPerMTok": 3.5,
+      "cacheWrite5mPerMTok": 2.1875,
+      "inputPerMTok": 1.75,
+      "outputPerMTok": 14.0
+    },
+    "gpt-5.4": {
+      "cacheReadPerMTok": 0.25,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 15.0
+    },
+    "gpt-5.4-2026-03-05": {
+      "cacheReadPerMTok": 0.25,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 15.0
+    },
+    "gpt-5.4-mini": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 1.5,
+      "cacheWrite5mPerMTok": 0.9375,
+      "inputPerMTok": 0.75,
+      "outputPerMTok": 4.5
+    },
+    "gpt-5.4-mini-2026-03-17": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 1.5,
+      "cacheWrite5mPerMTok": 0.9375,
+      "inputPerMTok": 0.75,
+      "outputPerMTok": 4.5
+    },
+    "gpt-5.4-nano": {
+      "cacheReadPerMTok": 0.02,
+      "cacheWrite1hPerMTok": 0.4,
+      "cacheWrite5mPerMTok": 0.25,
+      "inputPerMTok": 0.2,
+      "outputPerMTok": 1.25
+    },
+    "gpt-5.4-nano-2026-03-17": {
+      "cacheReadPerMTok": 0.02,
+      "cacheWrite1hPerMTok": 0.4,
+      "cacheWrite5mPerMTok": 0.25,
+      "inputPerMTok": 0.2,
+      "outputPerMTok": 1.25
+    },
+    "gpt-5.5": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 30.0
+    },
+    "gpt-5.5-2026-04-23": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 30.0
+    },
+    "gpt-audio": {
+      "cacheReadPerMTok": 0.25,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 10.0
+    },
+    "gpt-audio-1.5": {
+      "cacheReadPerMTok": 0.25,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 10.0
+    },
+    "gpt-audio-2025-08-28": {
+      "cacheReadPerMTok": 0.25,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 10.0
+    },
+    "gpt-audio-mini": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.4
+    },
+    "gpt-audio-mini-2025-10-06": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.4
+    },
+    "gpt-audio-mini-2025-12-15": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.4
+    },
+    "gpt-realtime": {
+      "cacheReadPerMTok": 0.4,
+      "cacheWrite1hPerMTok": 8.0,
+      "cacheWrite5mPerMTok": 5.0,
+      "inputPerMTok": 4.0,
+      "outputPerMTok": 16.0
+    },
+    "gpt-realtime-1.5": {
+      "cacheReadPerMTok": 0.4,
+      "cacheWrite1hPerMTok": 8.0,
+      "cacheWrite5mPerMTok": 5.0,
+      "inputPerMTok": 4.0,
+      "outputPerMTok": 16.0
+    },
+    "gpt-realtime-2": {
+      "cacheReadPerMTok": 0.4,
+      "cacheWrite1hPerMTok": 8.0,
+      "cacheWrite5mPerMTok": 5.0,
+      "inputPerMTok": 4.0,
+      "outputPerMTok": 16.0
+    },
+    "gpt-realtime-2025-08-28": {
+      "cacheReadPerMTok": 0.4,
+      "cacheWrite1hPerMTok": 8.0,
+      "cacheWrite5mPerMTok": 5.0,
+      "inputPerMTok": 4.0,
+      "outputPerMTok": 16.0
+    },
+    "gpt-realtime-mini": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.4
+    },
+    "gpt-realtime-mini-2025-10-06": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.4
+    },
+    "gpt-realtime-mini-2025-12-15": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.4
+    },
+    "meta.llama2-13b-chat-v1": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 1.5,
+      "cacheWrite5mPerMTok": 0.9375,
+      "inputPerMTok": 0.75,
+      "outputPerMTok": 1.0
+    },
+    "meta.llama2-70b-chat-v1": {
+      "cacheReadPerMTok": 0.195,
+      "cacheWrite1hPerMTok": 3.9,
+      "cacheWrite5mPerMTok": 2.4375,
+      "inputPerMTok": 1.95,
+      "outputPerMTok": 2.56
+    },
+    "meta.llama3-1-405b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.532,
+      "cacheWrite1hPerMTok": 10.64,
+      "cacheWrite5mPerMTok": 6.65,
+      "inputPerMTok": 5.32,
+      "outputPerMTok": 16.0
+    },
+    "meta.llama3-1-70b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.099,
+      "cacheWrite1hPerMTok": 1.98,
+      "cacheWrite5mPerMTok": 1.2375,
+      "inputPerMTok": 0.99,
+      "outputPerMTok": 0.99
+    },
+    "meta.llama3-1-8b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.022,
+      "cacheWrite1hPerMTok": 0.44,
+      "cacheWrite5mPerMTok": 0.275,
+      "inputPerMTok": 0.22,
+      "outputPerMTok": 0.22
+    },
+    "meta.llama3-2-11b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.035,
+      "cacheWrite1hPerMTok": 0.7,
+      "cacheWrite5mPerMTok": 0.4375,
+      "inputPerMTok": 0.35,
+      "outputPerMTok": 0.35
+    },
+    "meta.llama3-2-1b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.01,
+      "cacheWrite1hPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 0.125,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.1
+    },
+    "meta.llama3-2-3b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.015,
+      "cacheWrite1hPerMTok": 0.3,
+      "cacheWrite5mPerMTok": 0.1875,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.15
+    },
+    "meta.llama3-2-90b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 2.0
+    },
+    "meta.llama3-70b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.265,
+      "cacheWrite1hPerMTok": 5.3,
+      "cacheWrite5mPerMTok": 3.3125,
+      "inputPerMTok": 2.65,
+      "outputPerMTok": 3.5
+    },
+    "meta.llama3-8b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 0.6
+    },
+    "mistral.mistral-7b-instruct-v0:2": {
+      "cacheReadPerMTok": 0.015,
+      "cacheWrite1hPerMTok": 0.3,
+      "cacheWrite5mPerMTok": 0.1875,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.2
+    },
+    "mistral.mistral-large-2402-v1:0": {
+      "cacheReadPerMTok": 0.8,
+      "cacheWrite1hPerMTok": 16.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "outputPerMTok": 24.0
+    },
+    "mistral.mistral-large-2407-v1:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 9.0
+    },
+    "mistral.mistral-small-2402-v1:0": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 3.0
+    },
+    "mistral.mixtral-8x7b-instruct-v0:1": {
+      "cacheReadPerMTok": 0.045,
+      "cacheWrite1hPerMTok": 0.9,
+      "cacheWrite5mPerMTok": 0.5625,
+      "inputPerMTok": 0.45,
+      "outputPerMTok": 0.7
+    },
+    "o1": {
+      "cacheReadPerMTok": 7.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 60.0
+    },
+    "o1-2024-12-17": {
+      "cacheReadPerMTok": 7.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 60.0
+    },
+    "o3": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 8.0
+    },
+    "o3-2025-04-16": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 8.0
+    },
+    "o3-mini": {
+      "cacheReadPerMTok": 0.55,
+      "cacheWrite1hPerMTok": 2.2,
+      "cacheWrite5mPerMTok": 1.375,
+      "inputPerMTok": 1.1,
+      "outputPerMTok": 4.4
+    },
+    "o3-mini-2025-01-31": {
+      "cacheReadPerMTok": 0.55,
+      "cacheWrite1hPerMTok": 2.2,
+      "cacheWrite5mPerMTok": 1.375,
+      "inputPerMTok": 1.1,
+      "outputPerMTok": 4.4
+    },
+    "o4-mini": {
+      "cacheReadPerMTok": 0.275,
+      "cacheWrite1hPerMTok": 2.2,
+      "cacheWrite5mPerMTok": 1.375,
+      "inputPerMTok": 1.1,
+      "outputPerMTok": 4.4
+    },
+    "o4-mini-2025-04-16": {
+      "cacheReadPerMTok": 0.275,
+      "cacheWrite1hPerMTok": 2.2,
+      "cacheWrite5mPerMTok": 1.375,
+      "inputPerMTok": 1.1,
+      "outputPerMTok": 4.4
+    },
+    "us.anthropic.claude-3-5-haiku-20241022-v1:0": {
+      "cacheReadPerMTok": 0.08,
+      "cacheWrite1hPerMTok": 1.6,
+      "cacheWrite5mPerMTok": 1.0,
+      "inputPerMTok": 0.8,
+      "outputPerMTok": 4.0
+    },
+    "us.anthropic.claude-3-5-sonnet-20240620-v1:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "us.anthropic.claude-3-5-sonnet-20241022-v2:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "us.anthropic.claude-3-haiku-20240307-v1:0": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.5,
+      "cacheWrite5mPerMTok": 0.3125,
+      "inputPerMTok": 0.25,
+      "outputPerMTok": 1.25
+    },
+    "us.anthropic.claude-3-opus-20240229-v1:0": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 75.0
+    },
+    "us.anthropic.claude-3-sonnet-20240229-v1:0": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "us.meta.llama3-1-405b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.532,
+      "cacheWrite1hPerMTok": 10.64,
+      "cacheWrite5mPerMTok": 6.65,
+      "inputPerMTok": 5.32,
+      "outputPerMTok": 16.0
+    },
+    "us.meta.llama3-1-70b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.099,
+      "cacheWrite1hPerMTok": 1.98,
+      "cacheWrite5mPerMTok": 1.2375,
+      "inputPerMTok": 0.99,
+      "outputPerMTok": 0.99
+    },
+    "us.meta.llama3-1-8b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.022,
+      "cacheWrite1hPerMTok": 0.44,
+      "cacheWrite5mPerMTok": 0.275,
+      "inputPerMTok": 0.22,
+      "outputPerMTok": 0.22
+    },
+    "us.meta.llama3-2-11b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.035,
+      "cacheWrite1hPerMTok": 0.7,
+      "cacheWrite5mPerMTok": 0.4375,
+      "inputPerMTok": 0.35,
+      "outputPerMTok": 0.35
+    },
+    "us.meta.llama3-2-1b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.01,
+      "cacheWrite1hPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 0.125,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.1
+    },
+    "us.meta.llama3-2-3b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.015,
+      "cacheWrite1hPerMTok": 0.3,
+      "cacheWrite5mPerMTok": 0.1875,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.15
+    },
+    "us.meta.llama3-2-90b-instruct-v1:0": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 2.0
+    },
+    "vertex_ai/claude-3-5-haiku": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 5.0
+    },
+    "vertex_ai/claude-3-5-haiku@20241022": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 5.0
+    },
+    "vertex_ai/claude-3-5-sonnet": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "vertex_ai/claude-3-5-sonnet@20240620": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "vertex_ai/claude-3-7-sonnet@20250219": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "vertex_ai/claude-3-haiku": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.5,
+      "cacheWrite5mPerMTok": 0.3125,
+      "inputPerMTok": 0.25,
+      "outputPerMTok": 1.25
+    },
+    "vertex_ai/claude-3-haiku@20240307": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.5,
+      "cacheWrite5mPerMTok": 0.3125,
+      "inputPerMTok": 0.25,
+      "outputPerMTok": 1.25
+    },
+    "vertex_ai/claude-3-opus": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 75.0
+    },
+    "vertex_ai/claude-3-opus@20240229": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 75.0
+    },
+    "vertex_ai/claude-3-sonnet": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "vertex_ai/claude-3-sonnet@20240229": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "vertex_ai/claude-fable-5": {
+      "cacheReadPerMTok": 1.0,
+      "cacheWrite1hPerMTok": 20.0,
+      "cacheWrite5mPerMTok": 12.5,
+      "inputPerMTok": 10.0,
+      "outputPerMTok": 50.0
+    },
+    "vertex_ai/claude-fable-5@default": {
+      "cacheReadPerMTok": 1.0,
+      "cacheWrite1hPerMTok": 20.0,
+      "cacheWrite5mPerMTok": 12.5,
+      "inputPerMTok": 10.0,
+      "outputPerMTok": 50.0
+    },
+    "vertex_ai/claude-haiku-4-5": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 5.0
+    },
+    "vertex_ai/claude-haiku-4-5@20251001": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 5.0
+    },
+    "vertex_ai/claude-opus-4": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 75.0
+    },
+    "vertex_ai/claude-opus-4-1": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 75.0
+    },
+    "vertex_ai/claude-opus-4-1@20250805": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 75.0
+    },
+    "vertex_ai/claude-opus-4-5": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "vertex_ai/claude-opus-4-5@20251101": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "vertex_ai/claude-opus-4-6": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "vertex_ai/claude-opus-4-6@default": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "vertex_ai/claude-opus-4-7": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "vertex_ai/claude-opus-4-7@default": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "vertex_ai/claude-opus-4-8": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "vertex_ai/claude-opus-4-8@default": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "vertex_ai/claude-opus-4@20250514": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite5mPerMTok": 18.75,
+      "inputPerMTok": 15.0,
+      "outputPerMTok": 75.0
+    },
+    "vertex_ai/claude-sonnet-4": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "vertex_ai/claude-sonnet-4-5": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "vertex_ai/claude-sonnet-4-5@20250929": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "vertex_ai/claude-sonnet-4-6": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "vertex_ai/claude-sonnet-4-6@default": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "vertex_ai/claude-sonnet-4@20250514": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 6.0,
+      "cacheWrite5mPerMTok": 3.75,
+      "inputPerMTok": 3.0,
+      "outputPerMTok": 15.0
+    },
+    "vertex_ai/claude-sonnet-5": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 10.0
+    },
+    "vertex_ai/claude-sonnet-5@default": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 10.0
+    }
+  },
+  "snapshotVersion": "2026-07-09",
+  "source": "litellm"
+}

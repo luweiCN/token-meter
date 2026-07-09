@@ -28,6 +28,9 @@ let package = Package(
         .target(
             name: "TokenMeterCore",
             dependencies: ["CSQLite"],
+            resources: [
+                .process("Resources")
+            ],
             linkerSettings: [
                 .linkedLibrary("sqlite3")
             ]

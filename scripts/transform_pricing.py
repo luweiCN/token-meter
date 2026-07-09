@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""把 LiteLLM 的定价表转成 TokenMeter 的快照格式。
+
+LiteLLM 的价格是「每 token 美元」，输出改成「每百万 token 美元」。
+LiteLLM 未显式给出 cache 费率时按 ccgauge 已验证的默认值派生。
+从 stdin 读 LiteLLM JSON，往 stdout 写快照 JSON。
+"""
+import json
+import sys
+from datetime import date
+
+KEEP_PROVIDERS = {"anthropic", "openai", "vertex_ai-anthropic_models", "bedrock", "zhipuai"}
+M = 1_000_000
+
+
+def main() -> None:
+    raw = json.load(sys.stdin)
+    models = {}
+
+    for name, spec in raw.items():
+        if name == "sample_spec" or not isinstance(spec, dict):
+            continue
+        if spec.get("mode") != "chat":
+            continue
+        if spec.get("litellm_provider") not in KEEP_PROVIDERS:
+            continue
+
+        input_cost = spec.get("input_cost_per_token")
+        output_cost = spec.get("output_cost_per_token")
+        if not input_cost or not output_cost:
+            continue
+
+        input_m = input_cost * M
+        output_m = output_cost * M
+        cache_read = spec.get("cache_read_input_token_cost")
+        cache_write = spec.get("cache_creation_input_token_cost")
+
+        models[name] = {
+            "inputPerMTok": round(input_m, 6),
+            "outputPerMTok": round(output_m, 6),
+            "cacheReadPerMTok": round(cache_read * M if cache_read else input_m * 0.1, 6),
+            "cacheWrite5mPerMTok": round(cache_write * M if cache_write else input_m * 1.25, 6),
+            "cacheWrite1hPerMTok": round(input_m * 2.0, 6),
+        }
+
+    json.dump(
+        {"snapshotVersion": date.today().isoformat(), "source": "litellm", "models": models},
+        sys.stdout,
+        indent=2,
+        sort_keys=True,
+    )
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    main()
