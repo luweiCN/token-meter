@@ -265,7 +265,11 @@ CREATE TABLE model_pricing (
 3. 去掉 provider 前缀 `vertex_ai/`、`bedrock/`、`anthropic/`
 4. 按家族名兜底（fable / opus / sonnet / haiku / gpt-5 …）
 
-LiteLLM 未显式给出 cache 费率时的默认值：`cache_read = input × 0.1`，`cache_write_5m = input × 1.25`，`cache_write_1h = input × 2`。
+缓存费率**优先取 LiteLLM 的真实字段**（`cache_read_input_token_cost`、`cache_creation_input_token_cost`、`cache_creation_input_token_cost_above_1hr`，分别覆盖 669 / 225 / 113 个模型）。仅在字段缺失时才回落到派生值：`cache_read = input × 0.1`，`cache_write_5m = input × 1.25`，`cache_write_1h = input × 2`。
+
+不要把 `input × 2` 当成 1 小时缓存的固定倍率。经核实，`claude-fable-5` 与 `claude-haiku-4-5` 的实际比值确为 2.00，但 `claude-3-opus` 是 0.40、`claude-3-haiku` 是 24.00。
+
+**LiteLLM 已把智谱的 provider slug 从 `zhipuai` 改为 `zai`。** 抓取脚本若仍按 `zhipuai` 过滤，`glm-4.6` 等模型会一条定价都拿不到，成本静默变成 `unknown`。快照 key 形如 `zai/glm-4.6`，而 OpenCode 上报的是裸 `glm-4.6`，因此 `ModelNameNormalizer` 的前缀表必须包含 `zai/`。
 
 ### 5.3 计价时机
 

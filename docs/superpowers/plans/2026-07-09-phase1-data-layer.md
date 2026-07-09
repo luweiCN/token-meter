@@ -381,7 +381,8 @@ public enum ModelNameNormalizer {
         "bedrock/",
         "anthropic/",
         "openai/",
-        "openai-codex/"
+        "openai-codex/",
+        "zai/"          // LiteLLM 用 zai/glm-4.6 作 key，OpenCode 上报的是裸 glm-4.6
     ]
 
     public static func canonical(_ raw: String?) -> String {
@@ -709,7 +710,9 @@ import json
 import sys
 from datetime import date
 
-KEEP_PROVIDERS = {"anthropic", "openai", "vertex_ai-anthropic_models", "bedrock", "zhipuai"}
+# 注意：LiteLLM 已把智谱的 provider slug 从 zhipuai 改成 zai。
+# 写成 zhipuai 会让 glm-4.6 等模型一条定价都拿不到，成本静默变成 unknown。
+KEEP_PROVIDERS = {"anthropic", "openai", "vertex_ai-anthropic_models", "bedrock", "zai"}
 M = 1_000_000
 
 
@@ -734,13 +737,16 @@ def main() -> None:
         output_m = output_cost * M
         cache_read = spec.get("cache_read_input_token_cost")
         cache_write = spec.get("cache_creation_input_token_cost")
+        # LiteLLM 有 113 个模型给出了真实的 1h 缓存写入价，用它。
+        # 别硬编码 input*2：claude-3-opus 的实际比值是 0.40，claude-3-haiku 是 24.00。
+        cache_write_1h = spec.get("cache_creation_input_token_cost_above_1hr")
 
         models[name] = {
             "inputPerMTok": round(input_m, 6),
             "outputPerMTok": round(output_m, 6),
             "cacheReadPerMTok": round(cache_read * M if cache_read else input_m * 0.1, 6),
             "cacheWrite5mPerMTok": round(cache_write * M if cache_write else input_m * 1.25, 6),
-            "cacheWrite1hPerMTok": round(input_m * 2.0, 6),
+            "cacheWrite1hPerMTok": round(cache_write_1h * M if cache_write_1h else input_m * 2.0, 6),
         }
 
     json.dump(
