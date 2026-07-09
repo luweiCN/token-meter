@@ -32,6 +32,16 @@
 
 因此 **Codex adapter 必须做 `inputTokens = input_tokens - cached_input_tokens` 这个减法**，其余三个源原样取值。不做这个减法，Codex 的 token 会被计成近两倍。
 
+### 流式约束（不可退化）
+
+基线 commit `13ae94a` 已经把 parser 改成了**流式**：`LocalAgentSessionStreamingParser` 协议提供 `consume(_:)` / `finish(_:)`，`JSONLStreamReader.readLines(from:startingAt:onLine:)` 逐行回调。
+
+**必须保持流式。** 本机最大的 Codex session 文件是 3.28 GB / 257,115 行。任何返回 `[JSONLLine]` 数组的路径都会把整个文件materialize进内存。
+
+要流式的是**行**，不是**事件**：那个文件里只有 36,293 条 `token_count`，转成 `UsageEvent` 约 3.6 MB，累积在内存里毫无压力。所以 `finish()` 返回完整的 `[UsageEvent]` 是安全的。
+
+parser 因此是 `class`（`consume` 要改内部状态），协议加 `AnyObject` 约束。为了让测试可读，协议扩展提供一个静态便利方法一次性喂完所有行——**生产路径不得使用它**。
+
 ---
 
 ## File Structure
@@ -58,12 +68,12 @@
 |---|---|
 | `Sources/TokenMeterCore/TokenMeterDatabaseSchema.swift` | 新增 `v2` 与 `dropV1Tables` |
 | `Sources/TokenMeterCore/TokenMeterDatabaseMigrator.swift` | v0→v2 与 v1→v2 两条路径 |
-| `Sources/TokenMeterCore/LocalAgentSessionParsers.swift` | 协议签名改为输出 `[UsageEvent]` |
-| `Sources/TokenMeterCore/ClaudeCodeSessionParser.swift` | 不再 aggregate |
-| `Sources/TokenMeterCore/CodexSessionParser.swift` | 语义归一 + 差分 + 畸形事件 |
-| `Sources/TokenMeterCore/OmpSessionParser.swift` | 不再 aggregate |
-| `Sources/TokenMeterCore/OpenCodeSessionAdapter.swift` | 移除 `mergeUsage` |
-| `Sources/TokenMeterCore/JSONLStreamReader.swift` | 逐字节循环重写 + 字节预筛 |
+| `Sources/TokenMeterCore/LocalAgentSessionParsers.swift` | 流式协议 `finish()` 返回 `[UsageEvent]`；删除旧的一次性 `parse(lines:sourceURL:)` |
+| `Sources/TokenMeterCore/ClaudeCodeSessionParser.swift` | 改 `class`，`consume`/`finish`，不再 aggregate；取代基线的 `ClaudeCodeStreamingParser` |
+| `Sources/TokenMeterCore/CodexSessionParser.swift` | 改 `class`，语义归一 + 差分 + 畸形事件；取代基线的 `CodexStreamingParser` |
+| `Sources/TokenMeterCore/OmpSessionParser.swift` | 改 `class`，不再 aggregate；取代基线的 `OmpStreamingParser` |
+| `Sources/TokenMeterCore/OpenCodeSessionAdapter.swift` | 移除 `mergeUsage`（SQLite 源不走流式协议） |
+| `Sources/TokenMeterCore/JSONLStreamReader.swift` | 逐字节循环重写 + 字节预筛（onLine 版本已在基线中） |
 | `Sources/TokenMeterCore/LocalAgentScanner.swift` | 断点续读按 `source_file_id` |
 | `Sources/TokenMeterCore/LocalAgentUsageRepository.swift` | 委托给 `UsageEventWriter` |
 | `Package.swift` | `TokenMeterCore` 增加 `resources` |
@@ -1231,7 +1241,7 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
             line(#"{"type":"assistant","timestamp":"2026-07-08T02:00:00Z","sessionId":"s1","requestId":"req_2","message":{"id":"msg_2","role":"assistant","model":"claude-opus-4-8","usage":{"input_tokens":200,"output_tokens":20}}}"#, offset: 1)
         ]
 
-        let (session, state) = try ClaudeCodeSessionParser().parse(
+        let (session, state) = try ClaudeCodeSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil
         )
 
@@ -1260,7 +1270,7 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
             line(#"{"type":"assistant","timestamp":"2026-07-08T00:30:00Z","sessionId":"s1","requestId":"r2","message":{"id":"m2","role":"assistant","model":"m","usage":{"input_tokens":1}}}"#, offset: 1)
         ]
 
-        let (session, _) = try ClaudeCodeSessionParser().parse(
+        let (session, _) = try ClaudeCodeSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil
         )
 
@@ -1275,7 +1285,7 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
             line(#"{"type":"assistant","timestamp":"2026-07-08T01:00:00Z","sessionId":"s1","requestId":"r1","message":{"id":"m1","role":"assistant","model":"m","usage":{"input_tokens":1,"cache_creation_input_tokens":300}}}"#, offset: 0)
         ]
 
-        let (session, _) = try ClaudeCodeSessionParser().parse(
+        let (session, _) = try ClaudeCodeSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil
         )
 
@@ -1289,7 +1299,7 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
             line(#"{"type":"assistant","timestamp":"2026-07-08T01:00:00Z","sessionId":"s1","requestId":"r1","isSidechain":true,"message":{"id":"m1","role":"assistant","model":"m","usage":{"input_tokens":1}}}"#, offset: 0)
         ]
 
-        let (session, _) = try ClaudeCodeSessionParser().parse(
+        let (session, _) = try ClaudeCodeSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil
         )
 
@@ -1302,7 +1312,7 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
             line(#"{"type":"assistant","timestamp":"2026-07-08T01:00:01Z","sessionId":"s1","message":{"id":"m1","role":"assistant","model":"m"}}"#, offset: 1)
         ]
 
-        let (session, _) = try ClaudeCodeSessionParser().parse(
+        let (session, _) = try ClaudeCodeSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil
         )
 
@@ -1315,7 +1325,7 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
             line(#"{"type":"assistant","timestamp":"2026-07-08T01:00:00Z","sessionId":"s1","requestId":"r9","message":{"id":"m9","role":"assistant","model":"m","usage":{"input_tokens":1}}}"#, offset: 500)
         ]
 
-        let (session, state) = try ClaudeCodeSessionParser().parse(
+        let (session, state) = try ClaudeCodeSessionParser.parse(
             lines: lines,
             sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"),
             resuming: ParserState(lastEventSeq: 7)
@@ -1329,7 +1339,7 @@ final class ClaudeCodeSessionParserTests: XCTestCase {
     func testThrowsWhenSessionKeyMissing() {
         let lines = [line(#"{"type":"assistant","message":{"role":"assistant"}}"#, offset: 0)]
         XCTAssertThrowsError(
-            try ClaudeCodeSessionParser().parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil)
+            try ClaudeCodeSessionParser.parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil)
         ) { error in
             XCTAssertEqual(error as? LocalAgentParserError, .missingSessionKey)
         }
@@ -1344,95 +1354,103 @@ Expected: 编译失败，`extra argument 'resuming' in call`
 
 - [ ] **Step 3: 实现**
 
-`Sources/TokenMeterCore/LocalAgentSessionParsers.swift:3-5` 替换协议：
+`Sources/TokenMeterCore/LocalAgentSessionParsers.swift` 中，**删除**旧的 `LocalAgentSessionParser`（一次性 `parse(lines:sourceURL:)`）和旧的 `LocalAgentSessionStreamingParser`（它的 `latestTokenUsageIsCumulative` 语义已被 `ParserState.lastCumulative` 取代），替换为：
 
 ```swift
-public protocol LocalAgentSessionParser {
-    /// 把一批 JSONL 行解析成 delta 事件流。
-    /// - Parameter state: 增量续读时上一次的解析状态；首次解析传 nil。
-    func parse(
+/// parser 是流式的：逐行 consume，最后 finish 出完整事件列表。
+/// 3.28 GB 的 Codex session 文件不能把 [JSONLLine] 全部读进内存。
+public protocol LocalAgentSessionStreamingParser: AnyObject {
+    init(resuming state: ParserState?)
+    func consume(_ line: JSONLLine)
+    func finish(sourceURL: URL) throws -> (session: ParsedSession, state: ParserState)
+}
+
+public extension LocalAgentSessionStreamingParser {
+    /// 测试便利方法，一次性喂完所有行。
+    /// **生产路径不得使用**：必须走 JSONLStreamReader 的 onLine 回调。
+    static func parse(
         lines: [JSONLLine],
         sourceURL: URL,
-        resuming state: ParserState?
-    ) throws -> (session: ParsedSession, state: ParserState)
+        resuming state: ParserState? = nil
+    ) throws -> (session: ParsedSession, state: ParserState) {
+        let parser = Self(resuming: state)
+        for line in lines { parser.consume(line) }
+        return try parser.finish(sourceURL: sourceURL)
+    }
 }
 ```
-
-删除 `LocalAgentSessionStreamingParser` 协议（`LocalAgentSessionParsers.swift:7-12`）——它的 `latestTokenUsageIsCumulative` 语义已被 `ParserState.lastCumulative` 取代。
 
 `Sources/TokenMeterCore/ClaudeCodeSessionParser.swift` 全文替换：
 
 ```swift
 import Foundation
 
-public struct ClaudeCodeSessionParser: LocalAgentSessionParser {
-    public init() {}
+public final class ClaudeCodeSessionParser: LocalAgentSessionStreamingParser {
+    private var sessionKey: String?
+    private var projectPath: String?
+    private var cliVersion: String?
+    private var startedAt: Date?
+    private var updatedAt: Date?
+    private var events: [UsageEvent] = []
+    private var eventSeq: Int
+    private let dateFormatters = ClaudeCodeSessionParser.makeDateFormatters()
 
-    public func parse(
-        lines: [JSONLLine],
-        sourceURL: URL,
-        resuming state: ParserState?
-    ) throws -> (session: ParsedSession, state: ParserState) {
-        var sessionKey: String?
-        var projectPath: String?
-        var cliVersion: String?
-        var startedAt: Date?
-        var updatedAt: Date?
-        var events: [UsageEvent] = []
-        var eventSeq = state?.lastEventSeq ?? 0
-        let dateFormatters = makeDateFormatters()
+    public init(resuming state: ParserState?) {
+        eventSeq = state?.lastEventSeq ?? 0
+    }
 
-        for line in lines {
-            guard let object = JSONDictionary.object(from: line.text) else { continue }
+    public func consume(_ line: JSONLLine) {
+        guard let object = JSONDictionary.object(from: line.text) else { return }
 
-            sessionKey = firstString(in: object, keys: ["sessionId", "session_id", "leafUuid", "leaf_uuid"]) ?? sessionKey
-            projectPath = firstString(in: object, keys: ["cwd", "project_path", "projectPath"]) ?? projectPath
-            cliVersion = firstString(in: object, keys: ["version", "cliVersion", "cli_version"]) ?? cliVersion
+        sessionKey = firstString(in: object, keys: ["sessionId", "session_id", "leafUuid", "leaf_uuid"]) ?? sessionKey
+        projectPath = firstString(in: object, keys: ["cwd", "project_path", "projectPath"]) ?? projectPath
+        cliVersion = firstString(in: object, keys: ["version", "cliVersion", "cli_version"]) ?? cliVersion
 
-            let timestamp = timestamp(in: object, dateFormatters: dateFormatters)
-            if let timestamp {
-                if startedAt == nil { startedAt = timestamp }
-                updatedAt = timestamp
-            }
-
-            guard let message = JSONDictionary.dictionary(object, "message"),
-                  let usageObject = JSONDictionary.dictionary(message, "usage"),
-                  let observedAt = timestamp else {
-                continue
-            }
-
-            let type = firstString(in: object, keys: ["type"])
-            let role = firstString(in: message, keys: ["role"])
-            guard type == nil || type == "assistant" || role == "assistant" else { continue }
-
-            let inputTokens = JSONDictionary.int64(usageObject, "input_tokens") ?? 0
-            let outputTokens = JSONDictionary.int64(usageObject, "output_tokens") ?? 0
-            let cacheReadTokens = JSONDictionary.int64(usageObject, "cache_read_input_tokens") ?? 0
-            let (write5m, write1h) = cacheWriteTiers(in: usageObject)
-
-            guard inputTokens + outputTokens + cacheReadTokens + write5m + write1h > 0 else { continue }
-
-            eventSeq += 1
-            events.append(
-                UsageEvent(
-                    eventSeq: eventSeq,
-                    observedAt: observedAt,
-                    modelName: firstString(in: message, keys: ["model", "modelName", "model_name"]),
-                    messageId: firstString(in: message, keys: ["id"]),
-                    requestId: firstString(in: object, keys: ["requestId", "request_id"]),
-                    inputTokens: inputTokens,
-                    outputTokens: outputTokens,
-                    reasoningTokens: 0,
-                    cacheReadTokens: cacheReadTokens,
-                    cacheWrite5mTokens: write5m,
-                    cacheWrite1hTokens: write1h,
-                    reportedCostUSDMicros: nil,
-                    sourceOffset: line.offset,
-                    isSidechain: bool(in: object, keys: ["isSidechain", "is_sidechain"]) ?? false
-                )
-            )
+        let timestamp = timestamp(in: object)
+        if let timestamp {
+            if startedAt == nil { startedAt = timestamp }
+            updatedAt = timestamp
         }
 
+        guard let message = JSONDictionary.dictionary(object, "message"),
+              let usageObject = JSONDictionary.dictionary(message, "usage"),
+              let observedAt = timestamp else {
+            return
+        }
+
+        let type = firstString(in: object, keys: ["type"])
+        let role = firstString(in: message, keys: ["role"])
+        guard type == nil || type == "assistant" || role == "assistant" else { return }
+
+        let inputTokens = JSONDictionary.int64(usageObject, "input_tokens") ?? 0
+        let outputTokens = JSONDictionary.int64(usageObject, "output_tokens") ?? 0
+        let cacheReadTokens = JSONDictionary.int64(usageObject, "cache_read_input_tokens") ?? 0
+        let (write5m, write1h) = cacheWriteTiers(in: usageObject)
+
+        guard inputTokens + outputTokens + cacheReadTokens + write5m + write1h > 0 else { return }
+
+        eventSeq += 1
+        events.append(
+            UsageEvent(
+                eventSeq: eventSeq,
+                observedAt: observedAt,
+                modelName: firstString(in: message, keys: ["model", "modelName", "model_name"]),
+                messageId: firstString(in: message, keys: ["id"]),
+                requestId: firstString(in: object, keys: ["requestId", "request_id"]),
+                inputTokens: inputTokens,
+                outputTokens: outputTokens,
+                reasoningTokens: 0,
+                cacheReadTokens: cacheReadTokens,
+                cacheWrite5mTokens: write5m,
+                cacheWrite1hTokens: write1h,
+                reportedCostUSDMicros: nil,
+                sourceOffset: line.offset,
+                isSidechain: bool(in: object, keys: ["isSidechain", "is_sidechain"]) ?? false
+            )
+        )
+    }
+
+    public func finish(sourceURL: URL) throws -> (session: ParsedSession, state: ParserState) {
         guard let sessionKey else { throw LocalAgentParserError.missingSessionKey }
 
         let session = ParsedSession(
@@ -1460,7 +1478,7 @@ public struct ClaudeCodeSessionParser: LocalAgentSessionParser {
         return (JSONDictionary.int64(usage, "cache_creation_input_tokens") ?? 0, 0)
     }
 
-    private func timestamp(in object: [String: Any], dateFormatters: [ISO8601DateFormatter]) -> Date? {
+    private func timestamp(in object: [String: Any]) -> Date? {
         guard let value = firstString(in: object, keys: ["timestamp", "created_at", "createdAt"]) else { return nil }
         for formatter in dateFormatters {
             if let date = formatter.date(from: value) { return date }
@@ -1482,7 +1500,7 @@ public struct ClaudeCodeSessionParser: LocalAgentSessionParser {
         return nil
     }
 
-    private func makeDateFormatters() -> [ISO8601DateFormatter] {
+    static func makeDateFormatters() -> [ISO8601DateFormatter] {
         let withFractional = ISO8601DateFormatter()
         withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let plain = ISO8601DateFormatter()
@@ -1492,7 +1510,10 @@ public struct ClaudeCodeSessionParser: LocalAgentSessionParser {
 }
 ```
 
-注意：去重不在 parser 里做了，移到 Task 7 的 `UsageEventDeduplicator`。parser 只负责如实吐事件。
+注意两点：
+
+1. 去重不在 parser 里做了，移到 Task 7 的 `UsageEventDeduplicator`。parser 只负责如实吐事件。
+2. parser 是 `class`，`consume` 里遇到不感兴趣的行用 `return` 而不是 `continue`。基线 commit `13ae94a` 里已有的 `ClaudeCodeStreamingParser` 可以直接删除，它的职责被本类接管。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -1706,7 +1727,7 @@ final class CodexSessionParserTests: XCTestCase {
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":900,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":1050}}}}"#, offset: 2)
         ]
 
-        let (session, _) = try CodexSessionParser().parse(
+        let (session, _) = try CodexSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
         )
 
@@ -1727,7 +1748,7 @@ final class CodexSessionParserTests: XCTestCase {
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":25,"cached_input_tokens":5,"output_tokens":5},"total_token_usage":{"input_tokens":125,"cached_input_tokens":30,"output_tokens":55}}}}"#, offset: 1)
         ]
 
-        let (session, _) = try CodexSessionParser().parse(
+        let (session, _) = try CodexSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
         )
 
@@ -1743,7 +1764,7 @@ final class CodexSessionParserTests: XCTestCase {
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:06:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"cached_input_tokens":60,"output_tokens":30}}}}"#, offset: 2)
         ]
 
-        let (session, state) = try CodexSessionParser().parse(
+        let (session, state) = try CodexSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
         )
 
@@ -1770,7 +1791,7 @@ final class CodexSessionParserTests: XCTestCase {
             lastEventSeq: 4,
             lastCumulative: CumulativeTokenTotals(inputTokens: 100, cachedInputTokens: 40, outputTokens: 20, reasoningTokens: 0)
         )
-        let (session, state) = try CodexSessionParser().parse(
+        let (session, state) = try CodexSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: previous
         )
 
@@ -1788,7 +1809,7 @@ final class CodexSessionParserTests: XCTestCase {
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:06:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":80,"cached_input_tokens":20,"output_tokens":10}}}}"#, offset: 2)
         ]
 
-        let (session, _) = try CodexSessionParser().parse(
+        let (session, _) = try CodexSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
         )
 
@@ -1804,7 +1825,7 @@ final class CodexSessionParserTests: XCTestCase {
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":14676}}}}"#, offset: 1)
         ]
 
-        let (session, _) = try CodexSessionParser().parse(
+        let (session, _) = try CodexSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
         )
 
@@ -1817,7 +1838,7 @@ final class CodexSessionParserTests: XCTestCase {
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"output_tokens":1}}}}"#, offset: 1)
         ]
 
-        let (session, _) = try CodexSessionParser().parse(
+        let (session, _) = try CodexSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
         )
 
@@ -1839,90 +1860,89 @@ Expected: 编译失败，`extra argument 'resuming' in call`
 ```swift
 import Foundation
 
-public struct CodexSessionParser: LocalAgentSessionParser {
-    public init() {}
+public final class CodexSessionParser: LocalAgentSessionStreamingParser {
+    private var sessionKey: String?
+    private var projectPath: String?
+    private var modelName: String?
+    private var startedAt: Date?
+    private var updatedAt: Date?
+    private var events: [UsageEvent] = []
+    private var eventSeq: Int
+    private var cumulative: CumulativeTokenTotals?
+    private let dateFormatters = ClaudeCodeSessionParser.makeDateFormatters()
 
-    public func parse(
-        lines: [JSONLLine],
-        sourceURL: URL,
-        resuming state: ParserState?
-    ) throws -> (session: ParsedSession, state: ParserState) {
-        var sessionKey: String?
-        var projectPath: String?
-        var modelName: String?
-        var startedAt: Date?
-        var updatedAt: Date?
-        var events: [UsageEvent] = []
-        var eventSeq = state?.lastEventSeq ?? 0
-        var cumulative = state?.lastCumulative
-        let dateFormatters = makeDateFormatters()
+    public init(resuming state: ParserState?) {
+        eventSeq = state?.lastEventSeq ?? 0
+        cumulative = state?.lastCumulative
+    }
 
-        for line in lines {
-            guard let object = JSONDictionary.object(from: line.text) else { continue }
-            let payload = JSONDictionary.dictionary(object, "payload")
+    public func consume(_ line: JSONLLine) {
+        guard let object = JSONDictionary.object(from: line.text) else { return }
+        let payload = JSONDictionary.dictionary(object, "payload")
 
-            if let timestamp = timestamp(in: object, dateFormatters: dateFormatters) {
-                if startedAt == nil { startedAt = timestamp }
-                updatedAt = timestamp
-            }
-
-            switch JSONDictionary.string(object, "type") {
-            case "session_meta":
-                sessionKey = payload.flatMap { JSONDictionary.string($0, "id") } ?? sessionKey
-                projectPath = payload.flatMap { JSONDictionary.string($0, "cwd") } ?? projectPath
-            case "turn_context":
-                modelName = payload.flatMap { JSONDictionary.string($0, "model") } ?? modelName
-                projectPath = payload.flatMap { JSONDictionary.string($0, "cwd") } ?? projectPath
-            case "event_msg":
-                guard let payload,
-                      JSONDictionary.string(payload, "type") == "token_count",
-                      let info = JSONDictionary.dictionary(payload, "info"),
-                      let observedAt = timestamp(in: object, dateFormatters: dateFormatters) else {
-                    continue
-                }
-
-                let delta: RawTokenTotals
-                if let last = JSONDictionary.dictionary(info, "last_token_usage") {
-                    delta = RawTokenTotals(last)
-                    if let total = JSONDictionary.dictionary(info, "total_token_usage") {
-                        cumulative = RawTokenTotals(total).asCumulative
-                    }
-                } else if let total = JSONDictionary.dictionary(info, "total_token_usage") {
-                    let current = RawTokenTotals(total)
-                    delta = current.subtracting(cumulative)
-                    cumulative = current.asCumulative
-                } else {
-                    continue
-                }
-
-                // 真实数据里存在 input=output=0 但 total>0 的畸形事件，跳过。
-                guard delta.inputTokens > 0 || delta.outputTokens > 0 else { continue }
-
-                eventSeq += 1
-                events.append(
-                    UsageEvent(
-                        eventSeq: eventSeq,
-                        observedAt: observedAt,
-                        modelName: modelName,
-                        messageId: nil,
-                        requestId: nil,
-                        // Codex 的 input 含 cached，必须减掉，否则缓存 token 被计两遍
-                        inputTokens: max(0, delta.inputTokens - delta.cachedInputTokens),
-                        outputTokens: delta.outputTokens,
-                        reasoningTokens: delta.reasoningTokens,
-                        cacheReadTokens: delta.cachedInputTokens,
-                        cacheWrite5mTokens: 0,
-                        cacheWrite1hTokens: 0,
-                        reportedCostUSDMicros: nil,
-                        sourceOffset: line.offset,
-                        isSidechain: false
-                    )
-                )
-            default:
-                continue
-            }
+        if let timestamp = timestamp(in: object) {
+            if startedAt == nil { startedAt = timestamp }
+            updatedAt = timestamp
         }
 
+        switch JSONDictionary.string(object, "type") {
+        case "session_meta":
+            sessionKey = payload.flatMap { JSONDictionary.string($0, "id") } ?? sessionKey
+            projectPath = payload.flatMap { JSONDictionary.string($0, "cwd") } ?? projectPath
+        case "turn_context":
+            modelName = payload.flatMap { JSONDictionary.string($0, "model") } ?? modelName
+            projectPath = payload.flatMap { JSONDictionary.string($0, "cwd") } ?? projectPath
+        case "event_msg":
+            guard let payload,
+                  JSONDictionary.string(payload, "type") == "token_count",
+                  let info = JSONDictionary.dictionary(payload, "info"),
+                  let observedAt = timestamp(in: object) else {
+                return
+            }
+
+            let delta: RawTokenTotals
+            if let last = JSONDictionary.dictionary(info, "last_token_usage") {
+                delta = RawTokenTotals(last)
+                if let total = JSONDictionary.dictionary(info, "total_token_usage") {
+                    cumulative = RawTokenTotals(total).asCumulative
+                }
+            } else if let total = JSONDictionary.dictionary(info, "total_token_usage") {
+                let current = RawTokenTotals(total)
+                delta = current.subtracting(cumulative)
+                cumulative = current.asCumulative
+            } else {
+                return
+            }
+
+            // 真实数据里存在 input=output=0 但 total>0 的畸形事件，跳过。
+            guard delta.inputTokens > 0 || delta.outputTokens > 0 else { return }
+
+            eventSeq += 1
+            events.append(
+                UsageEvent(
+                    eventSeq: eventSeq,
+                    observedAt: observedAt,
+                    modelName: modelName,
+                    messageId: nil,
+                    requestId: nil,
+                    // Codex 的 input 含 cached，必须减掉，否则缓存 token 被计两遍
+                    inputTokens: max(0, delta.inputTokens - delta.cachedInputTokens),
+                    outputTokens: delta.outputTokens,
+                    reasoningTokens: delta.reasoningTokens,
+                    cacheReadTokens: delta.cachedInputTokens,
+                    cacheWrite5mTokens: 0,
+                    cacheWrite1hTokens: 0,
+                    reportedCostUSDMicros: nil,
+                    sourceOffset: line.offset,
+                    isSidechain: false
+                )
+            )
+        default:
+            return
+        }
+    }
+
+    public func finish(sourceURL: URL) throws -> (session: ParsedSession, state: ParserState) {
         guard let sessionKey else { throw LocalAgentParserError.missingSessionKey }
 
         let session = ParsedSession(
@@ -1938,7 +1958,7 @@ public struct CodexSessionParser: LocalAgentSessionParser {
         return (session, ParserState(lastEventSeq: eventSeq, lastCumulative: cumulative))
     }
 
-    private func timestamp(in object: [String: Any], dateFormatters: [ISO8601DateFormatter]) -> Date? {
+    private func timestamp(in object: [String: Any]) -> Date? {
         if let value = JSONDictionary.string(object, "timestamp") {
             for formatter in dateFormatters {
                 if let date = formatter.date(from: value) { return date }
@@ -1954,14 +1974,6 @@ public struct CodexSessionParser: LocalAgentSessionParser {
     /// Codex 有时写秒、有时写毫秒。用 10^11 作阈值区分（约公元 5138 年的秒数）。
     private func dateFromEpoch(_ value: Double) -> Date {
         value > 100_000_000_000 ? Date(timeIntervalSince1970: value / 1000) : Date(timeIntervalSince1970: value)
-    }
-
-    private func makeDateFormatters() -> [ISO8601DateFormatter] {
-        let withFractional = ISO8601DateFormatter()
-        withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        return [withFractional, plain]
     }
 }
 
@@ -2057,7 +2069,7 @@ final class OmpSessionParserTests: XCTestCase {
             line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","provider":"openai-codex","model":"gpt-5.5","usage":{"input":1000,"output":50,"cacheRead":900,"cacheWrite":0,"reasoningTokens":10,"totalTokens":1950,"cost":{"total":0.5}}}}"#, offset: 1)
         ]
 
-        let (session, _) = try OmpSessionParser().parse(
+        let (session, _) = try OmpSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/o.jsonl"), resuming: nil
         )
 
@@ -2077,7 +2089,7 @@ final class OmpSessionParserTests: XCTestCase {
             line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","model":"gpt-5.5","usage":{"input":10,"output":1,"cost":{"total":0.19055}}}}"#, offset: 1)
         ]
 
-        let (session, _) = try OmpSessionParser().parse(
+        let (session, _) = try OmpSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/o.jsonl"), resuming: nil
         )
 
@@ -2092,7 +2104,7 @@ final class OmpSessionParserTests: XCTestCase {
             line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","model":"gpt-5.5","usage":{"input":10,"output":1,"cost":{"total":0}}}}"#, offset: 1)
         ]
 
-        let (session, _) = try OmpSessionParser().parse(
+        let (session, _) = try OmpSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/o.jsonl"), resuming: nil
         )
 
@@ -2105,7 +2117,7 @@ final class OmpSessionParserTests: XCTestCase {
             line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","model":"m","usage":{"input":1,"cacheWrite":300}}}"#, offset: 1)
         ]
 
-        let (session, _) = try OmpSessionParser().parse(
+        let (session, _) = try OmpSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/o.jsonl"), resuming: nil
         )
 
@@ -2118,7 +2130,7 @@ final class OmpSessionParserTests: XCTestCase {
             line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","model":"m","usage":{"input":1}}}"#, offset: 0)
         ]
 
-        let (session, _) = try OmpSessionParser().parse(
+        let (session, _) = try OmpSessionParser.parse(
             lines: lines,
             sourceURL: URL(fileURLWithPath: "/tmp/2026-07-01T11-20-18-498Z_019f1d68.jsonl"),
             resuming: nil
@@ -2133,7 +2145,7 @@ final class OmpSessionParserTests: XCTestCase {
             line(#"{"type":"message","id":"m1","timestamp":"2026-07-08T01:05:00Z","message":{"role":"assistant","model":"m","usage":{"input":1}}}"#, offset: 42)
         ]
 
-        let (session, state) = try OmpSessionParser().parse(
+        let (session, state) = try OmpSessionParser.parse(
             lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/o.jsonl"), resuming: ParserState(lastEventSeq: 3)
         )
 
@@ -2156,81 +2168,79 @@ Expected: 编译失败，`extra argument 'resuming' in call`
 ```swift
 import Foundation
 
-public struct OmpSessionParser: LocalAgentSessionParser {
-    public init() {}
+public final class OmpSessionParser: LocalAgentSessionStreamingParser {
+    private var sessionKey: String?
+    private var projectPath: String?
+    private var modelName: String?
+    private var startedAt: Date?
+    private var updatedAt: Date?
+    private var events: [UsageEvent] = []
+    private var eventSeq: Int
+    private let dateFormatters = ClaudeCodeSessionParser.makeDateFormatters()
 
-    public func parse(
-        lines: [JSONLLine],
-        sourceURL: URL,
-        resuming state: ParserState?
-    ) throws -> (session: ParsedSession, state: ParserState) {
-        var sessionKey: String?
-        var projectPath: String?
-        var modelName: String?
-        var startedAt: Date?
-        var updatedAt: Date?
-        var events: [UsageEvent] = []
-        var eventSeq = state?.lastEventSeq ?? 0
-        let dateFormatters = makeDateFormatters()
+    public init(resuming state: ParserState?) {
+        eventSeq = state?.lastEventSeq ?? 0
+    }
 
-        for line in lines {
-            guard let object = JSONDictionary.object(from: line.text) else { continue }
+    public func consume(_ line: JSONLLine) {
+        guard let object = JSONDictionary.object(from: line.text) else { return }
 
-            let timestamp = timestamp(in: object, dateFormatters: dateFormatters)
-            if let timestamp {
-                if startedAt == nil { startedAt = timestamp }
-                updatedAt = timestamp
-            }
-
-            switch JSONDictionary.string(object, "type") {
-            case "session_meta":
-                sessionKey = firstString(in: object, keys: ["id", "sessionId", "session_id"]) ?? sessionKey
-                projectPath = firstString(in: object, keys: ["cwd", "directory"]) ?? projectPath
-                modelName = firstString(in: object, keys: ["model", "modelName"]) ?? modelName
-            case "model_change", "modelChange":
-                modelName = firstString(in: object, keys: ["model", "modelName"]) ?? modelName
-            case "message":
-                guard let message = JSONDictionary.dictionary(object, "message"),
-                      let usage = JSONDictionary.dictionary(message, "usage"),
-                      let observedAt = timestamp else {
-                    continue
-                }
-                modelName = firstString(in: message, keys: ["model", "modelName"]) ?? modelName
-
-                // omp 的 input 不含 cache，原样取值
-                let inputTokens = JSONDictionary.int64(usage, "input") ?? 0
-                let outputTokens = JSONDictionary.int64(usage, "output") ?? 0
-                let cacheReadTokens = JSONDictionary.int64(usage, "cacheRead") ?? 0
-                let cacheWriteTokens = JSONDictionary.int64(usage, "cacheWrite") ?? 0
-                let reasoningTokens = JSONDictionary.int64(usage, "reasoningTokens") ?? 0
-
-                guard inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens > 0 else { continue }
-
-                eventSeq += 1
-                events.append(
-                    UsageEvent(
-                        eventSeq: eventSeq,
-                        observedAt: observedAt,
-                        modelName: modelName,
-                        messageId: nil,
-                        requestId: nil,
-                        inputTokens: inputTokens,
-                        outputTokens: outputTokens,
-                        reasoningTokens: reasoningTokens,
-                        cacheReadTokens: cacheReadTokens,
-                        // omp 不区分缓存写入档位，整笔归 5m
-                        cacheWrite5mTokens: cacheWriteTokens,
-                        cacheWrite1hTokens: 0,
-                        reportedCostUSDMicros: reportedCost(in: usage),
-                        sourceOffset: line.offset,
-                        isSidechain: false
-                    )
-                )
-            default:
-                continue
-            }
+        let timestamp = timestamp(in: object)
+        if let timestamp {
+            if startedAt == nil { startedAt = timestamp }
+            updatedAt = timestamp
         }
 
+        switch JSONDictionary.string(object, "type") {
+        case "session_meta":
+            sessionKey = firstString(in: object, keys: ["id", "sessionId", "session_id"]) ?? sessionKey
+            projectPath = firstString(in: object, keys: ["cwd", "directory"]) ?? projectPath
+            modelName = firstString(in: object, keys: ["model", "modelName"]) ?? modelName
+        case "model_change", "modelChange":
+            modelName = firstString(in: object, keys: ["model", "modelName"]) ?? modelName
+        case "message":
+            guard let message = JSONDictionary.dictionary(object, "message"),
+                  let usage = JSONDictionary.dictionary(message, "usage"),
+                  let observedAt = timestamp else {
+                return
+            }
+            modelName = firstString(in: message, keys: ["model", "modelName"]) ?? modelName
+
+            // omp 的 input 不含 cache，原样取值
+            let inputTokens = JSONDictionary.int64(usage, "input") ?? 0
+            let outputTokens = JSONDictionary.int64(usage, "output") ?? 0
+            let cacheReadTokens = JSONDictionary.int64(usage, "cacheRead") ?? 0
+            let cacheWriteTokens = JSONDictionary.int64(usage, "cacheWrite") ?? 0
+            let reasoningTokens = JSONDictionary.int64(usage, "reasoningTokens") ?? 0
+
+            guard inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens > 0 else { return }
+
+            eventSeq += 1
+            events.append(
+                UsageEvent(
+                    eventSeq: eventSeq,
+                    observedAt: observedAt,
+                    modelName: modelName,
+                    messageId: nil,
+                    requestId: nil,
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens,
+                    reasoningTokens: reasoningTokens,
+                    cacheReadTokens: cacheReadTokens,
+                    // omp 不区分缓存写入档位，整笔归 5m
+                    cacheWrite5mTokens: cacheWriteTokens,
+                    cacheWrite1hTokens: 0,
+                    reportedCostUSDMicros: reportedCost(in: usage),
+                    sourceOffset: line.offset,
+                    isSidechain: false
+                )
+            )
+        default:
+            return
+        }
+    }
+
+    public func finish(sourceURL: URL) throws -> (session: ParsedSession, state: ParserState) {
         let resolvedSessionKey = sessionKey ?? sourceURL.deletingPathExtension().lastPathComponent
         guard !resolvedSessionKey.isEmpty else { throw LocalAgentParserError.missingSessionKey }
 
@@ -2257,7 +2267,7 @@ public struct OmpSessionParser: LocalAgentSessionParser {
         return Int64((total * 1_000_000).rounded())
     }
 
-    private func timestamp(in object: [String: Any], dateFormatters: [ISO8601DateFormatter]) -> Date? {
+    private func timestamp(in object: [String: Any]) -> Date? {
         guard let value = firstString(in: object, keys: ["timestamp", "created_at", "createdAt"]) else { return nil }
         for formatter in dateFormatters {
             if let date = formatter.date(from: value) { return date }
@@ -2270,14 +2280,6 @@ public struct OmpSessionParser: LocalAgentSessionParser {
             if let value = JSONDictionary.string(object, key), !value.isEmpty { return value }
         }
         return nil
-    }
-
-    private func makeDateFormatters() -> [ISO8601DateFormatter] {
-        let withFractional = ISO8601DateFormatter()
-        withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let plain = ISO8601DateFormatter()
-        plain.formatOptions = [.withInternetDateTime]
-        return [withFractional, plain]
     }
 }
 ```
@@ -3214,6 +3216,9 @@ Expected: 编译失败，`extra argument 'markers' in call`
 `Sources/TokenMeterCore/JSONLStreamReader.swift` 的 `readLines` 私有实现替换为：
 
 ```swift
+    /// 把所有行读进数组。**仅供测试与小文件使用。**
+    /// 生产扫描路径必须用下面的 onLine 回调版本：3.28 GB 的 Codex session 文件
+    /// 有 257,115 行，全部 materialize 会吃掉数 GB 内存。
     public static func readLines(
         from url: URL,
         startingAt offset: Int64,
@@ -3222,6 +3227,7 @@ Expected: 编译失败，`extra argument 'markers' in call`
         try readLines(from: url, startingAt: offset, chunkSize: 256 * 1024, markers: markers, retainingLines: true, onLine: nil)
     }
 
+    /// 流式版本：逐行回调，不保留任何行。生产路径走这里。
     public static func readLines(
         from url: URL,
         startingAt offset: Int64,
@@ -3385,23 +3391,37 @@ Expected: FAIL，`no such table: usage_events` 或 event_seq 重置为 1
         _ fileURL: URL,
         fileId: Int64,
         root: ScanRoot,
-        runId: Int64,
-        parser: LocalAgentSessionParser
+        runId: Int64
     ) throws {
         // 续读位置按文件取：一个 session 横跨父 jsonl 与多个 subagent jsonl
         let startOffset = try writer.lastSourceOffset(sourceFileId: fileId).map { $0 + 1 } ?? 0
         let state = try loadParserState(fileId: fileId)
+        guard let parser = streamingParser(for: root.kind, resuming: state) else { return }
 
-        let result = try JSONLStreamReader.readLines(
+        // 流式：逐行喂给 parser，不保留 [JSONLLine]
+        var sawLine = false
+        _ = try JSONLStreamReader.readLines(
             from: fileURL,
             startingAt: startOffset,
             markers: markers(for: root.kind)
-        )
-        guard !result.lines.isEmpty else { return }
+        ) { line in
+            sawLine = true
+            parser.consume(line)
+        }
+        guard sawLine else { return }
 
-        let (session, nextState) = try parser.parse(lines: result.lines, sourceURL: fileURL, resuming: state)
+        let (session, nextState) = try parser.finish(sourceURL: fileURL)
         try writer.write(session, scanRootId: root.id, sourceFileId: fileId, runId: runId)
         try saveParserState(nextState, fileId: fileId)
+    }
+
+    private func streamingParser(for kind: SourceKind, resuming state: ParserState?) -> LocalAgentSessionStreamingParser? {
+        switch kind {
+        case .claudeJSONL: return ClaudeCodeSessionParser(resuming: state)
+        case .codexJSONL: return CodexSessionParser(resuming: state)
+        case .ompJSONL: return OmpSessionParser(resuming: state)
+        case .opencodeSQLite: return nil   // SQLite 走 OpenCodeSessionAdapter
+        }
     }
 
     /// 只有 Codex 预筛。它的大文件里 function_call 占多数且不含任一标记。
@@ -3826,11 +3846,14 @@ git commit -m "test: add ccusage reconciliation script"
 
 - `UsageEvent` 的字段名在 Task 1、6、8、9、10、11 中一致（`cacheWrite5mTokens` 而非 `cacheWrite5m`）。
 - `ParsedSession`（Task 1）取代了 `ParsedAgentSession`，Task 6/8/9/10 全部返回前者，Task 11 消费前者。
+- `LocalAgentSessionStreamingParser`（Task 6）是 `AnyObject` 协议，`init(resuming:)` + `consume(_:)` + `finish(_:)`。Task 6/8/9 的三个 parser 都是 `final class` 并实现它；Task 14 的 `streamingParser(for:resuming:)` 构造它们。
+- 三个 parser 的测试统一走协议扩展提供的静态 `parse(lines:sourceURL:resuming:)`；生产路径只走 `consume`/`finish`。
 - `CostCalculator.cost(for:)` 返回 `(micros: Int64?, source: CostSource)`，Task 5 定义、Task 11 消费，签名一致。
 - `UsageEventDeduplicator.deduplicate(_:)` 在 Task 7 定义、Task 11 调用。
 - `RollupBuilder.rebuildAll()` 在 Task 12 定义，Task 14、15 调用。
 - `UsageEventWriter.lastSourceOffset(sourceFileId:)` 在 Task 11 定义，Task 14 调用。
-- `JSONLStreamReader.readLines(from:startingAt:markers:)` 在 Task 13 定义，Task 14 调用。
+- `JSONLStreamReader.readLines(from:startingAt:markers:onLine:)`（流式）在 Task 13 定义，Task 14 调用；同名的数组版仅供 Task 13 自身的测试使用。
+- `ClaudeCodeSessionParser.makeDateFormatters()` 是 `static`，被 Codex 与 omp 两个 parser 复用（Task 6/8/9），避免三份重复定义。
 
 **风险提示：**
 
