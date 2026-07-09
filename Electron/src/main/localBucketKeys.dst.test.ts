@@ -7,7 +7,7 @@
 process.env.TZ = 'America/New_York';
 
 import { describe, it, expect } from 'vitest';
-import { localBucketKeys } from './overviewRepository.js';
+import { localBucketKeys } from '../shared/calendar.js';
 
 describe('localBucketKeys under daylight saving time', () => {
   it('actually runs in a DST timezone (otherwise the rest of this file proves nothing)', () => {
