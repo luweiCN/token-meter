@@ -15,7 +15,11 @@
 - `daily_rollup` 有全部五个 token 列（`tokens_input` / `tokens_output` / `tokens_cache_read` / `tokens_cache_write_5m` / `tokens_cache_write_1h`）、`cost_usd_micros`、`cost_unknown_events`、`sessions_count`、`events_count`、`model_canonical`、`project_id`、`provider_id`、`usage_date`（**本地日期**）。
 - **`daily_rollup.sessions_count` 不可跨行相加**（spec §4.2）。同一会话跨天或换模型会占多行。任何「总会话数」走 `session_rollup` 的 `count(*)`，或 `usage_events` 的 `count(distinct session_id)`。
 - **小时粒度不查 `daily_rollup`**，它只有天。走 `usage_events` + `strftime('%Y-%m-%d %H', observed_epoch_ms/1000, 'unixepoch', 'localtime')`（spec §4.2：单日几百条明细，带索引聚合即可）。
-- `cost_usd_micros` 在模型无定价时为 **NULL**，`sum()` 会跳过它。`cost_unknown_events` 记录有多少条事件的成本没算进去。**任何成本展示都必须能表达「部分未知」**，不能静默按 0 累加。
+- **成本的「未知」在写入 rollup 时就被抹平了。** `usage_events.cost_usd_micros` 可为 NULL（模型无定价），但 `daily_rollup.cost_usd_micros` 是 `NOT NULL DEFAULT 0`、`session_rollup.cost_usd_micros` 是 `NOT NULL`——`RollupBuilder` 把 NULL 折成了 0。
+
+  所以 UI 从 rollup 读到的成本**永远是个数字**，看不出它是否完整。`cost_unknown_events` 是**唯一**能区分「这个模型免费」和「我们不知道这个模型多少钱」的信号。本机实测有 **9,603** 条这样的事件。
+
+  一个显示 `$32,320.81` 却不提「其中 9,603 条事件的价格未知」的界面，是在用精确的小数点撒谎。**每一处展示成本的地方，都要同时能表达「部分未知」。**
 - 现有 renderer 只有 530 行，`TokenTrendChart.tsx` 是 7 行占位。路由是 `useState<RouteName>`，**没有 URL query**。
 - Electron 依赖里没有图表库，也没有 router。本计划不引入任何新的运行时依赖。
 
@@ -165,7 +169,9 @@ export function inclusiveDays(from: string, to: string): number {
 ///   hour  : days ≤ 2    → ≤ 48 根
 ///   day   : days ≤ 120  → ≤ 120 根
 ///   week  : days ≤ 840  → ≤ 120 根；下限 7 天，否则只有 1 根柱子
-///   month : days ≥ 90   → ≥ 3 根柱子，少于 3 个点的趋势没有意义；上限交给 MAX_BARS 兜底
+///   month : days ≥ 91   → ≥ 3 根柱子，少于 3 个点的趋势没有意义；上限交给 MAX_BARS 兜底
+///           （`days` 是 inclusiveDays，含首尾。「至少 90 天跨度」= inclusiveDays ≥ 91。
+///            写成 `>= 90` 会让 04-12..07-10 这个 90 天的范围也开放月粒度，与测试相悖。）
 ///
 /// 上限与下限必须让任意范围至少剩一个粒度，否则用户会看到一个空的粒度选择器。
 /// `always offers at least one granularity` 与 `barCount ≤ MAX_BARS` 两条测试
@@ -176,7 +182,7 @@ export function allowedGranularities(from: string, to: string): Granularity[] {
   if (days <= 2) out.push('hour');
   if (days <= MAX_BARS) out.push('day');
   if (days >= 7 && Math.ceil(days / 7) <= MAX_BARS) out.push('week');
-  if (days >= 90) out.push('month');
+  if (days >= 91) out.push('month');
   return out;
 }
 
@@ -252,9 +258,12 @@ beforeEach(() => {
       tokens_input INTEGER NOT NULL DEFAULT 0, tokens_output INTEGER NOT NULL DEFAULT 0,
       tokens_reasoning INTEGER NOT NULL DEFAULT 0, tokens_cache_read INTEGER NOT NULL DEFAULT 0,
       tokens_cache_write_5m INTEGER NOT NULL DEFAULT 0, tokens_cache_write_1h INTEGER NOT NULL DEFAULT 0,
-      cost_usd_micros INTEGER, cost_unknown_events INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (usage_date, provider_id, source_kind, coalesce(project_id,-1), model_canonical)
+      cost_usd_micros INTEGER NOT NULL DEFAULT 0, cost_unknown_events INTEGER NOT NULL DEFAULT 0
     );
+    -- 唯一性用【单独的索引】表达，不能写成 PRIMARY KEY(..., coalesce(project_id,-1), ...)：
+    -- SQLite 禁止在 PRIMARY KEY / UNIQUE 约束里出现表达式。生产 schema 也是这么建的。
+    CREATE UNIQUE INDEX idx_daily_rollup_unique ON daily_rollup(
+      usage_date, provider_id, source_kind, coalesce(project_id, -1), model_canonical);
   `);
 });
 
@@ -314,15 +323,19 @@ describe('kpis', () => {
     expect(k.yesterdayTokens).toBe(55);
   });
 
-  it('reports unknown-cost events instead of silently treating them as zero', () => {
+  it('reports unknown-cost events, because a zero cost is indistinguishable from an unknown one', () => {
+    // RollupBuilder 已经把 usage_events 里的 NULL 成本 coalesce 成了 0，
+    // 所以 rollup 表里的 cost_usd_micros 永远是数字。「这个模型免费」和
+    // 「我们不知道这个模型多少钱」在这一列里长得一模一样。
+    // cost_unknown_events 是唯一的区分信号——KPI 不暴露它，界面就在用精确的小数点撒谎。
     db.exec(`
       INSERT INTO daily_rollup(usage_date, provider_id, source_kind, project_id, model_canonical,
                                sessions_count, events_count, tokens_input, cost_usd_micros, cost_unknown_events)
-      VALUES ('2026-07-10','codex','codex_jsonl',NULL,'gpt-5.5', 1, 5, 100, NULL, 5);
+      VALUES ('2026-07-10','codex','codex_jsonl',NULL,'gpt-5.5', 1, 5, 100, 0, 5);
     `);
     const k = new OverviewRepository(db, () => NOW).kpis();
+    expect(k.todayCostUsdMicros).toBe(0);
     expect(k.todayCostUnknownEvents).toBe(5);
-    expect(k.todayCostUsdMicros).toBe(0);   // NULL 不能变成别的数字
   });
 });
 ```
