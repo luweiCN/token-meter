@@ -59,6 +59,57 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"), 7)
     }
 
+    func testResumeDoesNotReconsumeTheLastLine() async throws {
+        // 续读起点必须是上次读取停下的位置，而不是 max(source_offset) + 1。
+        // 后者落在最后一行的内部，靠「半行 JSON 解析失败」侥幸不出错。
+        // 这里最后一行没有前导空白，用 last_token_usage（每条都发事件，不被累计差分吞掉），
+        // 断言续读后正好两条、互不重复。
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("rollout.jsonl")
+        let initialJSONL = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"resume-tail\",\"cwd\":\"/repo\"}}\n" +
+            "{\"type\":\"event_msg\",\"timestamp\":\"2026-07-08T01:00:00Z\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":5,\"output_tokens\":3}}}}\n"
+        try writeJSONL(initialJSONL, to: file)
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+
+        try await scanner.scanRoot(id: 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1)
+
+        try appendJSONL("{\"type\":\"event_msg\",\"timestamp\":\"2026-07-08T02:00:00Z\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":7,\"output_tokens\":2}}}}", to: file)
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 2)
+        let inputs = try database.query("SELECT tokens_input FROM usage_events ORDER BY event_seq").compactMap { $0.int("tokens_input") }
+        XCTAssertEqual(inputs, [5, 7], "上一行不得被重复消费")
+    }
+
+    func testResumeIsCorrectWhenALineHasLeadingWhitespace() async throws {
+        // 一行若以空格开头，从其第二字节起的残片仍是合法 JSON。
+        // 用 max(source_offset)+1 续读会重复消费它，并因 eventSeq 递增而
+        // 绕过 UNIQUE(source_file_id, event_seq)，静默地把 token 算两遍。
+        // 写两次扫描，断言事件总数不变（正确应为两条，而非三条）。
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("rollout.jsonl")
+        // 第二行故意以一个空格开头。
+        let initialJSONL = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"ws-session\",\"cwd\":\"/repo\"}}\n" +
+            " {\"type\":\"event_msg\",\"timestamp\":\"2026-07-08T01:00:00Z\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":5,\"output_tokens\":3}}}}\n"
+        try writeJSONL(initialJSONL, to: file)
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+
+        try await scanner.scanRoot(id: 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1)
+
+        // 追加一行触发续读。
+        try appendJSONL("{\"type\":\"event_msg\",\"timestamp\":\"2026-07-08T02:00:00Z\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":7,\"output_tokens\":2}}}}", to: file)
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 2, "带前导空白的行不得被续读重复消费")
+        XCTAssertEqual(try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"), 17)
+    }
+
     func testSubagentFileGetsItsOwnEventSeqNamespace() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

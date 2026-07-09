@@ -156,18 +156,12 @@ public final class LocalAgentScanner {
 
         progress.filesChanged += 1
 
-        // 续读游标按【文件】取：一个 session 横跨父 jsonl 与多个 subagent jsonl，
-        // 各文件偏移互不相干，绝不能按 session_id 取。只有存在旧行时才可能续读，
-        // 此时 existing.id 一定有——新文件没有旧事件，续读无从谈起。
-        // +1 让 reader 从"上次最后一条事件那一行"的中途开始——那半行解析不出对象、被 parser
-        // 跳过，从而既不重复计已记事件，又能读到其后追加的新行。
+        // 续读起点取上次 readLines 停下的字节位置（parser_state.resumeOffset），按【文件】保存：
+        // 一个 session 横跨父 jsonl 与多个 subagent jsonl，各文件偏移互不相干。
+        // 绝不能用 max(source_offset)+1：source_offset 是行首字节，加一落在行内——今天靠半行
+        // JSON 解析失败侥幸不重复，但以空白开头的行残片仍是合法 JSON，会被重复消费并造成重复计数。
         let planResume = shouldResume(existing: existing, metadata: metadata)
-        let startOffset: Int64
-        if planResume, let existingId = existing?.id {
-            startOffset = (try writer.lastSourceOffset(sourceFileId: existingId)).map { $0 + 1 } ?? 0
-        } else {
-            startOffset = 0
-        }
+        let startOffset: Int64 = planResume ? (existing?.parserState?.resumeOffset ?? 0) : 0
         // 只有真正续读（startOffset>0）才把上次的 parser_state 传给 parser；否则全量重读、状态清零。
         let resumeState = startOffset > 0 ? existing?.parserState : nil
         if startOffset == 0, let existingId = existing?.id {
@@ -244,7 +238,7 @@ public final class LocalAgentScanner {
                 parsed: true,
                 parseStatus: "ok",
                 parseError: nil,
-                parserState: resumeState ?? ParserState()
+                parserState: resumed(resumeState ?? ParserState(), stoppedAt: readResult.nextOffset)
             )
             return false
         }
@@ -264,7 +258,7 @@ public final class LocalAgentScanner {
                 parsed: true,
                 parseStatus: "ok",
                 parseError: nil,
-                parserState: resumeState ?? ParserState()
+                parserState: resumed(resumeState ?? ParserState(), stoppedAt: readResult.nextOffset)
             )
             return false
         } catch {
@@ -296,7 +290,7 @@ public final class LocalAgentScanner {
             parsed: true,
             parseStatus: hasResidual ? "partial" : "ok",
             parseError: hasResidual ? "parse partial: incomplete line" : nil,
-            parserState: outcome.state
+            parserState: resumed(outcome.state, stoppedAt: readResult.nextOffset)
         )
 
         do {
@@ -671,6 +665,13 @@ public final class LocalAgentScanner {
             """,
             [.int(rootId), .text(relativePath)]
         )[0].int("id") ?? 0
+    }
+
+    /// 把这次 readLines 停下的字节位置写进要保存的 parser_state，作为下次续读起点。
+    private func resumed(_ state: ParserState, stoppedAt offset: Int64) -> ParserState {
+        var next = state
+        next.resumeOffset = offset
+        return next
     }
 
     private func decodeParserState(_ json: String?) -> ParserState? {

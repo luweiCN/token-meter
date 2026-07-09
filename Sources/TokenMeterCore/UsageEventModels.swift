@@ -136,6 +136,15 @@ public struct ParserState: Equatable, Codable {
     public var startedAt: Date?
     public var updatedAt: Date?
 
+    /// 下次续读的起点：上一次 `readLines` 停下的字节位置（`JSONLReadResult.nextOffset`）。
+    ///
+    /// 不能用 `max(source_offset) + 1` 代替。`source_offset` 是行的**首字节**，
+    /// 加一只跳过一个字节，落在行内。今天能工作，是因为半行 JSON 恰好解析失败
+    /// 而被静默丢弃——但一行若以空白开头，残片就是合法 JSON，会被重复消费，
+    /// 且因为 `eventSeq` 从 `ParserState` 续下去，会拿到新的 `event_seq` 而绕过
+    /// `UNIQUE(source_file_id, event_seq)`，造成静默的重复计数。
+    public var resumeOffset: Int64
+
     public init(
         lastEventSeq: Int = 0,
         lastCumulative: CumulativeTokenTotals? = nil,
@@ -144,7 +153,8 @@ public struct ParserState: Equatable, Codable {
         modelName: String? = nil,
         cliVersion: String? = nil,
         startedAt: Date? = nil,
-        updatedAt: Date? = nil
+        updatedAt: Date? = nil,
+        resumeOffset: Int64 = 0
     ) {
         self.lastEventSeq = lastEventSeq
         self.lastCumulative = lastCumulative
@@ -154,5 +164,6 @@ public struct ParserState: Equatable, Codable {
         self.cliVersion = cliVersion
         self.startedAt = startedAt
         self.updatedAt = updatedAt
+        self.resumeOffset = resumeOffset
     }
 }
