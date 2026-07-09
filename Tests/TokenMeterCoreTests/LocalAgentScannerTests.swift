@@ -764,10 +764,11 @@ final class LocalAgentScannerTests: XCTestCase {
         let homeDirectory = URL(fileURLWithPath: "/tmp/token-meter-home", isDirectory: true)
         let roots = TokenMeterPaths.defaultScanRoots(homeDirectory: homeDirectory)
 
-        XCTAssertEqual(roots.map(\.kind), [.claudeJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL])
+        XCTAssertEqual(roots.map(\.kind), [.claudeJSONL, .codexJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL])
         XCTAssertEqual(roots.map { $0.rootURL.path }, [
             "/tmp/token-meter-home/.claude/projects",
             "/tmp/token-meter-home/.codex/sessions",
+            "/tmp/token-meter-home/.codex/archived_sessions",
             "/tmp/token-meter-home/.local/share/opencode/opencode.db",
             "/tmp/token-meter-home/.omp/agent/sessions"
         ])
@@ -776,8 +777,86 @@ final class LocalAgentScannerTests: XCTestCase {
         try TokenMeterDatabaseMigrator.migrate(database)
         try LocalAgentScanner.seedDefaultScanRoots(database: database, homeDirectory: homeDirectory)
 
-        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM scan_roots"), 4)
-        XCTAssertEqual(try database.query("SELECT stable_source_key FROM scan_roots WHERE kind = ?", [.text(SourceKind.codexJSONL.rawValue)]).first?.string("stable_source_key"), "codex_jsonl:/tmp/token-meter-home/.codex/sessions")
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM scan_roots"), 5)
+        // 两个 codex root 的 stable_source_key 靠 path 区分，不撞 UNIQUE(stable_source_key)。
+        XCTAssertEqual(
+            try database.query("SELECT stable_source_key FROM scan_roots WHERE kind = ? ORDER BY root_path", [.text(SourceKind.codexJSONL.rawValue)])
+                .compactMap { $0.string("stable_source_key") },
+            [
+                "codex_jsonl:/tmp/token-meter-home/.codex/archived_sessions",
+                "codex_jsonl:/tmp/token-meter-home/.codex/sessions"
+            ]
+        )
+    }
+
+    func testCodexArchivedSessionsRootIsScanned() async throws {
+        // Codex 会把旧 session 从 ~/.codex/sessions 挪进 ~/.codex/archived_sessions（同为
+        // rollout-*.jsonl）。两个默认 codex root 各放一个【不同】 session，两根都必须被扫描，
+        // 事件数与 token 数是两者之和。修复前 archived_sessions 不在 defaultScanRoots 里，
+        // 只有 sessions 被扫，断言（2 条事件、25 token）失败。
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let sessionsDir = home.appendingPathComponent(".codex/sessions", isDirectory: true)
+        let archivedDir = home.appendingPathComponent(".codex/archived_sessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: archivedDir, withIntermediateDirectories: true)
+        try writeJSONL(codexJSONL(inputTokens: 10, outputTokens: 5, sessionId: "live-session"), to: sessionsDir.appendingPathComponent("rollout-live.jsonl"))
+        try writeJSONL(codexJSONL(inputTokens: 7, outputTokens: 3, sessionId: "archived-session"), to: archivedDir.appendingPathComponent("rollout-archived.jsonl"))
+
+        let database = try SQLiteDatabase(path: ":memory:")
+        try TokenMeterDatabaseMigrator.migrate(database)
+        try LocalAgentScanner.seedDefaultScanRoots(database: database, homeDirectory: home)
+        let scanner = LocalAgentScanner(database: database)
+        for row in try database.query("SELECT id FROM scan_roots WHERE kind = ? ORDER BY id", [.text(SourceKind.codexJSONL.rawValue)]) {
+            try await scanner.scanRoot(id: try XCTUnwrap(row.int("id")))
+        }
+
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM agent_sessions"), 2, "sessions 与 archived_sessions 各贡献一个 session")
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 2)
+        // sessions: 10+5=15，archived: 7+3=10 → 25。
+        XCTAssertEqual(try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"), 25)
+    }
+
+    func testTheSameCodexSessionInBothRootsIsNotCountedTwice() async throws {
+        // 同一个 session（同一 source_session_key）同时出现在 sessions 与 archived_sessions 里。
+        // codex 的 token_count 事件没有 messageId，UsageEvent.dedupeKey 为 nil，
+        // UsageEventDeduplicator 原样放行——所以这条只能靠别的机制保证。
+        //
+        // 唯一挡住重复计数的，是"归档是移动而非复制"这条【外部】假设（本机实测两目录文件名
+        // 交集为 0）。它无法在代码里强制。本测试把同一 session 直接塞进两个 root，断言 token
+        // 只算一次（15，而非 30）。今天它会红：agent_sessions 因 UNIQUE(source_kind,
+        // source_session_key) upsert 成一行，但两份事件分别挂在不同 source_file_id 上、codex
+        // 无 dedupe_key，两遍都被计入。留红作为"归档是移动"这一外部假设的显式标记。
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sessionsDir = directory.appendingPathComponent("sessions", isDirectory: true)
+        let archivedDir = directory.appendingPathComponent("archived_sessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: archivedDir, withIntermediateDirectories: true)
+        // 同一 session id，不同文件名（模拟归档换名），内容一致。
+        try writeJSONL(codexJSONL(inputTokens: 10, outputTokens: 5, sessionId: "same-session"), to: sessionsDir.appendingPathComponent("rollout-live.jsonl"))
+        try writeJSONL(codexJSONL(inputTokens: 10, outputTokens: 5, sessionId: "same-session"), to: archivedDir.appendingPathComponent("rollout-archived.jsonl"))
+
+        let database = try SQLiteDatabase(path: ":memory:")
+        try TokenMeterDatabaseMigrator.migrate(database)
+        try database.execute(
+            "INSERT INTO scan_roots(id, kind, root_path, display_name, stable_source_key) VALUES (?, ?, ?, ?, ?)",
+            [.int(1), .text(SourceKind.codexJSONL.rawValue), .text(sessionsDir.path), .text("Codex"), .text("codex_jsonl:\(sessionsDir.path)")]
+        )
+        try database.execute(
+            "INSERT INTO scan_roots(id, kind, root_path, display_name, stable_source_key) VALUES (?, ?, ?, ?, ?)",
+            [.int(2), .text(SourceKind.codexJSONL.rawValue), .text(archivedDir.path), .text("Codex (Archived)"), .text("codex_jsonl:\(archivedDir.path)")]
+        )
+        let scanner = LocalAgentScanner(database: database)
+        try await scanner.scanRoot(id: 1)
+        try await scanner.scanRoot(id: 2)
+
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM agent_sessions"), 1, "同一 session 因 upsert 只应有一行")
+        XCTAssertEqual(
+            try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"),
+            15,
+            "同一 session 的 token 必须只算一次；codex 无 dedupeKey，今天会算成 30"
+        )
     }
 
     func testInPlaceRewriteToLargerBodyDoesNotResumeWithStaleContent() async throws {
