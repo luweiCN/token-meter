@@ -3547,89 +3547,14 @@ git commit -m "feat: resume jsonl parsing per source file"
 
 ---
 
-## Task 14b: 扫描的内存、跳过条件与分层
+## Task 14b: 扫描的内存、跳过条件与分层 — 已完成
 
-Task 14 的代码审查留下三条已确认、但当时刻意不修的问题。它们都在 `LocalAgentScanner.swift`，放一个任务里改完。
+三项全部落地：
 
-**Files:**
-- Modify: `Sources/TokenMeterCore/LocalAgentScanner.swift`
-- Modify: `Sources/TokenMeterCore/ClaudeCodeUsageEventParser.swift`
-- Test: `Tests/TokenMeterCoreTests/LocalAgentScannerTests.swift`
+- **跳过判据**（`56f6bde`）：`lastSourceOffset != nil` → `parserState != nil`。空扫 40.2 s → 3.2 s，指纹 open 19,971 → 0。
+- **内存**（`e37fd40`）：在 reader 的块循环里每 512 行排空 autoreleasepool。峰值 3.52 GiB → 311.6 MiB（−91.4%），耗时 82.4 s → 76.0 s。实测推翻了"把 pool 移进 onLine"的直觉方案——那会让峰值涨到 7.20 GiB，因为块 `Data` 是在 reader 循环里分配的，不在 `onLine` 里。详见 spec §10.4。
+- **分层**（`2b9ef46`）：`finish` 返回 `ParsedSession?`，`nil` 表示"不是会话文件"。scanner 删掉了 `sawClaudeUsage` 与裸子串匹配。详见 spec §10.5。
 
-### 一、~~零事件文件每次扫描都被完整重读~~ 已在 `56f6bde` 完成
-
-跳过判据已从 `lastSourceOffset != nil` 换成 `parserState != nil`，随指纹惰性化一并落地。`parser_state` 精确表达"v2 的 scanner 完整解析过这个文件"，同时兼作 v1→v2 升级判据（v1 行的旧格式解不成 v2 的 `ParserState`，`decodeParserState` 返回 nil）。
-
-实测（真实 codex 根，第二遍空扫）：
-
-| | 指纹 open 次数 | `files_changed` | 耗时 |
-|---|---:|---:|---:|
-| 改前 | ~19,971 | 19,211 | 40.2 s |
-| 改后 | **0** | **0** | **3.2 s** |
-
-### 二、`autoreleasepool` 包住整个文件，而不是每一行
-
-`LocalAgentScanner.swift:122` 的 pool 作用域是一个文件。3.28 GB / 25.7 万行的那个 codex 文件，其中每行 `JSONSerialization` 产生的桥接对象（`NSDictionary` / `NSString` / `NSNumber`，均为 autoreleased）要累积到整个文件读完才释放。加了 pool 之后峰值仍有 3.85 GB，原因就在这里。
-
-- [ ] **Step 3: 把 pool 移进 `onLine` 回调体内，实测**
-
-每行一个 `autoreleasepool` 有固定开销（数十纳秒量级）。25.7 万行下这点开销与省下的内存相比是否值得，**必须测，不要推断**。
-
-对 codex 单根，用 release 构建测三种配置，各跑一次，记录 wall time 与峰值 RSS：
-
-1. 现状（per-file pool）
-2. per-line pool
-3. per-file pool + 每 512 行在 `JSONLStreamReader` 内部 drain 一次
-
-把三行数字贴进报告。选内存降幅最大且耗时增幅 < 10% 的那个。如果 per-line 的耗时增幅超过 10%，选第三种。
-
-用户的要求是"这是常驻的工具应用，把内存降下来"。在这个取舍里，内存优先。
-
-### 三、`sawClaudeUsage` 用裸子串匹配，且判断放错了层
-
-`LocalAgentScanner.swift:186` 用 `line.text.contains("\"usage\"")` 区分"Claude 的辅助文件"（跳过）与"缺 sessionId 的真会话文件"（失败）。一个辅助文件只要正文里碰巧出现这个字面量，就会被判成解析失败，把整个 root 拖成 partial。
-
-更根本的问题是分层：一个文件是不是会话文件，是 **parser** 才知道的事，scanner 不该靠猜。而 Claude 的 parser 本来就把每一行都解析成了 JSON——它已经准确地知道自己有没有见过 `usage` 字段，不需要 scanner 再猜一遍。
-
-- [ ] **Step 4: 把判断下沉到 parser**
-
-让 `ClaudeCodeUsageEventParser` 在 `finish(sourceURL:)` 里自己决定：
-
-- 见过 `sessionId` → 正常返回。
-- 没见过 `sessionId`，也没见过任何带 `usage` 字段的行 → 这是辅助文件，返回一个空的 `ParsedSession`（零事件），不抛错。
-- 没见过 `sessionId`，但见过带 `usage` 的行 → 这是坏掉的会话文件，抛 `missingSessionKey`。
-
-`usage` 的判断用解析后的字典（`object["message"]?["usage"]`），不是子串。
-
-然后 scanner 删掉 `sawClaudeUsage` 这个局部变量和那个 `contains`。
-
-- [ ] **Step 5: 测试**
-
-```swift
-    func testClaudeAuxiliaryFileMentioningUsageInProseIsNotAFailure() throws {
-        // 一行合法 JSON，没有 sessionId，正文里含字面量 "usage"（比如某条日志文本）。
-        // 旧实现把它判成解析失败并把 root 拖成 partial；新实现应当当作辅助文件跳过。
-    }
-
-    func testClaudeSessionFileWithUsageButNoSessionIdStillFails() throws {
-        // 真正坏掉的会话文件仍然必须失败，不能因为放宽而被静默吞掉。
-    }
-```
-
-第二个测试是这次放宽的护栏。**没有它就不要动第三条。**
-
-- [ ] **Step 6: 全量验证**
-
-`swift test` 全绿；`swift build -c release`；对真实 codex 根跑两遍，第二遍的 `filesChanged` 应当从 19,211 降到 0，耗时显著下降。贴数字。
-
-- [ ] **Step 7: 提交**
-
-```bash
-git add Sources/TokenMeterCore/LocalAgentScanner.swift Sources/TokenMeterCore/ClaudeCodeUsageEventParser.swift Tests/TokenMeterCoreTests/LocalAgentScannerTests.swift
-git commit -m "perf: skip re-parsed zero-event files and bound intra-file memory"
-```
-
----
 
 ## Task 15: 全量重扫与进度事件
 

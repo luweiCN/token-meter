@@ -633,10 +633,39 @@ Task 14 的代码审查用变异测试（把不变量对应的那一行改坏，
 | 改前 | ~19,971 | 19,211 | 40.2 s |
 | 改后 | 0 | 0 | **3.2 s** |
 
-### 10.4 已确认但尚未处理
+### 10.4 峰值内存的真正来源：读取块，不是解析出的对象
 
-- **`autoreleasepool` 只包住单个文件，不包住单行。** 3.28 GB / 25.7 万行的那个 codex 文件，其每行 `JSONSerialization` 产生的 autoreleased 桥接对象会累积到文件读完才释放——这正是加了 pool 之后峰值仍有 3.85 GB 的原因。移进 `onLine` 可显著降低文件内峰值。
-- **`sawClaudeUsage` 用裸子串匹配 `"usage"`。** 一个没有 sessionId 的辅助文件，只要正文里碰巧出现这个字面量，就会从"跳过"变成"解析失败"，进而把整个 root 拖成 partial。过度保守，不丢数据。判断一个文件是不是会话文件是 parser 的职责——它本来就把每行解析成了 JSON，准确知道自己有没有见过 `usage` 字段。
+扫描的峰值 RSS 曾是 3.52 GiB，约等于最大单个 codex 文件的大小（3.28 GB）。直觉的解释是"每行 `JSONSerialization` 产生的 autoreleased 桥接对象堆积到文件读完"。**这个解释是错的**，而且照它去改会让内存翻倍。
+
+三种配置在真实 codex 根上的实测（`/usr/bin/time -l`，两次取优）：
+
+| 配置 | 峰值 RSS | 耗时 |
+|---|---:|---:|
+| 每文件一个 `autoreleasepool` | 3.52 GiB | 82.4 s |
+| 把 pool 移进 `onLine` 回调 | **7.20 GiB** | 87.4 s |
+| 每文件 pool + 在 reader 的块循环里每 512 行排空 | **311.6 MiB** | **76.0 s** |
+
+真正的大头是 `FileHandle.read(upToCount:)` 返回的 autoreleased 块 `Data`。codex 的字节预筛让大多数行根本到不了 `JSONSerialization`，所以按行解析的对象并不多。而那些块 `Data` 是在 **reader 的循环里**分配的，位于 `onLine` 之外——把 pool 移进 `onLine`，就没有任何 pool 在排它，块会跨整个 root 堆积，于是 7.74 GB。
+
+**要在对象被分配的地方排空，不是在它被使用的地方。** 最终方案把排空放进 reader 的块循环，每 512 行一次：峰值降 91.4%，耗时反而更短。
+
+这条只能靠测量得到。三个配置里排名第二的那个，是任何人凭直觉都会先写的那个。
+
+### 10.5 文件分类属于 parser，不属于 scanner
+
+`sawClaudeUsage` 曾用裸子串 `line.text.contains("\"usage\"")` 在 scanner 里判断：一个没有 `sessionId` 的 Claude 文件，究竟是辅助文件（跳过）还是坏掉的会话文件（失败，把整根拖成 partial）。正文里碰巧出现这个字面量就会误判。
+
+而 parser 本来就把每一行解析成了字典，它准确知道自己有没有见过 `message.usage` 对象。判断被下沉进 `ClaudeCodeUsageEventParser.finish`：
+
+- 见过 `sessionId` → 正常返回会话。
+- 没见过 `sessionId`，也没见过 `usage` 对象 → 辅助文件，返回 `nil`。
+- 没见过 `sessionId`，但见过 `usage` 对象 → 坏掉的会话文件，抛 `missingSessionKey`。
+
+`finish` 的返回类型因此变成 `(session: ParsedSession?, state: ParserState)`。`nil` 就是"这不是会话文件"——`ParsedSession.sessionKey` 是非可选的，不该为了表达"没有会话"去编造一个哨兵 key。
+
+"见过 usage" 的标志在时间戳／角色／token 数的守卫**之前**置位：一个 token 全为零、甚至没有时间戳的 `usage` 对象，仍然说明这个文件是会话形状的。放宽的方向必须是 fail-closed。
+
+这次放宽的护栏是"坏会话文件仍然必须失败"。该测试对当时的代码本来就是绿的——它守的是未来的回归，不是当下的缺陷。证明它有牙的办法不是硬凑一个失败，而是注入那个真正危险的实现（任何缺 `sessionId` 的文件都返回 `nil`），确认它变红。
 
 ## 11. 已知取舍与风险
 
