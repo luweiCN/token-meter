@@ -60,7 +60,6 @@ public final class ClaudeCodeUsageEventParser: UsageEventParser {
         guard inputTokens + outputTokens + cacheReadTokens + write5m + write1h > 0 else { return }
 
         let messageId = firstString(in: message, keys: ["id"])
-        let requestId = firstString(in: object, keys: ["requestId", "request_id"])
         // 去重指纹就是 messageId 本身，requestId 不参与。
         // 一条 assistant 响应 = 一次 API 计费，全程只有一个 messageId；requestId 却时有时无
         // （同一响应会以带 requestId 与不带 requestId 两种形态各出现一次，尤以 sidechain 为甚）。
@@ -76,7 +75,6 @@ public final class ClaudeCodeUsageEventParser: UsageEventParser {
                 observedAt: observedAt,
                 modelName: firstString(in: message, keys: ["model", "modelName", "model_name"]),
                 messageId: messageId,
-                requestId: requestId,
                 dedupeKey: dedupeKey,
                 inputTokens: inputTokens,
                 outputTokens: outputTokens,

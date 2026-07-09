@@ -63,7 +63,6 @@ public final class OpenCodeUsageEventAdapter {
                         messageId: parsed.messageId,
                         // OpenCode 的 message 没有 request id，dedupeKey 恒为 nil
                         // （adapter 已用 seenMessageIds 去重，保持今天的行为）。
-                        requestId: nil,
                         dedupeKey: nil,
                         // cache 独立于 input，原样取值，绝不像 Codex 那样减 cached。
                         inputTokens: parsed.inputTokens,

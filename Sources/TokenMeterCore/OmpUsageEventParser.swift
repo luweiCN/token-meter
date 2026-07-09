@@ -69,7 +69,6 @@ public final class OmpUsageEventParser: UsageEventParser {
                     observedAt: observedAt,
                     modelName: modelName,
                     messageId: nil,
-                    requestId: nil,
                     // omp 无稳定的逐消息指纹，保持今天的行为：不参与去重。
                     dedupeKey: nil,
                     inputTokens: inputTokens,

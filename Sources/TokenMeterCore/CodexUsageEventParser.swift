@@ -82,7 +82,6 @@ public final class CodexUsageEventParser: UsageEventParser {
                     observedAt: observedAt,
                     modelName: modelName,
                     messageId: nil,
-                    requestId: nil,
                     dedupeKey: dedupeKey,
                     // Codex 的 input 含 cached，必须减掉，否则缓存 token 被计两遍。
                     // 最大的 session 里 cached 占 input 的 94.6%，漏了这行数字翻倍。

@@ -15,8 +15,8 @@ final class UsageEventDeduplicatorTests: XCTestCase {
             eventSeq: seq,
             observedAt: Date(timeIntervalSince1970: seconds),
             messageId: messageId,
-            requestId: requestId,
-            // dedupeKey 现由构造者提供；复刻 Claude parser 的派生规则驱动这些用例。
+            // dedupeKey 现由构造者提供；这里用 requestId 合成一个「同 messageId、不同 dedupeKey」
+            // 的指纹，专为驱动规则二（byMessageId）——UsageEvent 本身已不再存 requestId。
             dedupeKey: messageId.flatMap { messageId in requestId.map { "\(messageId)\u{1F}\($0)" } },
             inputTokens: input,
             outputTokens: output,
@@ -100,7 +100,7 @@ final class UsageEventDeduplicatorTests: XCTestCase {
 
         XCTAssertEqual(result.count, 1)
         XCTAssertFalse(result[0].isSidechain)
-        XCTAssertEqual(result[0].requestId, "r1")
+        XCTAssertEqual(result[0].eventSeq, 1) // 原件（seq 1）胜出，重放副本（seq 2）被丢弃
     }
 
     func testNonSidechainWinsEvenWhenSidechainIsEarlier() {
@@ -169,6 +169,5 @@ final class UsageEventDeduplicatorTests: XCTestCase {
 
         XCTAssertEqual(result.count, 1)
         XCTAssertEqual(result[0].eventSeq, 2)
-        XCTAssertEqual(result[0].requestId, "r2")
     }
 }
