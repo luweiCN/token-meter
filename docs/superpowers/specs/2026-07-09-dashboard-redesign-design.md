@@ -686,6 +686,23 @@ schema v2；`LocalAgentSessionParser` 接口改为输出 `[UsageEvent]`；改造
 
 **计划漏掉了 `MenuBarSummaryRepository`。** 一段从未接进应用的 v1 死代码，查 `session_usage_latest` 与 `agent_sessions.model_name`。若按计划执行，它会活成"编译通过、一运行就 `no such column`"的查询。删除清单不能靠回忆，必须靠 `grep` 逐表反查。
 
+### 数据库是纯派生物，因此没有 schema 迁移
+
+**真相在磁盘上的会话文件里，不在数据库里。** 我们索引的一切都能靠一次全量重扫（274 秒）从 `~/.claude/projects`、`~/.codex/sessions`、`~/.omp/agent/sessions`、`opencode.db` 重建出来。
+
+于是版本化的 schema 迁移是一套我们不需要的机器。取而代之：
+
+- **配置表**（`settings`、`provider_config_overrides`、`scan_roots`）——用户设的东西，从文件重建不出来。`CREATE TABLE IF NOT EXISTS`，永不删。加列用幂等的 `ALTER TABLE ... ADD COLUMN`。
+- **派生表**（`source_files`、`agent_sessions`、`projects`、`usage_events`、`daily_rollup`、`session_rollup`、`scan_runs`）——`PRAGMA user_version` 与 `derivedVersion` 不符时整体 `DROP` + 重建。
+
+改 schema 从此零成本：动一个常量，下次启动自动重建，等一次全量重扫。**降级也安全**——版本不符就重建，方向无关，因为数据两个方向都能重建。
+
+清空派生表时**必须同时清空 `scan_roots` 的扫描游标**（`last_successful_cursor` 等）。`scan_roots` 是配置表，却携带扫描状态。Task 15 已经踩过这个坑：`OpenCodeUsageEventAdapter.changedSessions(after:)` 用那个游标做 `time_updated > ?` 过滤，游标不清则 `usage_events` 清空后它返回空集，那批数据**永远不会重建**。「从未扫描过」必须对每一种源都成立，不能只对大多数成立。
+
+**这个认识来得太晚，代价很具体。** Phase 1 从 Task 3 到 Task 18 的每一个任务都被「加法式迁移」约束着——新表必须与旧表并存、新 parser 必须与旧 parser 并存——只为让每个中间 commit 都能跑绿。那是十五个任务的额外约束，换来的是一个我们根本不需要的能力。
+
+把数据库默认当作「真相来源」，是一个不假思索的前提。**先问一句「这里面有什么是丢了就找不回来的」，比设计任何迁移方案都值钱。** 本机的答案是：三张表、十二行。
+
 ### Phase 1 → Phase 2 之间：升级后的第一次打开
 
 **本机的生产库仍是 `user_version = 1`**（`~/.token-meter/tokenmeter.sqlite`，36 MB，最后写入 2026-07-04）。Phase 1 全程都在临时库上验证，从未迁移过它。这意味着 Phase 1 记录的一切实测数字（2,202 个会话、35,260,164,417 token、9,603 条未知成本事件）都来自**扫描真实语料生成的临时库**，而不是用户正在读的那个。
