@@ -19,6 +19,10 @@ final class ModelNameNormalizerTests: XCTestCase {
         XCTAssertEqual(ModelNameNormalizer.canonical("anthropic/claude-opus-4-8-20260101"), "claude-opus-4-8")
     }
 
+    func testStripsZaiPrefix() {
+        XCTAssertEqual(ModelNameNormalizer.canonical("zai/glm-4.6"), "glm-4.6")
+    }
+
     func testLowercases() {
         XCTAssertEqual(ModelNameNormalizer.canonical("GPT-5.5"), "gpt-5.5")
     }

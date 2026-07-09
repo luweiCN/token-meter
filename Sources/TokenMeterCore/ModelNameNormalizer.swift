@@ -8,7 +8,8 @@ public enum ModelNameNormalizer {
         "bedrock/",
         "anthropic/",
         "openai/",
-        "openai-codex/"
+        "openai-codex/",
+        "zai/"          // LiteLLM 用 zai/glm-4.6 作 key，OpenCode 上报的是裸 glm-4.6
     ]
 
     public static func canonical(_ raw: String?) -> String {

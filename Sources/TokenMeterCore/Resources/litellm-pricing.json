@@ -1024,14 +1024,14 @@
     },
     "claude-3-haiku-20240307": {
       "cacheReadPerMTok": 0.03,
-      "cacheWrite1hPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 6.0,
       "cacheWrite5mPerMTok": 0.3,
       "inputPerMTok": 0.25,
       "outputPerMTok": 1.25
     },
     "claude-3-opus-20240229": {
       "cacheReadPerMTok": 1.5,
-      "cacheWrite1hPerMTok": 30.0,
+      "cacheWrite1hPerMTok": 6.0,
       "cacheWrite5mPerMTok": 18.75,
       "inputPerMTok": 15.0,
       "outputPerMTok": 75.0
@@ -2393,6 +2393,83 @@
       "cacheWrite5mPerMTok": 2.5,
       "inputPerMTok": 2.0,
       "outputPerMTok": 10.0
+    },
+    "zai/glm-4-32b-0414-128k": {
+      "cacheReadPerMTok": 0.01,
+      "cacheWrite1hPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 0.125,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.1
+    },
+    "zai/glm-4.5": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.2
+    },
+    "zai/glm-4.5-air": {
+      "cacheReadPerMTok": 0.02,
+      "cacheWrite1hPerMTok": 0.4,
+      "cacheWrite5mPerMTok": 0.25,
+      "inputPerMTok": 0.2,
+      "outputPerMTok": 1.1
+    },
+    "zai/glm-4.5-airx": {
+      "cacheReadPerMTok": 0.11,
+      "cacheWrite1hPerMTok": 2.2,
+      "cacheWrite5mPerMTok": 1.375,
+      "inputPerMTok": 1.1,
+      "outputPerMTok": 4.5
+    },
+    "zai/glm-4.5-x": {
+      "cacheReadPerMTok": 0.22,
+      "cacheWrite1hPerMTok": 4.4,
+      "cacheWrite5mPerMTok": 2.75,
+      "inputPerMTok": 2.2,
+      "outputPerMTok": 8.9
+    },
+    "zai/glm-4.5v": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 1.8
+    },
+    "zai/glm-4.6": {
+      "cacheReadPerMTok": 0.11,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.2
+    },
+    "zai/glm-4.7": {
+      "cacheReadPerMTok": 0.11,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.2
+    },
+    "zai/glm-5": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 3.2
+    },
+    "zai/glm-5-code": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 2.4,
+      "cacheWrite5mPerMTok": 1.5,
+      "inputPerMTok": 1.2,
+      "outputPerMTok": 5.0
+    },
+    "zai/glm-5.1": {
+      "cacheReadPerMTok": 0.26,
+      "cacheWrite1hPerMTok": 2.8,
+      "cacheWrite5mPerMTok": 1.75,
+      "inputPerMTok": 1.4,
+      "outputPerMTok": 4.4
     }
   },
   "snapshotVersion": "2026-07-09",
