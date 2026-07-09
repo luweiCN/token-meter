@@ -638,6 +638,16 @@ schema v2；`LocalAgentSessionParser` 接口改为输出 `[UsageEvent]`；改造
 
 验收：与 ccusage 对账通过；增量扫描 < 500 ms；单元测试覆盖上述边界。
 
+### Phase 1 — 已完成
+
+18 个任务，外加对账过程中长出来的 7 个补丁（14b–14h）。终态：Swift 250 测试、Electron 51 测试全绿；`scripts/reconcile-with-ccusage.sh` 对四个源 PASS，codex 与 ccusage `delta = 0`。
+
+**加法式迁移是对的。** Task 3 之后的每一步都在旧表旁边加新表、旧 parser 旁边加新 parser，因此每一个中间 commit 的 `swift test` 都是绿的。到 Task 18 时，旧代码已经可以用 `grep` 证明无人引用，删除是机械的。若当初在 Task 3 就删 v1 表，会有连续八个任务处在红色状态。
+
+**两次「计划自己的 SQL 弄红计划自己的测试」。** Task 16 的 `dailyTrend` 多选了一列 `modelCount`，而同一节的测试断言 `toEqual` 不接受多余的键。Task 18 的 `v3Cleanup` 要 `DROP COLUMN model_provider / message_count / event_count`，而 `sessionsRepository.query` 正在读这三列——同一节的测试却只断言另外三列被删。两次都是：SQL 和测试分开写，各自看都对，放在一起矛盾。写计划时把「完整代码」写进每一步，防的正是这个；而它照样发生了两次，因为**我在写测试时看的是意图，在写 SQL 时看的是表结构**。
+
+**计划漏掉了 `MenuBarSummaryRepository`。** 一段从未接进应用的 v1 死代码，查 `session_usage_latest` 与 `agent_sessions.model_name`。若按计划执行，它会活成"编译通过、一运行就 `no such column`"的查询。删除清单不能靠回忆，必须靠 `grep` 逐表反查。
+
 ### Phase 2 — 主界面
 
 堆叠柱状图组件；年度热力图；概览页；用量页；会话/项目/模型页；响应式；自动刷新。
