@@ -34,6 +34,24 @@ beforeEach(() => {
     -- 见 TokenMeterDatabaseSchema.swift 的 idx_daily_rollup_unique。
     CREATE UNIQUE INDEX idx_daily_rollup_unique
       ON daily_rollup(usage_date, provider_id, source_kind, coalesce(project_id,-1), model_canonical);
+    -- usage_events：明细表（spec §4.1）。小时粒度趋势与热力图会话数走它，daily_rollup 只有天。
+    -- Task 2 的 fixture 没建它；trendByHour 与 heatmap 的子查询都读这张表。
+    CREATE TABLE usage_events (
+      id INTEGER PRIMARY KEY,
+      session_id INTEGER NOT NULL,
+      source_file_id INTEGER NOT NULL DEFAULT 1,
+      event_seq INTEGER NOT NULL DEFAULT 0,
+      observed_epoch_ms INTEGER NOT NULL,
+      model_canonical TEXT,
+      tokens_input INTEGER NOT NULL DEFAULT 0,
+      tokens_output INTEGER NOT NULL DEFAULT 0,
+      tokens_reasoning INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_write_5m INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_write_1h INTEGER NOT NULL DEFAULT 0,
+      cost_usd_micros INTEGER,
+      cost_source TEXT NOT NULL DEFAULT 'reported'
+    );
   `);
 });
 
@@ -102,5 +120,40 @@ describe('kpis', () => {
     const k = new OverviewRepository(db, () => NOW).kpis();
     expect(k.todayCostUnknownEvents).toBe(5);
     expect(k.todayCostUsdMicros).toBe(0);   // NULL 不能变成别的数字
+  });
+});
+
+describe('trend', () => {
+  it('returns four stack segments per bucket, cache split from input', () => {
+    db.exec(`
+      INSERT INTO daily_rollup(usage_date, provider_id, source_kind, project_id, model_canonical,
+        sessions_count, events_count, tokens_input, tokens_output, tokens_cache_read,
+        tokens_cache_write_5m, tokens_cache_write_1h, cost_usd_micros)
+      VALUES ('2026-07-09','claude-code','claude_jsonl',NULL,'m',1,1, 100, 10, 900, 5, 3, 1),
+             ('2026-07-10','claude-code','claude_jsonl',NULL,'m',1,1, 200, 20,   0, 0, 0, 1);
+    `);
+
+    const rows = new OverviewRepository(db, () => NOW).trend('2026-07-09', '2026-07-10', 'day');
+
+    expect(rows).toEqual([
+      { bucket: '2026-07-09', input: 100, cacheWrite: 8, cacheRead: 900, output: 10 },
+      { bucket: '2026-07-10', input: 200, cacheWrite: 0, cacheRead: 0, output: 20 }
+    ]);
+  });
+
+  it('fills gaps with zero buckets so the x axis has no holes', () => {
+    db.exec(`INSERT INTO daily_rollup(usage_date, provider_id, source_kind, project_id, model_canonical,
+      sessions_count, events_count, tokens_input, cost_usd_micros)
+      VALUES ('2026-07-08','c','k',NULL,'m',1,1,10,1), ('2026-07-10','c','k',NULL,'m',1,1,20,1);`);
+
+    const rows = new OverviewRepository(db, () => NOW).trend('2026-07-08', '2026-07-10', 'day');
+
+    expect(rows.map(r => r.bucket)).toEqual(['2026-07-08', '2026-07-09', '2026-07-10']);
+    expect(rows[1]).toEqual({ bucket: '2026-07-09', input: 0, cacheWrite: 0, cacheRead: 0, output: 0 });
+  });
+
+  it('rejects a granularity the range does not allow', () => {
+    const repo = new OverviewRepository(db, () => NOW);
+    expect(() => repo.trend('2026-06-11', '2026-07-10', 'hour')).toThrow(/hour.*not allowed/i);
   });
 });

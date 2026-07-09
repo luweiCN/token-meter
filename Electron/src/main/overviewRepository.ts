@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { isAllowed, type Granularity } from './granularity.js';
 
 /// 5 分钟内消耗过 token 的会话打实心脉冲点。
 ///
@@ -25,6 +26,14 @@ export interface OverviewKpis {
   todayCostUsdMicros: number;
   todayCostUnknownEvents: number;
   monthCostUsdMicros: number;
+}
+
+export interface TrendBucket {
+  bucket: string;
+  input: number;
+  cacheWrite: number;
+  cacheRead: number;
+  output: number;
 }
 
 /// `now` 可注入，否则测试会在午夜前后随机变红。
@@ -100,4 +109,69 @@ export class OverviewRepository {
       monthCostUsdMicros: monthCost
     };
   }
+
+  trend(from: string, to: string, g: Granularity): TrendBucket[] {
+    if (!isAllowed(from, to, g)) {
+      throw new Error(`granularity ${g} is not allowed for ${from}..${to}`);
+    }
+
+    const rows = g === 'hour' ? this.trendByHour(from, to) : this.trendByDate(from, to, g);
+    return fillGaps(rows, from, to, g);
+  }
+
+  /// 小时粒度只在 ≤ 2 天的范围里开放，最多 48 根柱子、几百条明细。
+  /// daily_rollup 没有小时维度，硬做物化表得不偿失（spec §4.2）。
+  private trendByHour(from: string, to: string): TrendBucket[] {
+    return this.db.prepare(
+      `SELECT strftime('%Y-%m-%d %H', e.observed_epoch_ms / 1000, 'unixepoch', 'localtime') AS bucket,
+              coalesce(sum(e.tokens_input), 0) AS input,
+              coalesce(sum(e.tokens_cache_write_5m + e.tokens_cache_write_1h), 0) AS cacheWrite,
+              coalesce(sum(e.tokens_cache_read), 0) AS cacheRead,
+              coalesce(sum(e.tokens_output), 0) AS output
+         FROM usage_events e
+        WHERE date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime') BETWEEN ? AND ?
+     GROUP BY bucket ORDER BY bucket`
+    ).all(from, to) as TrendBucket[];
+  }
+
+  private trendByDate(from: string, to: string, g: Granularity): TrendBucket[] {
+    // week 以周一为起点；month 取 YYYY-MM。两者都由 SQLite 的 strftime 完成，
+    // 不在 TypeScript 里重算日期——两套日历实现必然漂移。
+    const bucketExpr =
+      g === 'week' ? `date(usage_date, 'weekday 0', '-6 days')`
+      : g === 'month' ? `strftime('%Y-%m', usage_date)`
+      : `usage_date`;
+
+    return this.db.prepare(
+      `SELECT ${bucketExpr} AS bucket,
+              coalesce(sum(tokens_input), 0) AS input,
+              coalesce(sum(tokens_cache_write_5m + tokens_cache_write_1h), 0) AS cacheWrite,
+              coalesce(sum(tokens_cache_read), 0) AS cacheRead,
+              coalesce(sum(tokens_output), 0) AS output
+         FROM daily_rollup
+        WHERE usage_date BETWEEN ? AND ?
+     GROUP BY bucket ORDER BY bucket`
+    ).all(from, to) as TrendBucket[];
+  }
+}
+
+const ZERO = { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 };
+
+/// 空桶必须补齐：缺一天不是「那天不存在」，是「那天用量为零」，X 轴不能有洞。
+function fillGaps(rows: TrendBucket[], from: string, to: string, g: Granularity): TrendBucket[] {
+  if (g === 'week' || g === 'month') return rows;   // 周/月的桶键不是连续日期，交给 SQL 的结果原样返回
+  const byBucket = new Map(rows.map(r => [r.bucket, r]));
+  const out: TrendBucket[] = [];
+  const step = g === 'hour' ? 3_600_000 : 86_400_000;
+  const start = Date.parse(`${from}T00:00:00`);
+  const end = Date.parse(`${to}T23:59:59`);
+  for (let t = start; t <= end; t += step) {
+    const d = new Date(t);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const key = g === 'hour'
+      ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}`
+      : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    out.push(byBucket.get(key) ?? { bucket: key, ...ZERO });
+  }
+  return out;
 }
