@@ -85,6 +85,31 @@ export interface ModelRank {
   costUnknownEvents: number;
 }
 
+/// 概览页默认展示的时间范围。趋势与排行走最近 30 天（30 根 ≤ 120 可读上限，day 粒度合法）；
+/// 热力图走一年（371 天，与 YearHeatmap 的默认格数一致）。
+const TREND_DAYS = 30;
+const HEATMAP_DAYS = 371;
+const SESSION_RAIL_LIMIT = 20;
+
+export interface OverviewReady {
+  dataState: 'ready';
+  today: string;
+  kpis: OverviewKpis;
+  trend: TrendBucket[];
+  trendRange: { from: string; to: string; granularity: Granularity };
+  heatmap: HeatmapDay[];
+  heatmapLastDay: string;
+  heatmapDays: number;
+  modelRanking: ModelRank[];
+  sessionRail: ActivityRow[];
+}
+
+export interface OverviewEmpty {
+  dataState: 'never-used' | 'needs-reindex';
+}
+
+export type OverviewPayload = OverviewReady | OverviewEmpty;
+
 /// `now` 可注入，否则测试会在午夜前后随机变红。
 export class OverviewRepository {
   constructor(private readonly db: Database.Database, private readonly now: () => number = Date.now) {}
@@ -100,6 +125,30 @@ export class OverviewRepository {
   dataState(corpusExists: (rootPath: string) => boolean = defaultCorpusExists): OverviewDataState {
     if (this.hasUsageRows()) return 'ready';
     return this.enabledScanRootPaths().some(corpusExists) ? 'needs-reindex' : 'never-used';
+  }
+
+  /// 组装整页负载。空状态下【短路】——绝不触碰 kpis/trend/heatmap，因为升级前的
+  /// v1 库里那些表尚不存在，跑了就 no such table。renderer 只接这一个 KB 级结果。
+  buildOverview(corpusExists: (rootPath: string) => boolean = defaultCorpusExists): OverviewPayload {
+    const state = this.dataState(corpusExists);
+    if (state !== 'ready') return { dataState: state };
+
+    const to = this.localDate(0);
+    const trendFrom = this.localDate(-(TREND_DAYS - 1));
+    const heatmapFrom = this.localDate(-(HEATMAP_DAYS - 1));
+
+    return {
+      dataState: 'ready',
+      today: to,
+      kpis: this.kpis(),
+      trend: this.trend(trendFrom, to, 'day'),
+      trendRange: { from: trendFrom, to, granularity: 'day' },
+      heatmap: this.heatmap(heatmapFrom, to),
+      heatmapLastDay: to,
+      heatmapDays: HEATMAP_DAYS,
+      modelRanking: this.modelRanking(trendFrom, to, 'cost'),
+      sessionRail: this.sessionRail(SESSION_RAIL_LIMIT)
+    };
   }
 
   private tableExists(name: string): boolean {

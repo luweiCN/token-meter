@@ -15,6 +15,8 @@ export function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: 1180,
     height: 760,
+    // 概览页在约 720px 以下无处可去（右栏已收进浮层、主区已单列），设下限止损（spec §7.5）。
+    minWidth: 720,
     webPreferences: {
       preload: path.join(__dirname, '../preload.js'),
       nodeIntegration: false,

@@ -31,7 +31,7 @@ export function Layout({ route, onRoute, children }: { route: RouteName; onRoute
           ))}
         </nav>
       </aside>
-      <section className="content">{children}</section>
+      <section className={route === 'dashboard' ? 'content is-overview' : 'content'}>{children}</section>
     </main>
   );
 }

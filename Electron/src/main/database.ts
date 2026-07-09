@@ -4,6 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 export function tokenMeterDatabasePath() {
+  // 开发/验证时可用 TOKEN_METER_DB_PATH 指向一份副本，避免在未迁移的生产库上触发迁移。
+  const override = process.env.TOKEN_METER_DB_PATH;
+  if (override && override.trim() !== '') return override;
   return path.join(os.homedir(), '.token-meter', 'tokenmeter.sqlite');
 }
 

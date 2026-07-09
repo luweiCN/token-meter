@@ -10,6 +10,16 @@ contextBridge.exposeInMainWorld('tokenMeter', {
   dashboard: {
     queryOverview: () => ipcRenderer.invoke('dashboard:overview')
   },
+  overview: {
+    query: () => ipcRenderer.invoke('overview:query'),
+    // 事件驱动刷新：Swift 扫描完成 → 主进程发 dashboard:invalidate。renderer 收到后
+    // 走单飞守卫重取，不会与轮询堆并发。返回取消订阅函数，供组件卸载时清理。
+    onInvalidate: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('dashboard:invalidate', listener);
+      return () => ipcRenderer.removeListener('dashboard:invalidate', listener);
+    }
+  },
   sessions: {
     query: (filter: SessionsFilter) => ipcRenderer.invoke('sessions:query', filter)
   },

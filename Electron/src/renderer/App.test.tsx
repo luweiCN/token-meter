@@ -86,9 +86,14 @@ interface TokenMeterApi {
   dashboard: {
     queryOverview: Mock<() => Promise<DashboardOverview>>;
   };
+  overview: {
+    query: Mock<() => Promise<{ dataState: string }>>;
+    onInvalidate: Mock<(callback: () => void) => () => void>;
+  };
   index: {
     status: Mock<() => Promise<IndexStatusResult>>;
     startFullReindex: Mock<() => Promise<unknown>>;
+    onScanProgress: Mock<(callback: (progress: unknown) => void) => () => void>;
   };
 }
 
@@ -225,9 +230,14 @@ function installTokenMeterApi(): TokenMeterApi {
     dashboard: {
       queryOverview: vi.fn<() => Promise<DashboardOverview>>()
     },
+    overview: {
+      query: vi.fn<() => Promise<{ dataState: string }>>(),
+      onInvalidate: vi.fn<(callback: () => void) => () => void>(() => () => {})
+    },
     index: {
       status: vi.fn<() => Promise<IndexStatusResult>>(),
-      startFullReindex: vi.fn<() => Promise<unknown>>()
+      startFullReindex: vi.fn<() => Promise<unknown>>(),
+      onScanProgress: vi.fn<(callback: (progress: unknown) => void) => () => void>(() => () => {})
     }
   };
 
@@ -249,6 +259,7 @@ describe('AppShell renderer routes', () => {
     api.settings.update.mockResolvedValue({ requestedVersion: 13, status: 'pending' });
     api.index.status.mockResolvedValue(indexStatusResult);
     api.dashboard.queryOverview.mockResolvedValue(dashboardOverview);
+    api.overview.query.mockResolvedValue({ dataState: 'needs-reindex' });
     api.index.startFullReindex.mockResolvedValue({ ok: true });
   });
 
@@ -269,57 +280,32 @@ describe('AppShell renderer routes', () => {
     expectNoEnglishScaffold();
   });
 
-  it('shows the current local index failure on the dashboard instead of waiting for data', async () => {
+  it('renders the overview page from its own query on the default route', async () => {
+    // 概览页（Overview）自持数据，App 不再把索引摘要塞进首页；索引健康在「索引状态」页。
     render(<AppShell />);
 
+    expect(await screen.findByText('数据结构已更新，需要重新索引一次')).toBeTruthy();
     await waitFor(() => {
-      expect(api.index.status).toHaveBeenCalledTimes(1);
+      expect(api.overview.query).toHaveBeenCalledTimes(1);
     });
-    expect(await screen.findByText('索引部分失败')).toBeTruthy();
-    expect(screen.getByText('1 个扫描源需要处理')).toBeTruthy();
-    expect(screen.getByText('1 个失败文件')).toBeTruthy();
     expect(screen.queryByText('等待数据')).toBeNull();
     expectNoEnglishScaffold();
   });
 
-  it('renders dashboard session totals, token totals, model breakdown, and trend from SQLite overview data', async () => {
-    api.index.status.mockResolvedValue(healthyIndexStatusResult);
+  it('refreshes the index status when the window regains focus', async () => {
+    const user = userEvent.setup();
+    api.index.status.mockResolvedValueOnce(indexStatusResult).mockResolvedValue(healthyIndexStatusResult);
     render(<AppShell />);
 
-    await waitFor(() => {
-      expect(api.dashboard.queryOverview).toHaveBeenCalledTimes(1);
-    });
-    expect(await screen.findByText('索引正常')).toBeTruthy();
-    expect(screen.queryByText('索引部分失败')).toBeNull();
-    expect(screen.getByText('2,250')).toBeTruthy();
-    expect(screen.getByText('41.73B')).toBeTruthy();
-    expect(screen.getByText('3')).toBeTruthy();
-    expect(screen.getByText('claude-sonnet')).toBeTruthy();
-    expect(screen.getAllByText('23.00B').length).toBeGreaterThan(0);
-    expect(screen.getByText('gpt-5')).toBeTruthy();
-    expect(screen.getAllByText('18.00B').length).toBeGreaterThan(0);
-    expect(screen.getByText('最近 7 天 Token 趋势')).toBeTruthy();
-    expect(screen.getByText('2026-07-02')).toBeTruthy();
-    expect(screen.queryByText('等待数据')).toBeNull();
-    expectNoEnglishScaffold();
-  });
+    await user.click(screen.getByRole('button', { name: '索引状态' }));
+    expect(await screen.findByText('扫描 #42 · 部分失败')).toBeTruthy();
 
-  it('refreshes dashboard status and overview when the window regains focus', async () => {
-    api.index.status.mockResolvedValue(healthyIndexStatusResult);
-    api.index.status.mockResolvedValueOnce(indexStatusResult);
-    render(<AppShell />);
-
-    expect(await screen.findByText('索引部分失败')).toBeTruthy();
     window.dispatchEvent(new Event('focus'));
 
     await waitFor(() => {
       expect(api.index.status.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
-    await waitFor(() => {
-      expect(api.dashboard.queryOverview.mock.calls.length).toBeGreaterThanOrEqual(2);
-    });
-    expect(await screen.findByText('索引正常')).toBeTruthy();
-    expect(screen.queryByText('索引部分失败')).toBeNull();
+    expect(await screen.findByText('扫描 #43 · 成功')).toBeTruthy();
   });
 
   it('changes the visible route content when sidebar controls are clicked', async () => {
@@ -396,9 +382,6 @@ describe('AppShell renderer routes', () => {
     });
     await waitFor(() => {
       expect(api.index.status).toHaveBeenCalledTimes(2);
-    });
-    await waitFor(() => {
-      expect(api.dashboard.queryOverview.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
     expect(await screen.findByText('扫描 #43 · 成功')).toBeTruthy();
   });

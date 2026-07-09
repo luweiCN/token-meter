@@ -275,6 +275,36 @@ describe('dataState', () => {
   });
 });
 
+describe('buildOverview', () => {
+  it('short-circuits to the empty payload without running section queries when not ready', () => {
+    // 关键：needs-reindex 时绝不能去跑 kpis/trend/heatmap——生产 v1 库里那些表还不存在，
+    // 跑了就 no such table。这里 usage_events 空、有启用扫描源+语料在 → needs-reindex。
+    seedScanRoot(1, '/corpus/present');
+    const payload = new OverviewRepository(db, () => NOW).buildOverview(() => true);
+    expect(payload).toEqual({ dataState: 'needs-reindex' });
+  });
+
+  it('assembles every section when there is data', () => {
+    seedScanRoot(1, '/corpus/present');
+    db.exec(`INSERT INTO daily_rollup(usage_date, provider_id, source_kind, project_id, model_canonical,
+      sessions_count, events_count, tokens_input, tokens_output, cost_usd_micros, cost_unknown_events)
+      VALUES ('2026-07-10','claude-code','claude_jsonl',NULL,'claude-fable-5', 1, 2, 100, 10, 500, 1);`);
+    seedSession(1, 'claude-code', 'token-meter', 30_000, 110);
+    seedEvent(1, 1, '2026-07-10T09:00:00');
+
+    const payload = new OverviewRepository(db, () => NOW).buildOverview(() => true);
+
+    expect(payload.dataState).toBe('ready');
+    if (payload.dataState !== 'ready') throw new Error('expected ready');
+    expect(payload.kpis.todayTokens).toBe(110);
+    expect(payload.trend.length).toBeGreaterThan(0);
+    expect(payload.trend[payload.trend.length - 1].bucket).toBe('2026-07-10');   // 末桶是今天
+    expect(payload.heatmapLastDay).toBe('2026-07-10');
+    expect(payload.modelRanking.map(m => m.model)).toContain('claude-fable-5');
+    expect(payload.sessionRail.map(s => s.projectName)).toContain('token-meter');
+  });
+});
+
 describe('sessionRail', () => {
   it('pins live sessions to the top, each group ordered by most recent, carrying duration and cost', () => {
     seedSession(1, 'claude-code', 'a', 30_000, 100);      // live, 30s 前

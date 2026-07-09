@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { DashboardRepository } from './dashboardRepository.js';
 import { IndexStatusRepository } from './indexStatusRepository.js';
+import { OverviewRepository } from './overviewRepository.js';
 import { SessionsRepository } from './sessionsRepository.js';
 
 import { openTokenMeterDatabase } from './database.js';
@@ -11,6 +12,7 @@ export function registerIpcHandlers() {
   const db = openTokenMeterDatabase();
   const settings = new SettingsRepository(db);
   const dashboard = new DashboardRepository(db);
+  const overview = new OverviewRepository(db);
   const sessions = new SessionsRepository(db);
   const indexStatus = new IndexStatusRepository(db);
   ipcMain.handle('settings:get', async () => settings.get());
@@ -42,6 +44,7 @@ export function registerIpcHandlers() {
     }
   });
   ipcMain.handle('dashboard:overview', async () => dashboard.overview());
+  ipcMain.handle('overview:query', async () => overview.buildOverview());
   ipcMain.handle('sessions:query', async (_event, filter) => sessions.query(filter));
   ipcMain.handle('index:status', async () => indexStatus.status());
   // 全量重扫走流式路径：Swift 端要跑几分钟才写第一个字节，旧的 notifySwift('scanNow') 会在 2 秒

@@ -37,6 +37,11 @@ const mockDashboardRepository = vi.hoisted(() => ({
   overview: vi.fn()
 }));
 
+const mockOverviewRepository = vi.hoisted(() => ({
+  constructor: vi.fn(),
+  buildOverview: vi.fn()
+}));
+
 const mockSessionsRepository = vi.hoisted(() => ({
   constructor: vi.fn(),
   query: vi.fn()
@@ -71,6 +76,15 @@ vi.mock('./dashboardRepository.js', () => ({
     mockDashboardRepository.constructor(database);
     return {
       overview: mockDashboardRepository.overview
+    };
+  })
+}));
+
+vi.mock('./overviewRepository.js', () => ({
+  OverviewRepository: vi.fn(function OverviewRepositoryMock(database: unknown) {
+    mockOverviewRepository.constructor(database);
+    return {
+      buildOverview: mockOverviewRepository.buildOverview
     };
   })
 }));
@@ -142,6 +156,7 @@ import '../preload.js';
 
 const allowedIpcChannels: Record<string, true> = {
   'dashboard:overview': true,
+  'overview:query': true,
   'index:fullReindex': true,
   'index:status': true,
   'sessions:query': true,
@@ -151,6 +166,7 @@ const allowedIpcChannels: Record<string, true> = {
 
 const allowedPreloadApiShape: Record<string, string[]> = {
   dashboard: ['queryOverview'],
+  overview: ['onInvalidate', 'query'],
   index: ['onScanProgress', 'startFullReindex', 'status'],
   sessions: ['query'],
   settings: ['get', 'update']
@@ -316,6 +332,17 @@ describe('Electron secure scaffold', () => {
     });
 
     expect(mockSwiftClient.notifySwift).not.toHaveBeenCalled();
+  });
+
+  it('overview:query reads the assembled payload through OverviewRepository without renderer args', async () => {
+    const payload = { dataState: 'needs-reindex' };
+    mockOverviewRepository.buildOverview.mockReturnValue(payload);
+    const overviewHandler = registerAndFindHandler('overview:query');
+
+    await expect(overviewHandler({} as never, { ignored: true })).resolves.toBe(payload);
+
+    expect(mockOverviewRepository.constructor).toHaveBeenCalledWith(mockDatabase.instance);
+    expect(mockOverviewRepository.buildOverview).toHaveBeenCalledWith();
   });
 
   it('sessions:query reads through SessionsRepository with renderer filter args', async () => {

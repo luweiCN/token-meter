@@ -25,6 +25,10 @@ select {
   background:
     radial-gradient(circle at 18% 14%, oklch(91% 0.035 230 / 0.65), transparent 30%),
     linear-gradient(135deg, oklch(97% 0.006 255), oklch(94% 0.012 250));
+  /* 概览页的响应式走容器查询，查询本层的宽度（≈窗口宽），不装 JS resize 监听——
+     窗口 resize 时的 re-render 是常驻内存与 CPU 的主要来源之一（spec §7.5）。 */
+  container-type: inline-size;
+  container-name: shell;
 }
 
 .sidebar {
@@ -323,5 +327,312 @@ select {
 
   .content {
     padding: 28px 22px;
+  }
+}
+
+/* ── 概览页（Overview）─────────────────────────────────────────────── */
+
+/* 图表色阶与堆叠段色（YearHeatmap 读 --heat-0..4，StackedBarChart 读 --seg-*）。 */
+:root {
+  --heat-0: oklch(92% 0.008 255);
+  --heat-1: oklch(84% 0.07 150);
+  --heat-2: oklch(74% 0.12 150);
+  --heat-3: oklch(64% 0.15 150);
+  --heat-4: oklch(52% 0.16 150);
+  --seg-input: oklch(66% 0.14 250);
+  --seg-cache-write: oklch(78% 0.13 80);
+  --seg-cache-read: oklch(62% 0.15 300);
+  --seg-output: oklch(70% 0.13 160);
+  --chart-grid: oklch(90% 0.008 255);
+  --chart-axis: oklch(55% 0.012 255);
+}
+
+/* 概览页吃满宽度，最多 1720 居中（spec §7.5 ≥1600 行为）。 */
+.content.is-overview {
+  max-width: none;
+}
+
+.overview__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.overview__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 16px;
+  margin-top: 16px;
+  max-width: 1720px;
+}
+
+.overview__main {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  min-width: 0;
+}
+
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.quota-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.overview__split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 360px);
+  gap: 16px;
+}
+
+.overview__panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.overview__rail {
+  align-self: start;
+}
+
+.metric-card__foot {
+  color: oklch(52% 0.012 255);
+  font-size: 12px;
+}
+
+/* 每一处成本旁的「部分未知」提示（前置事实）。 */
+.cost-unknown {
+  color: oklch(52% 0.11 60);
+  font-size: 12px;
+}
+
+.metric-card.is-placeholder {
+  opacity: 0.7;
+}
+
+.metric-switch {
+  display: flex;
+  gap: 6px;
+}
+
+.metric-switch button {
+  border: 1px solid oklch(85% 0.012 255);
+  border-radius: 8px;
+  padding: 4px 9px;
+  color: oklch(40% 0.016 255);
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.metric-switch button.active {
+  border-color: transparent;
+  color: oklch(98% 0.004 255);
+  background: oklch(30% 0.045 255);
+}
+
+.rank-row__cost {
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  text-align: right;
+}
+
+/* 年度热力图窄屏时横向滚动，不撑破页面（spec §7.6）。 */
+.year-heatmap {
+  overflow-x: auto;
+}
+
+/* 右栏会话列表。 */
+.session-rail__list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.session-rail__item {
+  border: 1px solid oklch(88% 0.01 255);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.session-rail__item.is-live {
+  border-color: oklch(72% 0.13 150);
+  background: oklch(96% 0.03 150 / 0.4);
+}
+
+.session-rail__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-rail__project {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-rail__provider {
+  margin-left: auto;
+  color: oklch(52% 0.012 255);
+  font-size: 12px;
+}
+
+.session-rail__meta,
+.session-rail__cost {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: oklch(48% 0.014 255);
+  font-size: 12px;
+}
+
+.session-rail__pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: oklch(64% 0.17 150);
+  animation: tm-pulse 1.6s ease-in-out infinite;
+}
+
+/* 窄屏徽标按钮：默认隐藏，容器 < 960px 时出现并脉冲。 */
+.rail-badge {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid oklch(82% 0.012 255);
+  border-radius: 999px;
+  padding: 7px 12px;
+  color: inherit;
+  background: oklch(99% 0.004 255);
+  cursor: pointer;
+}
+
+.rail-badge__count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  color: oklch(98% 0.004 255);
+  background: oklch(30% 0.045 255);
+  font-size: 12px;
+}
+
+.rail-badge.is-live {
+  border-color: oklch(72% 0.13 150);
+  animation: tm-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes tm-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(64% 0.17 150 / 0.5); }
+  50% { box-shadow: 0 0 0 6px oklch(64% 0.17 150 / 0); }
+}
+
+.overview__rail-overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: start end;
+  padding: 24px;
+  background: oklch(20% 0.02 255 / 0.4);
+  z-index: 20;
+}
+
+.overview__rail-overlay-card {
+  width: min(360px, 92vw);
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.rail-overlay__close {
+  border: 0;
+  background: transparent;
+  color: oklch(40% 0.016 255);
+  cursor: pointer;
+}
+
+.empty-state {
+  display: grid;
+  gap: 14px;
+  justify-items: start;
+  max-width: 640px;
+  margin-top: 24px;
+}
+
+.reindex-progress {
+  width: 100%;
+  display: grid;
+  gap: 6px;
+}
+
+.reindex-progress__bar {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: oklch(91% 0.012 255);
+}
+
+.reindex-progress__bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, oklch(56% 0.18 260), oklch(70% 0.16 205));
+}
+
+.usage-placeholder__filter {
+  display: grid;
+  grid-template-columns: 60px 1fr;
+  gap: 6px 12px;
+  margin: 12px 0 0;
+}
+
+.usage-placeholder__filter dt {
+  color: oklch(52% 0.012 255);
+  font-weight: 700;
+}
+
+.usage-placeholder__filter dd {
+  margin: 0;
+}
+
+/* 断点（spec §7.5），查询 shell 容器（≈窗口宽）。
+   ≥1600：默认网格已是「主区 1fr + 右栏 300」，max-width:1720 居中即为该行为。
+   <960：全部单列，右栏移出文档流，脉冲徽标登场。 */
+@container shell (max-width: 959.98px) {
+  .overview__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .overview__split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .kpi-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .overview__rail {
+    display: none;
+  }
+  .rail-badge {
+    display: inline-flex;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-rail__pulse,
+  .rail-badge.is-live {
+    animation: none;
   }
 }

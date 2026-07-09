@@ -1,3 +1,24 @@
+import type { OverviewPayload } from '../main/overviewRepository.js';
+
+export type { OverviewPayload, OverviewReady, OverviewEmpty } from '../main/overviewRepository.js';
+export type {
+  OverviewKpis,
+  TrendBucket,
+  HeatmapDay,
+  ModelRank,
+  ActivityRow
+} from '../main/overviewRepository.js';
+
+/// Swift 全量重扫的流式进度（index:scanProgress）。字段与 ipc.test.ts 的 fixture 一致。
+export interface ScanProgress {
+  kind: string;
+  filesTotal: number;
+  filesDone: number;
+  bytesTotal: number;
+  bytesDone: number;
+  currentRoot: string;
+}
+
 export interface ProviderConfigOverride {
   providerId: string;
   enabled?: boolean;
@@ -130,12 +151,17 @@ declare global {
       dashboard: {
         queryOverview(): Promise<DashboardOverview>;
       };
+      overview: {
+        query(): Promise<OverviewPayload>;
+        onInvalidate(callback: () => void): () => void;
+      };
       sessions: {
         query(filter: SessionsFilter): Promise<SessionQueryResult>;
       };
       index: {
         status(): Promise<IndexStatusResult>;
         startFullReindex(rootId?: string): Promise<unknown>;
+        onScanProgress(callback: (progress: ScanProgress) => void): () => void;
       };
     };
   }
