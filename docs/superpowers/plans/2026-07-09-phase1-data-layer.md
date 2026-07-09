@@ -3550,101 +3550,299 @@ git commit -m "feat: resume jsonl parsing per source file"
 ## Task 15: 全量重扫与进度事件
 
 **Files:**
+- Create: `Sources/TokenMeterCore/ScanProgress.swift`
 - Modify: `Sources/TokenMeterCore/LocalAgentScanner.swift`
 - Modify: `Sources/TokenMeterApp/TokenMeterIPCServer.swift`
 - Modify: `Electron/src/main/tokenMeterSocketClient.ts`
+- Test: `Tests/TokenMeterCoreTests/ScanProgressTests.swift`
+- Test: `Tests/TokenMeterCoreTests/LocalAgentScannerTests.swift`
 - Test: `Tests/TokenMeterAppTests/TokenMeterIPCServerTests.swift`
+- Test: `Electron/src/main/tokenMeterSocketClient.test.ts`
 
-- [ ] **Step 1: 写失败的测试**
+### 现有 IPC 是一问一答，推不了进度
 
-追加到 `Tests/TokenMeterAppTests/TokenMeterIPCServerTests.swift`：
+动手前先读这两处，它们否决了本任务的原始设计：
+
+- `Sources/TokenMeterApp/TokenMeterIPCServer.swift` 的 `respond(to:on:)`：发完一行响应就无条件 `connection.cancel()`。
+- `Electron/src/main/tokenMeterSocketClient.ts`：收到第一个 `\n` 就 `settle()` → `socket.destroy()`；并且 `socket.setTimeout(2_000)`。
+
+全量重扫在本机真实数据上要 **177 秒**。照搬「server 持续发 `scan.progress`」的写法，客户端会在第 2 秒掐断连接，服务端随后写入失败。**两端都必须改**，且超时语义必须从「总时长」改成「空闲时长」。
+
+### 进度按字节，不按文件数
+
+Codex 单个 session 文件最大 5 MB，Claude 多数文件几十 KB。按 `filesDone / filesTotal` 画进度条会先飞快跳到 90%，再在几个大文件上停住不动。按字节则平滑。
+
+节流做成不依赖时钟的纯函数，这样测试不用控制时间：
+
+- [ ] **Step 1: 写失败的测试（节流器）**
+
+新建 `Tests/TokenMeterCoreTests/ScanProgressTests.swift`：
 
 ```swift
-    func testFullRescanRequestClearsUsageEventsAndEmitsProgress() throws {
-        let database = try SQLiteDatabase(path: ":memory:")
-        try TokenMeterDatabaseMigrator.migrate(database)
+import XCTest
+@testable import TokenMeterCore
 
-        var progressEvents: [ScanProgressEvent] = []
-        let scanner = makeScanner(database) { progressEvents.append($0) }
-
-        try scanner.fullRescan()
-
-        XCTAssertEqual(try database.query("SELECT count(*) AS n FROM usage_events")[0].int("n"), 0)
-        XCTAssertFalse(progressEvents.isEmpty)
-        XCTAssertEqual(progressEvents.last?.filesDone, progressEvents.last?.filesTotal)
+final class ScanProgressTests: XCTestCase {
+    func testEmitsOnCrossingHalfPercent() {
+        var throttle = ScanProgressThrottle()
+        XCTAssertTrue(throttle.shouldEmit(bytesDone: 0, bytesTotal: 1000, isFinal: false))
+        XCTAssertFalse(throttle.shouldEmit(bytesDone: 1, bytesTotal: 1000, isFinal: false))
+        XCTAssertTrue(throttle.shouldEmit(bytesDone: 5, bytesTotal: 1000, isFinal: false))
     }
 
-    func testFullRescanResetsParserStateAndOffsets() throws {
-        let database = try SQLiteDatabase(path: ":memory:")
-        try TokenMeterDatabaseMigrator.migrate(database)
-        try database.execute("INSERT INTO scan_roots(id, kind, root_path, display_name, stable_source_key) VALUES (1,'claude_jsonl','/tmp/c','C','c')")
-        try database.execute(
-            """
-            INSERT INTO source_files(id, scan_root_id, relative_path, canonical_path, file_type, size_bytes, mtime_ns, parser_state)
-            VALUES (1, 1, 'a.jsonl', '/tmp/c/a.jsonl', 'jsonl_session', 1, 1, '{"lastEventSeq":42}')
-            """
-        )
-
-        try makeScanner(database) { _ in }.fullRescan()
-
-        let state = try database.query("SELECT parser_state FROM source_files WHERE id = 1")[0].string("parser_state")
-        XCTAssertNil(state, "全量重扫必须清空 parser_state，否则 event_seq 会从 42 续下去")
+    func testAlwaysEmitsFinal() {
+        var throttle = ScanProgressThrottle()
+        _ = throttle.shouldEmit(bytesDone: 0, bytesTotal: 1000, isFinal: false)
+        XCTAssertTrue(throttle.shouldEmit(bytesDone: 1, bytesTotal: 1000, isFinal: true),
+                      "最后一条必须发出，否则 UI 永远停在 99.6%")
     }
+
+    func testZeroTotalDoesNotDivideByZero() {
+        var throttle = ScanProgressThrottle()
+        XCTAssertTrue(throttle.shouldEmit(bytesDone: 0, bytesTotal: 0, isFinal: true))
+    }
+
+    func testBoundedEventCount() {
+        // 10 万次调用最多发出约 201 条：0.5% 一档，共 200 档，加末尾一条。
+        var throttle = ScanProgressThrottle()
+        let emitted = (0...100_000).filter {
+            throttle.shouldEmit(bytesDone: Int64($0), bytesTotal: 100_000, isFinal: false)
+        }.count
+        XCTAssertLessThanOrEqual(emitted, 205, "进度事件必须有界，否则 5,492 个文件会刷屏")
+        XCTAssertGreaterThanOrEqual(emitted, 195)
+    }
+}
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `swift test --filter TokenMeterIPCServerTests`
-Expected: 编译失败，`value of type 'LocalAgentScanner' has no member 'fullRescan'`
+Run: `swift test --filter ScanProgressTests`
+Expected: 编译失败，`cannot find 'ScanProgressThrottle' in scope`
 
-- [ ] **Step 3: 实现**
+- [ ] **Step 3: 实现节流器**
 
-在 `LocalAgentScanner` 增加：
+新建 `Sources/TokenMeterCore/ScanProgress.swift`：
 
 ```swift
+import Foundation
+
 public struct ScanProgressEvent: Equatable, Codable {
     public let filesTotal: Int
     public let filesDone: Int
     public let bytesTotal: Int64
     public let bytesDone: Int64
     public let currentRoot: String
+
+    public init(filesTotal: Int, filesDone: Int, bytesTotal: Int64, bytesDone: Int64, currentRoot: String) {
+        self.filesTotal = filesTotal
+        self.filesDone = filesDone
+        self.bytesTotal = bytesTotal
+        self.bytesDone = bytesDone
+        self.currentRoot = currentRoot
+    }
 }
 
-extension LocalAgentScanner {
-    /// 用户显式触发。清空明细与解析状态，重新读全部源文件。
-    /// 不清 scan_roots（配置）与 settings。
-    public func fullRescan() throws {
-        try database.execute("DELETE FROM usage_events")
-        try database.execute("DELETE FROM daily_rollup")
-        try database.execute("DELETE FROM session_rollup")
-        try database.execute("UPDATE source_files SET parser_state = NULL, parse_status = 'pending'")
-        try database.execute("UPDATE scan_roots SET last_successful_cursor = NULL")
-        try scanAll(runKind: .full)
-        try RollupBuilder(database: database).rebuildAll()
+/// 按字节进度每跨越 0.5% 放行一条事件，外加末尾一条。
+///
+/// 刻意不看时钟：时钟会让测试需要注入 `Date` 供给器，而这里唯一要保证的是
+/// 「事件条数有界」和「最后一条一定发出」。两者都只跟字节数有关。
+public struct ScanProgressThrottle {
+    private static let stepPercent = 0.5
+    private var lastEmittedBucket = -1
+
+    public init() {}
+
+    public mutating func shouldEmit(bytesDone: Int64, bytesTotal: Int64, isFinal: Bool) -> Bool {
+        if isFinal { return true }
+        guard bytesTotal > 0 else { return false }
+        let percent = Double(bytesDone) / Double(bytesTotal) * 100
+        let bucket = Int(percent / Self.stepPercent)
+        guard bucket > lastEmittedBucket else { return false }
+        lastEmittedBucket = bucket
+        return true
     }
 }
 ```
 
-`scanAll` 在每处理完一个文件时调用 `progressHandler(ScanProgressEvent(...))`。
-
-`TokenMeterIPCServer` 增加两条消息：
-
-- 收：`{"kind":"scan.requestFull"}` → 在后台队列调用 `scanner.fullRescan()`
-- 发：`{"kind":"scan.progress","filesTotal":N,"filesDone":M,"bytesTotal":X,"bytesDone":Y,"currentRoot":"..."}`
-- 发：`{"kind":"scan.finished","status":"ok"}`
-
-`Electron/src/main/tokenMeterSocketClient.ts` 增加 `onScanProgress(cb)` 与 `requestFullRescan()`，并在 `scan.finished` 时通过 `webContents.send('dashboard:invalidate')` 通知 renderer 重新查询。
-
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `swift test --filter TokenMeterIPCServerTests`
-Expected: `Executed 2 tests, with 0 failures`
+Run: `swift test --filter ScanProgressTests`
+Expected: `Executed 4 tests, with 0 failures`
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: 写失败的测试（fullRescan）**
+
+追加到 `Tests/TokenMeterCoreTests/LocalAgentScannerTests.swift`。注意这里测的是 scanner，不是 IPC，所以放在 CoreTests。
+
+先用现有 helper 建一个装了两个 session 文件的 scan root（照抄本文件里已有的 fixture 写法），扫一遍，然后：
+
+```swift
+    func testFullRescanClearsEventsAndRebuildsThem() throws {
+        // 首次扫描后记下事件数，再全量重扫，事件数必须一致——
+        // 不是零，也不是两倍。
+    }
+
+    func testFullRescanResetsParserState() throws {
+        // 手动把 parser_state 写成 {"lastEventSeq":42}，全量重扫后必须为 NULL。
+        // 否则新事件的 event_seq 从 43 续下去，而 usage_events 已被清空，
+        // 表面无冲突，实则 event_seq 与文件内行序永久错位。
+    }
+
+    func testInterruptedFullRescanSelfHealsOnNextIncrementalScan() throws {
+        // 模拟「DELETE 完成、扫描未完成」时进程崩溃：
+        // 手工执行 fullRescan 的清理语句，不跑扫描，然后调用普通增量扫描。
+        // 断言事件数恢复到与完整扫描一致。
+        //
+        // 这条是 fullRescan 不开事务的正当性所在：177 秒的写事务不可接受，
+        // 而清理后的状态（parser_state=NULL, parse_status='pending', 无事件）
+        // 恰好就是「从未扫描过」，增量扫描会自然把它补全。
+        // 若这个测试红了，fullRescan 就必须开事务或改用影子表。
+    }
+```
+
+把注释换成真正的断言。第三个测试是本任务的核心——它证明「重扫中途崩溃」不会永久丢数据。
+
+- [ ] **Step 6: 运行测试确认失败**
+
+Run: `swift test --filter LocalAgentScannerTests`
+Expected: 编译失败，`value of type 'LocalAgentScanner' has no member 'fullRescan'`
+
+- [ ] **Step 7: 实现 fullRescan**
+
+在 `LocalAgentScanner` 增加。**动手前先核实列名**：`scan_roots` 里记录游标的列到底叫什么，用 `grep -n "scan_roots" Sources/TokenMeterCore/TokenMeterDatabaseSchema.swift` 确认，不要照抄本计划里的 `last_successful_cursor`。
+
+```swift
+extension LocalAgentScanner {
+    /// 用户显式触发。清空明细与解析状态，重新读全部源文件。
+    /// 不动 scan_roots 的配置行，也不动 settings。
+    ///
+    /// 刻意不包在一个事务里：真实数据下要跑 177 秒、写 27 万行，长写事务会把
+    /// 整个库锁死，且 WAL 会膨胀到明细表大小。安全性由自愈保证——清理之后的
+    /// 状态与「从未扫描过」等价，任何时刻崩溃，下次增量扫描都会补全。
+    /// `testInterruptedFullRescanSelfHealsOnNextIncrementalScan` 钉住这一点。
+    public func fullRescan(onProgress: (ScanProgressEvent) -> Void) throws {
+        try database.execute("DELETE FROM daily_rollup")
+        try database.execute("DELETE FROM session_rollup")
+        try database.execute("DELETE FROM usage_events")
+        try database.execute("UPDATE source_files SET parser_state = NULL, parse_status = 'pending'")
+        try scanAll(runKind: "full", onProgress: onProgress)
+    }
+}
+```
+
+`scanAll` 需要能报进度。它现在按 root 遍历文件，加两件事：
+
+1. 开扫前先统计 `filesTotal` 与 `bytesTotal`（`source_files` 里本次要处理的行的 `size_bytes` 之和）。
+2. 每处理完一个文件，累加 `bytesDone`，过一遍 `ScanProgressThrottle`，放行则调 `onProgress`。
+
+给 `scanAll` 的 `onProgress` 一个默认值 `{ _ in }`，让现有调用点不用改。
+
+- [ ] **Step 8: 运行测试确认通过**
+
+Run: `swift test --filter LocalAgentScannerTests`
+Expected: 全绿，报告条数
+
+- [ ] **Step 9: 让 IPC 支持流式响应**
+
+`respond(to:on:)` 目前对所有 method 一视同仁：答一行、关连接。给全量重扫开一条单独的路径。
+
+```swift
+    private func respond(to line: Data, on connection: NWConnection) {
+        let request: IPCRequest
+        do {
+            request = try JSONDecoder().decode(IPCRequest.self, from: line)
+        } catch {
+            connection.cancel()
+            return
+        }
+
+        // 全量重扫要跑几分钟并持续推进度，不能走「答完即关」的常规路径。
+        if request.method == "scan.requestFull" {
+            streamFullRescan(request, on: connection)
+            return
+        }
+
+        Task { @MainActor in
+            ...  // 原样保留
+        }
+    }
+```
+
+`streamFullRescan` 要点，逐条都是必须的：
+
+- 扫描跑在**后台队列**，不是 MainActor。177 秒的 MainActor 占用会冻结状态栏菜单。
+- 每条进度写一行 JSON + `\n`，**不 cancel**。
+- 结束时写 `{"kind":"scan.finished","status":"ok"}`（失败则 `"status":"failed"` 带 `error`），在 `send` 的 completion 里才 `connection.cancel()`——先 cancel 会把最后一行丢掉。
+- `onProgress` 回调可能来自后台线程，`connection.send` 本身线程安全，但要确保 finished 一定排在所有 progress 之后：全部 send 走同一个串行队列。
+- 客户端中途断开时，`send` 的 completion 会带 error。此时应当**让扫描继续跑完**（数据要落库），只是不再发进度。不要因为没人听就中断扫描。
+
+- [ ] **Step 10: IPC 测试**
+
+追加到 `Tests/TokenMeterAppTests/TokenMeterIPCServerTests.swift`：起 server，连一个 socket，发 `{"id":"1","method":"scan.requestFull"}`，读到 EOF，断言：
+
+- 收到 ≥ 2 行
+- 最后一行 `kind == "scan.finished"`
+- 中间行 `kind == "scan.progress"`，且 `bytesDone` 单调不减
+
+Run: `swift test --filter TokenMeterIPCServerTests`
+
+- [ ] **Step 11: Electron 客户端读多行**
+
+`sendRequest` 是一问一答，语义正确，**不要改它**。新增一个并列的流式函数：
+
+```typescript
+export function requestFullRescan(
+  onProgress: (event: ScanProgressEvent) => void,
+  options: { port?: number; idleTimeoutMs?: number } = {},
+): Promise<void>
+```
+
+- 超时改成**空闲超时**：`socket.setTimeout(idleTimeoutMs)` 且默认 30_000。`net.Socket` 的 `timeout` 本就是「无数据的空闲时长」，不是总时长——所以 `sendRequest` 里那个 2 秒是对的（一问一答），这里换成 30 秒也是对的（进度至少每 0.5% 来一条）。**在测试里钉住这一点**：一个只发一条 progress 就长时间沉默的假 server 应当触发超时。
+- 按 `\n` 切分缓冲，逐行 `JSON.parse`，`kind === 'scan.progress'` 调 `onProgress`，`kind === 'scan.finished'` 时 resolve 并 destroy。
+- 缓冲区上限，防御性地防止假 server 把内存撑爆。
+
+`Electron/src/main/tokenMeterSocketClient.test.ts` 里用 `net.createServer` 起一个假 server 覆盖：正常流、中途断开、空闲超时、非法 JSON 行。
+
+- [ ] **Step 12: 修掉 `index:fullReindex` 现有的 2 秒超时**
+
+这是本任务之外发现的、已经存在于 `main` 上的缺陷，但它和本任务改的是同一条路径，顺手修掉。
+
+`Electron/src/main/ipc.ts:48` 现在是：
+
+```typescript
+  ipcMain.handle('index:fullReindex', async () => notifySwift('scanNow'));
+```
+
+`notifySwift` 不传 options，走 `sendRequest` 的 2 秒空闲超时。而 Swift 端的 `scanNow` 要把整个扫描跑完才写出第一个字节。首次索引在本机是 177 秒。于是：**扫描其实成功了，UI 却报 `TokenMeter Swift IPC timeout`**。日常增量扫描够快，所以平时看不出来；文件一多就必现。
+
+改成走新的流式路径：
+
+```typescript
+  ipcMain.handle('index:fullReindex', async (event) => {
+    await requestFullRescan((progress) => {
+      event.sender.send('index:scanProgress', progress);
+    });
+    event.sender.send('dashboard:invalidate');
+  });
+```
+
+`preload.ts` 暴露 `onScanProgress(cb)`。renderer 暂不接（UI 属 Phase 2），但通道要通。
+
+在 `Electron/src/main/ipc.test.ts` 里加一个测试：假 server 沉默 3 秒后才回第一条 progress，`index:fullReindex` **不得** reject。这条测试若用旧的 `notifySwift` 实现会红。
+
+- [ ] **Step 13: 跑全部测试**
+
+Run: `swift test` 与 `cd Electron && npm test`
+Expected: 全绿
+
+- [ ] **Step 14: 真实数据验证**
+
+对真实的 12.8 GB 跑一次 `fullRescan`，记录：耗时、事件数、进度事件条数、峰值内存。事件数必须与 Task 14 记录的 274,480 一致。进度事件条数应在 200 上下。
+
+- [ ] **Step 15: 提交**
 
 ```bash
-git add Sources/TokenMeterCore/LocalAgentScanner.swift Sources/TokenMeterApp/TokenMeterIPCServer.swift Electron/src/main/tokenMeterSocketClient.ts Tests/TokenMeterAppTests/TokenMeterIPCServerTests.swift
-git commit -m "feat: add full rescan with progress events"
+git add Sources/TokenMeterCore/ScanProgress.swift Sources/TokenMeterCore/LocalAgentScanner.swift Sources/TokenMeterApp/TokenMeterIPCServer.swift Electron/src/main/tokenMeterSocketClient.ts Electron/src/main/ipc.ts Electron/src/preload.ts Tests/TokenMeterCoreTests/ScanProgressTests.swift Tests/TokenMeterCoreTests/LocalAgentScannerTests.swift Tests/TokenMeterAppTests/TokenMeterIPCServerTests.swift Electron/src/main/tokenMeterSocketClient.test.ts Electron/src/main/ipc.test.ts
+git commit -m "feat: add full rescan with streaming progress"
 ```
 
 ---
