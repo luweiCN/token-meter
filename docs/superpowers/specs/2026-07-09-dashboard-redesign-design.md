@@ -131,6 +131,7 @@ CREATE TABLE session_rollup (
   events_count INTEGER NOT NULL,
   tokens_total INTEGER NOT NULL,
   cost_usd_micros INTEGER NOT NULL,
+  cost_unknown_events INTEGER NOT NULL DEFAULT 0,  -- 有多少条事件的成本没算进去
   primary_model TEXT                  -- token 最多的模型
 );
 CREATE INDEX idx_session_rollup_last ON session_rollup(last_event_epoch_ms DESC);

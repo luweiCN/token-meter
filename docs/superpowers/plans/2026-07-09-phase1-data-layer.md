@@ -607,6 +607,9 @@ Expected: FAIL，`XCTAssertEqual failed: ("1") is not equal to ("2")`
       events_count INTEGER NOT NULL,
       tokens_total INTEGER NOT NULL,
       cost_usd_micros INTEGER NOT NULL,
+      -- 与 daily_rollup 对齐：sum() 会静默跳过 cost 为 NULL 的行，
+      -- 会话中途换到未定价的模型时，金额会偏低却看起来精确。
+      cost_unknown_events INTEGER NOT NULL DEFAULT 0,
       primary_model TEXT
     );
 
@@ -2901,6 +2904,20 @@ final class RollupBuilderTests: XCTestCase {
         XCTAssertLessThan(row.int("first_event_epoch_ms")!, row.int("last_event_epoch_ms")!)
     }
 
+    func testSessionRollupCountsUnknownCostEvents() throws {
+        let database = try makeDatabase()
+        // 会话中途换到未定价的模型。sum() 静默跳过 NULL 行，
+        // 金额会偏低却看起来精确——这比缺失更有害，UI 必须能察觉。
+        try insertEvent(database, seq: 1, iso: "2026-07-08T05:00:00Z", model: "claude-fable-5", input: 1000, cost: 100)
+        try insertEvent(database, seq: 2, iso: "2026-07-08T06:00:00Z", model: "unlisted-model", input: 500, cost: nil)
+
+        try RollupBuilder(database: database).rebuildAll()
+
+        let row = try database.query("SELECT cost_usd_micros, cost_unknown_events FROM session_rollup")[0]
+        XCTAssertEqual(row.int("cost_usd_micros"), 100, "只累加已知成本")
+        XCTAssertEqual(row.int("cost_unknown_events"), 1, "但必须记下有 1 条未计入")
+    }
+
     func testRebuildIsIdempotent() throws {
         let database = try makeDatabase()
         try insertEvent(database, seq: 1, iso: "2026-07-08T05:00:00Z", model: "m", input: 10, cost: 100)
@@ -2991,7 +3008,7 @@ public final class RollupBuilder {
             """
             INSERT INTO session_rollup(
                 session_id, first_event_epoch_ms, last_event_epoch_ms,
-                events_count, tokens_total, cost_usd_micros, primary_model
+                events_count, tokens_total, cost_usd_micros, cost_unknown_events, primary_model
             )
             SELECT
                 e.session_id,
@@ -3000,6 +3017,7 @@ public final class RollupBuilder {
                 count(*),
                 coalesce(sum(e.tokens_total), 0),
                 coalesce(sum(e.cost_usd_micros), 0),
+                sum(CASE WHEN e.cost_source = 'unknown' THEN 1 ELSE 0 END),
                 (
                     SELECT x.model_canonical
                     FROM usage_events x
