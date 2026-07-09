@@ -741,12 +741,16 @@ def main() -> None:
         # 别硬编码 input*2：claude-3-opus 的实际比值是 0.40，claude-3-haiku 是 24.00。
         cache_write_1h = spec.get("cache_creation_input_token_cost_above_1hr")
 
+        # 必须用 `is not None` 而不是真值判断。
+        # LiteLLM 把「免费」显式写成 0（glm 全系列的 cache_creation 都是 0），
+        # `if cache_write` 会把这个 0 当成「字段缺失」，进而按 input*1.25 给免费的东西收费。
+        # 「免费」和「不知道」是两件事，正如 cost_usd_micros 用 NULL 而不是 0。
         models[name] = {
             "inputPerMTok": round(input_m, 6),
             "outputPerMTok": round(output_m, 6),
-            "cacheReadPerMTok": round(cache_read * M if cache_read else input_m * 0.1, 6),
-            "cacheWrite5mPerMTok": round(cache_write * M if cache_write else input_m * 1.25, 6),
-            "cacheWrite1hPerMTok": round(cache_write_1h * M if cache_write_1h else input_m * 2.0, 6),
+            "cacheReadPerMTok": round(cache_read * M if cache_read is not None else input_m * 0.1, 6),
+            "cacheWrite5mPerMTok": round(cache_write * M if cache_write is not None else input_m * 1.25, 6),
+            "cacheWrite1hPerMTok": round(cache_write_1h * M if cache_write_1h is not None else input_m * 2.0, 6),
         }
 
     json.dump(
