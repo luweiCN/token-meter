@@ -1,5 +1,5 @@
 public enum TokenMeterDatabaseSchema {
-    public static let currentVersion: Int64 = 1
+    public static let currentVersion: Int64 = 2
 
     public static let v1 = """
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -194,5 +194,96 @@ public enum TokenMeterDatabaseSchema {
 
     INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (1, 'phase2_hybrid_sessions');
     PRAGMA user_version = 1;
+    """
+
+    /// v2 只做加法：新增四张表，不触碰 v1 的任何表。
+    /// v1 全是 CREATE TABLE IF NOT EXISTS，migrator 顺序执行两段即可：
+    /// 全新库跑 v1 + v2Additions，v1 老库只跑 v2Additions。
+    /// 旧表的删除由 Task 18 负责，那时 scanner 已切换完毕。
+    public static let v2Additions = """
+    CREATE TABLE IF NOT EXISTS usage_events (
+      id INTEGER PRIMARY KEY,
+      session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+      source_file_id INTEGER NOT NULL REFERENCES source_files(id) ON DELETE CASCADE,
+      event_seq INTEGER NOT NULL,
+      observed_epoch_ms INTEGER NOT NULL,
+      model_name TEXT,
+      model_canonical TEXT,
+      tokens_input INTEGER NOT NULL DEFAULT 0,
+      tokens_output INTEGER NOT NULL DEFAULT 0,
+      tokens_reasoning INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_write_5m INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_write_1h INTEGER NOT NULL DEFAULT 0,
+      tokens_total INTEGER GENERATED ALWAYS AS (
+        tokens_input + tokens_output +
+        tokens_cache_read + tokens_cache_write_5m + tokens_cache_write_1h
+      ) VIRTUAL,
+      cost_usd_micros INTEGER,
+      cost_source TEXT NOT NULL CHECK (cost_source IN ('reported', 'computed', 'unknown')),
+      dedupe_key TEXT,
+      source_offset INTEGER NOT NULL,
+      is_sidechain INTEGER NOT NULL DEFAULT 0 CHECK (is_sidechain IN (0,1)),
+      UNIQUE(source_file_id, event_seq)
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_dedupe
+      ON usage_events(session_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_usage_time ON usage_events(observed_epoch_ms);
+    CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id, observed_epoch_ms);
+    CREATE INDEX IF NOT EXISTS idx_usage_model_time ON usage_events(model_canonical, observed_epoch_ms);
+    CREATE INDEX IF NOT EXISTS idx_usage_source_file ON usage_events(source_file_id, source_offset DESC);
+
+    CREATE TABLE IF NOT EXISTS daily_rollup (
+      usage_date TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      source_kind TEXT NOT NULL,
+      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+      model_canonical TEXT NOT NULL,
+      sessions_count INTEGER NOT NULL DEFAULT 0,
+      events_count INTEGER NOT NULL DEFAULT 0,
+      tokens_input INTEGER NOT NULL DEFAULT 0,
+      tokens_output INTEGER NOT NULL DEFAULT 0,
+      tokens_reasoning INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_write_5m INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_write_1h INTEGER NOT NULL DEFAULT 0,
+      cost_usd_micros INTEGER NOT NULL DEFAULT 0,
+      cost_unknown_events INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_rollup_unique
+      ON daily_rollup(usage_date, provider_id, source_kind, coalesce(project_id, -1), model_canonical);
+    CREATE INDEX IF NOT EXISTS idx_daily_rollup_date ON daily_rollup(usage_date DESC);
+    CREATE INDEX IF NOT EXISTS idx_daily_rollup_model ON daily_rollup(model_canonical, usage_date DESC);
+
+    CREATE TABLE IF NOT EXISTS session_rollup (
+      session_id INTEGER PRIMARY KEY REFERENCES agent_sessions(id) ON DELETE CASCADE,
+      first_event_epoch_ms INTEGER NOT NULL,
+      last_event_epoch_ms INTEGER NOT NULL,
+      events_count INTEGER NOT NULL,
+      tokens_total INTEGER NOT NULL,
+      cost_usd_micros INTEGER NOT NULL,
+      -- 与 daily_rollup 对齐：sum() 会静默跳过 cost 为 NULL 的行，
+      -- 会话中途换到未定价的模型时，金额会偏低却看起来精确。
+      cost_unknown_events INTEGER NOT NULL DEFAULT 0,
+      primary_model TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_session_rollup_last ON session_rollup(last_event_epoch_ms DESC);
+
+    CREATE TABLE IF NOT EXISTS model_pricing (
+      model_key TEXT PRIMARY KEY,
+      input_per_mtok_micros INTEGER NOT NULL,
+      output_per_mtok_micros INTEGER NOT NULL,
+      cache_read_per_mtok_micros INTEGER NOT NULL,
+      cache_write_5m_per_mtok_micros INTEGER NOT NULL,
+      cache_write_1h_per_mtok_micros INTEGER NOT NULL,
+      source TEXT NOT NULL CHECK (source IN ('litellm', 'builtin', 'user')),
+      snapshot_version TEXT
+    );
+
+    INSERT OR IGNORE INTO schema_migrations(version, name) VALUES (2, 'phase3_message_level_usage');
+    PRAGMA user_version = 2;
     """
 }

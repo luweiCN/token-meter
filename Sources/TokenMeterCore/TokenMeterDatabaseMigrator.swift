@@ -12,7 +12,12 @@ public enum TokenMeterDatabaseMigrator {
         }
         guard currentVersion < TokenMeterDatabaseSchema.currentVersion else { return }
 
-        try database.execute(TokenMeterDatabaseSchema.v1)
+        // v1 全是 CREATE TABLE IF NOT EXISTS，重复执行安全。
+        // 全新库两段都跑；v1 老库跳过第一段，只补上新表。
+        if currentVersion < 1 {
+            try database.execute(TokenMeterDatabaseSchema.v1)
+        }
+        try database.execute(TokenMeterDatabaseSchema.v2Additions)
     }
 }
 
