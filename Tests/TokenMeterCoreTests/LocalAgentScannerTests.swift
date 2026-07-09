@@ -888,6 +888,40 @@ final class LocalAgentScannerTests: XCTestCase {
             "ok"
         )
     }
+
+    func testShrinkRewriteDeletesOrphanedEventsFromLongerOldContent() async throws {
+        // 全量重读时 deleteEvents 必须清掉旧内容的尾部事件：新内容更短，旧的 event_seq 尾行
+        // 会被 ON CONFLICT(source_file_id, event_seq) DO UPDATE 漏过而残留，凭空多算。
+        // 这是唯一能咬到 deleteEvents 的场景——等量或更多事件时 DO UPDATE 恰好把它盖住。
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("rollout.jsonl")
+        let initialJSONL = """
+        {"type":"session_meta","payload":{"id":"shrink-session","cwd":"/repo"}}
+        {"type":"event_msg","timestamp":"2026-07-08T01:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":4}}}}
+        {"type":"event_msg","timestamp":"2026-07-08T01:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":15,"output_tokens":10}}}}
+
+        """
+        let rewrittenJSONL = """
+        {"type":"session_meta","payload":{"id":"shrink-session","cwd":"/repo"}}
+        {"type":"event_msg","timestamp":"2026-07-08T02:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":3,"output_tokens":2}}}}
+
+        """
+        XCTAssertLessThan(Data(rewrittenJSONL.utf8).count, Data(initialJSONL.utf8).count)
+        try writeJSONL(initialJSONL, to: file)
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+
+        try await scanner.scanRoot(id: 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 2)
+
+        try writeJSONL(rewrittenJSONL, to: file)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_820_000_000)], ofItemAtPath: file.path)
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1, "更短的改写后，旧内容的尾部事件不得残留")
+        XCTAssertEqual(try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"), 5)
+    }
 }
 
 // MARK: - Fixtures
