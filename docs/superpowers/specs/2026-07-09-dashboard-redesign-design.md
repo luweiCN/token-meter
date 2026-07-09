@@ -277,6 +277,23 @@ CREATE TABLE model_pricing (
 
 匹配不到就是匹配不到：`cost_usd_micros` 记 NULL，`cost_source` 记 `'unknown'`，UI 显示「定价未知」。这会促使人去跑 `scripts/update-pricing.sh`，而不是默默接受一个错误的数字。
 
+#### 5.2.1 归一后撞名
+
+多个原始 key 会归一到同一个 `model_canonical`。实测快照有 15 组，主因是 provider 前缀（`claude-opus-4-8` 与 `vertex_ai/claude-opus-4-8`），其次是日期后缀。
+
+`CostCalculator` 只能保留一个：按**原始 key 的字典序**排序后取第一个（first-write-wins）。排序不可省略——Swift 字典的迭代顺序取决于每进程随机的哈希种子，实测同一份字典连跑十次得到四种顺序。
+
+其中 2 组的价格并不一致：
+
+| canonical | 胜出者 | 落选者 | 差异 |
+|---|---|---|---|
+| `claude-3-opus` | `claude-3-opus-20240229` (1h 缓存 $6.00) | `vertex_ai/claude-3-opus` ($30.00) | **5×** |
+| `claude-3-haiku` | `claude-3-haiku-20240307` ($6.00) | `vertex_ai/claude-3-haiku` ($0.50) | **12×** |
+
+成因是 LiteLLM 只给 direct-API 变体写了 `cache_creation_input_token_cost_above_1hr`（值本身可疑：opus 的比值 0.40，haiku 的 24.00），vertex 变体走了 `input × 2` 派生。于是「同一个 canonical 的两个价格」一个来自上游数据、一个来自我们的公式。
+
+`scripts/transform_pricing.py` 在生成快照时检测这种情况并把它打印到 stderr。不阻塞生成——这两个都是 2024 年的模型，且只影响 1 小时缓存这一档——但人跑刷新脚本时必须能看见，而不是等某天有人对着账单发懵。
+
 缓存费率**优先取 LiteLLM 的真实字段**（`cache_read_input_token_cost`、`cache_creation_input_token_cost`、`cache_creation_input_token_cost_above_1hr`，分别覆盖 669 / 225 / 113 个模型）。仅在字段缺失时才回落到派生值：`cache_read = input × 0.1`，`cache_write_5m = input × 1.25`，`cache_write_1h = input × 2`。
 
 不要把 `input × 2` 当成 1 小时缓存的固定倍率。经核实，`claude-fable-5` 与 `claude-haiku-4-5` 的实际比值确为 2.00，但 `claude-3-opus` 是 0.40、`claude-3-haiku` 是 24.00。

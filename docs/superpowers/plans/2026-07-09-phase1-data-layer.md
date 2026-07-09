@@ -1019,16 +1019,32 @@ final class CostCalculatorTests: XCTestCase {
         XCTAssertEqual(result.source, .unknown)
     }
 
-    func testCanonicalCollisionPrefersBareNameDeterministically() {
-        // 两个 key 归一后都是 claude-3-opus，必须稳定地选中裸名
+    func testCanonicalCollisionResolvesToLexicographicallyFirstKey() {
+        // 三组撞名，每组四个原始 key，只有字典序最小的那个价格独特。
+        //
+        // 用三组而不是一组，是为了让这个测试真的守得住 init 里的 sorted(by:)。
+        // 去掉 sorted 后，Swift 字典的迭代顺序随进程哈希种子变化，单组撞名
+        // 只有 1/4 概率选错，测试有 25% 概率放过。三组同时蒙对的概率是
+        // (1/4)^3 ≈ 1.6%，测试会以 98.4% 的概率变红。
+        func priced(_ input: Double) -> ModelPricing {
+            ModelPricing(inputPerMTok: input, outputPerMTok: 0, cacheReadPerMTok: 0,
+                         cacheWrite5mPerMTok: 0, cacheWrite1hPerMTok: 0)
+        }
         let snapshot = PricingSnapshot(snapshotVersion: "test", source: "litellm", models: [
-            "claude-3-opus": ModelPricing(inputPerMTok: 15, outputPerMTok: 75, cacheReadPerMTok: 1.5,
-                                          cacheWrite5mPerMTok: 18.75, cacheWrite1hPerMTok: 30),
-            "claude-3-opus-20240229": ModelPricing(inputPerMTok: 99, outputPerMTok: 99, cacheReadPerMTok: 99,
-                                                   cacheWrite5mPerMTok: 99, cacheWrite1hPerMTok: 99)
+            "alpha-1": priced(1), "alpha-1-20240101": priced(90),
+            "vertex_ai/alpha-1": priced(91), "zai/alpha-1": priced(92),
+
+            "beta-2": priced(2), "beta-2-20240101": priced(93),
+            "vertex_ai/beta-2": priced(94), "zai/beta-2": priced(95),
+
+            "gamma-3": priced(3), "gamma-3-20240101": priced(96),
+            "vertex_ai/gamma-3": priced(97), "zai/gamma-3": priced(98)
         ])
-        let result = CostCalculator(snapshot: snapshot).cost(for: event(model: "claude-3-opus", input: 1_000_000))
-        XCTAssertEqual(result.micros, 15_000_000)
+        let calculator = CostCalculator(snapshot: snapshot)
+
+        XCTAssertEqual(calculator.cost(for: event(model: "alpha-1", input: 1_000_000)).micros, 1_000_000)
+        XCTAssertEqual(calculator.cost(for: event(model: "beta-2", input: 1_000_000)).micros, 2_000_000)
+        XCTAssertEqual(calculator.cost(for: event(model: "gamma-3", input: 1_000_000)).micros, 3_000_000)
     }
 
     func testResolvesGlmThroughZaiPrefix() {
@@ -1080,9 +1096,12 @@ public struct CostCalculator {
 
     public init(snapshot: PricingSnapshot) {
         var index: [String: ModelPricing] = [:]
-        // LiteLLM 的 key 是原始名。归一化后会撞名：claude-3-opus 与
-        // claude-3-opus-20240229 都归到 claude-3-opus。按字典序取第一个——
-        // 裸名总排在带日期后缀的前面，且同一份快照总是得到同一结果。
+        // LiteLLM 的 key 是原始名，归一化后会撞名：一个规范名常对应多个原始 key。
+        // 实测快照有 15 组，主因是 provider 前缀（claude-opus-4-8 与
+        // vertex_ai/claude-opus-4-8），其次才是日期后缀。取字典序最小的那个。
+        //
+        // sorted 不可省略：Swift 字典的迭代顺序取决于每进程随机的哈希种子，
+        // 同一份字典连跑十次会得到四种顺序。去掉它，first-write-wins 就成了掷骰子。
         for (key, pricing) in snapshot.models.sorted(by: { $0.key < $1.key }) {
             let canonical = ModelNameNormalizer.canonical(key)
             if index[canonical] == nil {
@@ -1123,12 +1142,98 @@ public struct CostCalculator {
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `swift test --filter CostCalculatorTests`
-Expected: `Executed 7 tests, with 0 failures`
+Expected: `Executed 12 tests, with 0 failures`
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 5: 让撞名且价格不一致的情况可见**
+
+`CostCalculator` 只能为一个 canonical 保留一个价格。实测快照 15 组撞名里有 2 组价格不一致（`claude-3-opus` 的 1h 缓存价 $6.00 vs $30.00，`claude-3-haiku` 的 $6.00 vs $0.50），落选者的用户会被按胜出者的价格计费。
+
+成因是 LiteLLM 只给 direct-API 变体写了 `cache_creation_input_token_cost_above_1hr`，vertex 变体走了 `input × 2` 派生。检测的位置应该在**生成快照的地方**，那里能看到全部原始 key。
+
+给 `scripts/transform_pricing.py` 增加：
+
+```python
+def canonical(name: str) -> str:
+    """必须与 Swift 的 ModelNameNormalizer.canonical 保持一致。"""
+    name = name.lower()
+    for prefix in ("vertex_ai/", "bedrock/", "anthropic/", "openai/", "openai-codex/", "zai/"):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    return re.sub(r"-[0-9]{8}$", "", name) or "unknown"
+
+
+def divergent_collisions(models: dict) -> list:
+    """归一后撞名、但价格不一致的组。
+
+    CostCalculator 只保留字典序最小的原始 key，其余 key 的用户会被按
+    胜出者的价格计费。这不是猜测：claude-3-opus 与 vertex_ai/claude-3-opus
+    的 1h 缓存价相差 5 倍。
+    """
+    groups = {}
+    for key in sorted(models):
+        groups.setdefault(canonical(key), []).append(key)
+    return [
+        (name, keys)
+        for name, keys in sorted(groups.items())
+        if len(keys) > 1 and len({json.dumps(models[k], sort_keys=True) for k in keys}) > 1
+    ]
+```
+
+在 `main()` 写出 JSON 之前告警（写 stderr，不阻塞生成——这两个都是 2024 年的模型，只影响 1h 缓存档）：
+
+```python
+    for name, keys in divergent_collisions(models):
+        print(f"warning: {name} 撞名且价格不一致，将按 {keys[0]} 计价", file=sys.stderr)
+        for key in keys:
+            print(f"  {key}: {json.dumps(models[key], sort_keys=True)}", file=sys.stderr)
+```
+
+`import re` 加到文件头部。
+
+给 `scripts/test_transform_pricing.py` 增加：
+
+```python
+class CanonicalTests(unittest.TestCase):
+    def test_matches_swift_normalizer(self):
+        self.assertEqual(canonical("vertex_ai/claude-3-opus"), "claude-3-opus")
+        self.assertEqual(canonical("claude-3-opus-20240229"), "claude-3-opus")
+        self.assertEqual(canonical("zai/glm-4.6"), "glm-4.6")
+        self.assertEqual(canonical("glm-4.6"), "glm-4.6")          # 非八位数字后缀不剥离
+        self.assertEqual(canonical("GPT-5.5"), "gpt-5.5")
+
+
+class DivergentCollisionTests(unittest.TestCase):
+    def test_flags_collision_with_different_prices(self):
+        models = {
+            "claude-3-opus-20240229": {"inputPerMTok": 15.0, "cacheWrite1hPerMTok": 6.0},
+            "vertex_ai/claude-3-opus": {"inputPerMTok": 15.0, "cacheWrite1hPerMTok": 30.0},
+        }
+        found = divergent_collisions(models)
+        self.assertEqual(len(found), 1)
+        name, keys = found[0]
+        self.assertEqual(name, "claude-3-opus")
+        self.assertEqual(keys[0], "claude-3-opus-20240229", "字典序最小者胜出")
+
+    def test_ignores_collision_with_identical_prices(self):
+        models = {
+            "claude-fable-5": {"inputPerMTok": 10.0},
+            "vertex_ai/claude-fable-5": {"inputPerMTok": 10.0},
+        }
+        self.assertEqual(divergent_collisions(models), [])
+
+    def test_ignores_non_colliding_names(self):
+        models = {"a": {"inputPerMTok": 1.0}, "b": {"inputPerMTok": 2.0}}
+        self.assertEqual(divergent_collisions(models), [])
+```
+
+跑 `cd scripts && python3 -m unittest discover -p 'test_*.py'`，应为 18 个测试。
+再跑 `./scripts/update-pricing.sh`，stderr 应打印那两组告警，快照内容不变（空 diff）。
+
+- [ ] **Step 6: 提交**
 
 ```bash
-git add Sources/TokenMeterCore/CostCalculator.swift Tests/TokenMeterCoreTests/CostCalculatorTests.swift
+git add Sources/TokenMeterCore/CostCalculator.swift Tests/TokenMeterCoreTests/CostCalculatorTests.swift scripts/transform_pricing.py scripts/test_transform_pricing.py
 git commit -m "feat: add offline cost calculator with cache tier pricing"
 ```
 
