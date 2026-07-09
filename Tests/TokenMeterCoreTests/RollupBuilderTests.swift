@@ -147,4 +147,49 @@ final class RollupBuilderTests: XCTestCase {
 
         XCTAssertEqual(try database.query("SELECT count(*) AS n FROM daily_rollup")[0].int("n"), 0)
     }
+
+    func testSessionsCountIsDistinctNotEventCount() throws {
+        let database = try makeDatabase()
+        // 同一个 session，同一天，同一模型，三条事件 → sessions_count 必须是 1
+        try insertEvent(database, seq: 1, iso: "2026-07-08T05:00:00Z", model: "m", input: 10, cost: 100)
+        try insertEvent(database, seq: 2, iso: "2026-07-08T06:00:00Z", model: "m", input: 20, cost: 200)
+        try insertEvent(database, seq: 3, iso: "2026-07-08T07:00:00Z", model: "m", input: 30, cost: 300)
+
+        try RollupBuilder(database: database).rebuildAll()
+
+        let row = try database.query("SELECT sessions_count, events_count FROM daily_rollup")[0]
+        XCTAssertEqual(row.int("sessions_count"), 1, "count(DISTINCT session_id)，不是 count(*)")
+        XCTAssertEqual(row.int("events_count"), 3)
+    }
+
+    func testSessionsCountIsNotSummableAcrossModelGroups() throws {
+        let database = try makeDatabase()
+        // 一个 session，一天内用了两个模型 → 两行，每行 sessions_count = 1。
+        // 对这一列求和会得到 2，而实际只有 1 个会话。总会话数必须走 session_rollup。
+        try insertEvent(database, seq: 1, iso: "2026-07-08T05:00:00Z", model: "claude-fable-5", input: 10, cost: 100)
+        try insertEvent(database, seq: 2, iso: "2026-07-08T06:00:00Z", model: "claude-opus-4-8", input: 20, cost: 200)
+
+        try RollupBuilder(database: database).rebuildAll()
+
+        let rows = try database.query("SELECT sessions_count FROM daily_rollup")
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows.compactMap { $0.int("sessions_count") }.reduce(0, +), 2,
+                       "跨模型分组求和会得到 2，但实际只有 1 个会话——这正是不可加的原因")
+
+        XCTAssertEqual(try database.query("SELECT count(*) AS n FROM session_rollup")[0].int("n"), 1,
+                       "总会话数必须从 session_rollup 取")
+    }
+
+    func testPrimaryModelBreaksTiesByNameForDeterminism() throws {
+        let database = try makeDatabase()
+        // 两个模型 token 完全相同。没有名字决胜，胜者取决于 SQLite 的行序，
+        // 那不是契约的一部分。
+        try insertEvent(database, seq: 1, iso: "2026-07-08T05:00:00Z", model: "zzz-model", input: 100, cost: 100)
+        try insertEvent(database, seq: 2, iso: "2026-07-08T06:00:00Z", model: "aaa-model", input: 100, cost: 100)
+
+        try RollupBuilder(database: database).rebuildAll()
+
+        let row = try database.query("SELECT primary_model FROM session_rollup")[0]
+        XCTAssertEqual(row.string("primary_model"), "aaa-model", "并列时取名字字典序最小者")
+    }
 }
