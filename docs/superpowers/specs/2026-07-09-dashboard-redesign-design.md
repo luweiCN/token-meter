@@ -503,6 +503,33 @@ schema v2；`LocalAgentSessionParser` 接口改为输出 `[UsageEvent]`；改造
 
 验收：每个 adapter 有基于真实样本的单测；扫描后在 UI 中可见且数字合理。
 
+## 10.1 Phase 1 实测记录（Task 14 后）
+
+首次全量扫描本机 12.8 GB 真实数据：
+
+| 指标 | 值 |
+|---|---|
+| 全量扫描耗时 | 177 s（claude 46s / codex 75s / opencode 32s / omp 24s） |
+| `usage_events` | 274,480 行 |
+| `agent_sessions` | 21,636（其中仅 2,141 个有用量事件） |
+| 峰值内存 | 3.85 GB |
+
+按 provider 的事件数与 token：claude-code 90,863 / 12.04B，codex 125,851 / 17.50B，omp 42,372 / 4.97B，opencode 15,394 / 1.57B。`daily_rollup` 的汇总与 `usage_events` 精确一致。
+
+**对账**：Codex 的 125,851 行精确等于「input 或 output 非零的 `token_count` 事件数」（总数 127,254，差值 1,403 正是设计上要跳过的纯状态事件）。Claude 的 90,863 与独立计算的 90,857 相差 ±1–18，原因是扫描期间本机仍在写入 Claude 会话文件；codex / omp / opencode 三者字节稳定，数字可精确复现。
+
+**字节预筛（markers）是净收益。** Codex 全根扫描：开启 85 s / 9.7 GB，关闭 133.1 s / 12.2 GB。快 36%，省 20% 内存。注意 Task 13 在读取器隔离基准里测得 markers *更慢*（16.05 s vs 13.56 s）——那个基准的回调不做任何事，因而测不到跳过 22 万次 `JSONDictionary.object(from:)` 的收益。**微基准可以精确地测量一个无关紧要的量。**
+
+**峰值内存的大头不是读取器缓冲。** 最大单行仅 5 MB。9.7 GB 来自 Foundation 的 autorelease 对象在 25.7 万行 × 2 万文件之间堆积；加一个 per-file `autoreleasepool` 后降至 3.85 GB。
+
+### 三个在 Task 14 才暴露的设计缺陷
+
+1. **`ParserState` 原本撑不住续读。** 它只带 `lastEventSeq` 与 `lastCumulative`。但续读时读到的字节块里没有 `session_meta` 行，`finish()` 会抛 `missingSessionKey`，并把 `project_id` / `session_updated_at` 覆盖成 NULL。`ParserState` 必须同时持久化会话元信息（`sessionKey` / `projectPath` / `modelName` / `cliVersion` / `startedAt` / `updatedAt`）。
+
+2. **纯指纹跳过会让 v1→v2 升级永远扫不出数据。** 旧库里 `source_files` 全部标着 `parse_status = 'ok'`，指纹也没变，于是每个文件都被跳过，`usage_events` 永远为空。跳过条件必须同时要求 `usage_events` 里已有该文件的行（`lastSourceOffset(sourceFileId:) != nil`）。
+
+3. **OpenCode 的多个会话会撞 `UNIQUE(source_file_id, event_seq)`。** 每个会话的 `event_seq` 都从 1 重新开始，而它们共用同一个 `opencode.db` 源文件。解法是给每个会话一个合成的 `source_files` 行（`opencode.db#<sessionKey>`）。
+
 ## 11. 已知取舍与风险
 
 - **不做数据迁移**，首次升级需一次全量重扫（12.8 GB，分钟级）。已通过显式按钮与进度反馈缓解。
