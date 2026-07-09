@@ -483,6 +483,33 @@ ccusage daily --json --since 20260601 --until 20260630
 
 **对账范围限于 ccusage 也支持的源**：Claude Code、Codex、OpenCode。ccusage 不支持 omp，该 adapter 只能靠自身单测与手工抽样核对。
 
+#### 9.3.1 本机基线（ccusage 20.1.0，2026-07-09 采集）
+
+`ccusage <agent> daily --json`，全时间范围：
+
+| agent | 天数 | 首日 | totalTokens | costUSD |
+|---|---:|---|---:|---:|
+| claude | 36 | 2026-05-30 | 10,244,861,237 | 12,150.66 |
+| codex | 50 | 2026-04-16 | 18,455,520,473 | 14,869.44 |
+| opencode | 73 | 2025-10-16 | 1,572,519,757 | 438.60 |
+
+**token 语义已确认一致。** ccusage 的 codex 记录满足 `totalTokens = inputTokens + cachedInputTokens + outputTokens`，`reasoningOutputTokens` 不计入（实测最后一日 2,284,222 + 15,637,760 + 137,955 = 18,059,937）。这与 `UsageEvent.totalTokens` 的定义相同——两边都把 reasoning 视为已包含在 output 里，都把 cached 从 input 中分离后各计一次。因此两侧的 token 总量可以直接相减，不需要换算。
+
+ccusage 的 codex 记录没有 `cacheCreation` 字段，与 codex 日志不区分缓存写入、我们的 `cache_write_5m` / `cache_write_1h` 对 codex 恒为 0 相符。
+
+#### 9.3.2 codex 的 token 数据从 2026-04-16 才存在
+
+本机 19,971 个 codex rollout 文件里，**96.7% 完全不含 `token_count` 行**（随机抽样 300 个，290 个为零）。按文件名日期分组后边界是干净的：2026-02 与 2026-03 的文件无一例外没有 token 记录，2026-05 之后无一例外都有，交界在 **2026-04-16**（当日 15 个有、1 个无）。
+
+ccusage 独立给出的 codex 首日同样是 `2026-04-16`。两个实现从同一批文件得到同一个边界，说明这不是解析缺陷，而是旧版 codex 根本不把用量写进磁盘。这些会话的 token 数据**不可恢复**。
+
+由此产生两个必须遵守的结论：
+
+1. `agent_sessions` 与 `session_rollup` 的行数天然不等（实测 21,636 vs 2,141，差 19,495，绝大多数是 2026-04-16 之前的 codex 会话）。这个差不是 bug，不要试图"修复"。
+2. **一切面向用户的"会话数"必须以 `session_rollup` 为准**，即只统计产生过用量的会话。若用 `count(*) FROM agent_sessions`，首页会显示两万多个会话，用户点进去看到的却是一片 0 token。Task 16 据此实现。
+
+Overview 的历史趋势图在 2026-04-16 之前不会有 codex 数据。这是数据的真实形态，不需要在 UI 上特别标注——按 agent 分色的堆叠图里，codex 那一层自然从该日起才出现。
+
 ## 10. 分阶段实现
 
 ### Phase 1 — 数据层
