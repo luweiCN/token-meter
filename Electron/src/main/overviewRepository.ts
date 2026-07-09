@@ -15,9 +15,29 @@ export interface ActivityRow {
   projectName: string;
   primaryModel: string | null;
   tokensTotal: number;
+  firstEventEpochMs: number;
+  costUsdMicros: number;
+  costUnknownEvents: number;
   msSinceLastEvent: number;
   isLive: boolean;
 }
+
+type ActivityQueryRow = Omit<ActivityRow, 'msSinceLastEvent' | 'isLive'> & { lastEventEpochMs: number };
+
+const ACTIVITY_SELECT =
+  `SELECT sr.session_id AS sessionId,
+          coalesce(s.provider_id, s.source_kind) AS providerId,
+          coalesce(p.display_name, '未知项目') AS projectName,
+          sr.primary_model AS primaryModel,
+          sr.tokens_total AS tokensTotal,
+          sr.first_event_epoch_ms AS firstEventEpochMs,
+          sr.cost_usd_micros AS costUsdMicros,
+          sr.cost_unknown_events AS costUnknownEvents,
+          sr.last_event_epoch_ms AS lastEventEpochMs
+     FROM session_rollup sr
+     JOIN agent_sessions s ON s.id = sr.session_id
+LEFT JOIN projects p ON p.id = s.project_id
+    WHERE s.status != 'deleted'`;
 
 export interface OverviewKpis {
   todayTokens: number;
@@ -44,6 +64,13 @@ export interface HeatmapDay {
   events: number;
 }
 
+export interface ModelRank {
+  model: string;
+  tokens: number;
+  costUsdMicros: number;
+  costUnknownEvents: number;
+}
+
 /// `now` 可注入，否则测试会在午夜前后随机变红。
 export class OverviewRepository {
   constructor(private readonly db: Database.Database, private readonly now: () => number = Date.now) {}
@@ -57,25 +84,28 @@ export class OverviewRepository {
   recentActivity(limit: number): ActivityRow[] {
     const now = this.now();
     const rows = this.db.prepare(
-      `SELECT sr.session_id AS sessionId,
-              coalesce(s.provider_id, s.source_kind) AS providerId,
-              coalesce(p.display_name, '未知项目') AS projectName,
-              sr.primary_model AS primaryModel,
-              sr.tokens_total AS tokensTotal,
-              sr.last_event_epoch_ms AS lastEventEpochMs
-         FROM session_rollup sr
-         JOIN agent_sessions s ON s.id = sr.session_id
-    LEFT JOIN projects p ON p.id = s.project_id
-        WHERE s.status != 'deleted'
-     ORDER BY sr.last_event_epoch_ms DESC
-        LIMIT ?`
-    ).all(limit) as Array<Omit<ActivityRow, 'msSinceLastEvent' | 'isLive'> & { lastEventEpochMs: number }>;
+      `${ACTIVITY_SELECT} ORDER BY sr.last_event_epoch_ms DESC LIMIT ?`
+    ).all(limit) as ActivityQueryRow[];
+    return rows.map(r => this.toActivityRow(r, now));
+  }
 
-    return rows.map(r => {
-      const msSinceLastEvent = now - r.lastEventEpochMs;
-      const { lastEventEpochMs, ...rest } = r;
-      return { ...rest, msSinceLastEvent, isLive: msSinceLastEvent < LIVE_WINDOW_MS };
-    });
+  /// 右栏会话列表（spec §7.2）：进行中的置顶高亮，各组内按最近事件倒序。
+  /// 就是 recentActivity 加上时长（firstEventEpochMs）与成本，只是把 live 的钉在最前。
+  /// 用同一个 `now` 算阈值与 isLive，边界不会因两次读表而漂移。
+  sessionRail(limit: number): ActivityRow[] {
+    const now = this.now();
+    const rows = this.db.prepare(
+      `${ACTIVITY_SELECT}
+     ORDER BY (sr.last_event_epoch_ms > ?) DESC, sr.last_event_epoch_ms DESC
+        LIMIT ?`
+    ).all(now - LIVE_WINDOW_MS, limit) as ActivityQueryRow[];
+    return rows.map(r => this.toActivityRow(r, now));
+  }
+
+  private toActivityRow(r: ActivityQueryRow, now: number): ActivityRow {
+    const msSinceLastEvent = now - r.lastEventEpochMs;
+    const { lastEventEpochMs, ...rest } = r;
+    return { ...rest, msSinceLastEvent, isLive: msSinceLastEvent < LIVE_WINDOW_MS };
   }
 
   kpis(): OverviewKpis {
@@ -179,6 +209,23 @@ export class OverviewRepository {
         WHERE d.usage_date BETWEEN ? AND ?
      GROUP BY d.usage_date ORDER BY d.usage_date`
     ).all(from, to) as HeatmapDay[];
+  }
+
+  /// `sortBy` 是联合类型，orderBy 由它派生——不拼接用户输入的排序列。
+  /// 每个模型都带上 costUnknownEvents：成本 0 到底是免费还是未定价，UI 必须能区分。
+  modelRanking(from: string, to: string, sortBy: 'cost' | 'tokens'): ModelRank[] {
+    const orderBy = sortBy === 'cost' ? 'costUsdMicros DESC, tokens DESC' : 'tokens DESC, costUsdMicros DESC';
+    return this.db.prepare(
+      `SELECT model_canonical AS model,
+              coalesce(sum(tokens_input + tokens_output + tokens_cache_read
+                           + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
+              coalesce(sum(cost_usd_micros), 0) AS costUsdMicros,
+              coalesce(sum(cost_unknown_events), 0) AS costUnknownEvents
+         FROM daily_rollup
+        WHERE usage_date BETWEEN ? AND ?
+     GROUP BY model_canonical
+     ORDER BY ${orderBy}`
+    ).all(from, to) as ModelRank[];
   }
 }
 

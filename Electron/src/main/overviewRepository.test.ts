@@ -201,3 +201,44 @@ describe('heatmap', () => {
     expect(rows[0].sessions).toBe(1);   // NOT sum(sessions_count) = 2
   });
 });
+
+describe('modelRanking', () => {
+  it('ranks by cost or by tokens, and reports unknown-cost events per model', () => {
+    db.exec(`INSERT INTO daily_rollup(usage_date, provider_id, source_kind, project_id, model_canonical,
+      sessions_count, events_count, tokens_input, cost_usd_micros, cost_unknown_events)
+      VALUES ('2026-07-10','c','k',NULL,'cheap-but-huge', 1, 1, 1000, 100, 0),
+             ('2026-07-10','c','k',NULL,'pricey-but-small', 1, 1,  10, 900, 0),
+             ('2026-07-10','c','k',NULL,'unpriced',        1, 4,  50, NULL, 4);`);
+
+    const repo = new OverviewRepository(db, () => NOW);
+
+    expect(repo.modelRanking('2026-07-10', '2026-07-10', 'cost').map(m => m.model))
+      .toEqual(['pricey-but-small', 'cheap-but-huge', 'unpriced']);
+    expect(repo.modelRanking('2026-07-10', '2026-07-10', 'tokens').map(m => m.model))
+      .toEqual(['cheap-but-huge', 'unpriced', 'pricey-but-small']);
+
+    const unpriced = repo.modelRanking('2026-07-10', '2026-07-10', 'tokens')
+      .find(m => m.model === 'unpriced')!;
+    expect(unpriced.costUsdMicros).toBe(0);
+    expect(unpriced.costUnknownEvents).toBe(4);   // 成本是 0 还是「不知道」，UI 必须能区分
+  });
+});
+
+describe('sessionRail', () => {
+  it('pins live sessions to the top, each group ordered by most recent, carrying duration and cost', () => {
+    seedSession(1, 'claude-code', 'a', 30_000, 100);      // live, 30s 前
+    seedSession(2, 'codex', 'b', 2 * 60_000, 100);        // live, 2min 前
+    seedSession(3, 'claude-code', 'c', 20 * 60_000, 100); // 已结束, 20min 前
+    seedSession(4, 'codex', 'd', 40 * 60_000, 100);       // 已结束, 40min 前
+
+    const rows = new OverviewRepository(db, () => NOW).sessionRail(10);
+
+    // live 组置顶，两组各自按最近事件倒序
+    expect(rows.map(r => r.sessionId)).toEqual([1, 2, 3, 4]);
+    expect(rows.map(r => r.isLive)).toEqual([true, true, false, false]);
+    // 时长（firstEventEpochMs）与成本随行返回，供右栏展示
+    expect(rows[0].firstEventEpochMs).toBe(NOW - 30_000 - 60_000);
+    expect(rows[0].costUsdMicros).toBe(1000);
+    expect(rows[0].costUnknownEvents).toBe(0);   // 成本可能部分未知，右栏也要能表达
+  });
+});
