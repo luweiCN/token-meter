@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""transform_pricing 的单元测试。
+
+跑法: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+这些测试用合成数据，不依赖 LiteLLM 的真实内容。快照里的真实价格
+由 Swift 侧的 PricingTests 负责断言。
+"""
+import unittest
+
+from transform_pricing import convert_model, rate, should_keep
+
+
+class RateTests(unittest.TestCase):
+    def test_uses_published_value_when_present(self):
+        self.assertEqual(rate(6e-6, fallback=999.0), 6.0)
+
+    def test_explicit_zero_means_free_not_missing(self):
+        # 这是让 glm 被错误收费的那个 bug
+        self.assertEqual(rate(0, fallback=0.75), 0.0)
+
+    def test_none_falls_back_to_derived(self):
+        self.assertEqual(rate(None, fallback=0.75), 0.75)
+
+
+class ShouldKeepTests(unittest.TestCase):
+    def base(self, **overrides):
+        spec = {
+            "mode": "chat",
+            "litellm_provider": "anthropic",
+            "input_cost_per_token": 1e-5,
+            "output_cost_per_token": 5e-5,
+        }
+        spec.update(overrides)
+        return spec
+
+    def test_keeps_chat_model_from_allowed_provider(self):
+        self.assertTrue(should_keep("claude-x", self.base()))
+
+    def test_skips_sample_spec(self):
+        self.assertFalse(should_keep("sample_spec", self.base()))
+
+    def test_skips_non_chat_mode(self):
+        self.assertFalse(should_keep("m", self.base(mode="embedding")))
+
+    def test_skips_disallowed_provider(self):
+        self.assertFalse(should_keep("m", self.base(litellm_provider="cohere")))
+
+    def test_skips_entry_without_base_prices(self):
+        self.assertFalse(should_keep("m", self.base(input_cost_per_token=None)))
+        self.assertFalse(should_keep("m", self.base(output_cost_per_token=0)))
+
+    def test_keeps_zai_provider(self):
+        # zhipuai 这个 slug 已经不存在了
+        self.assertTrue(should_keep("zai/glm-4.6", self.base(litellm_provider="zai")))
+        self.assertFalse(should_keep("x/glm", self.base(litellm_provider="zhipuai")))
+
+
+class ConvertModelTests(unittest.TestCase):
+    def test_converts_per_token_to_per_million(self):
+        out = convert_model({"input_cost_per_token": 1.5e-5, "output_cost_per_token": 7.5e-5})
+        self.assertEqual(out["inputPerMTok"], 15.0)
+        self.assertEqual(out["outputPerMTok"], 75.0)
+
+    def test_free_cache_write_stays_free(self):
+        out = convert_model({
+            "input_cost_per_token": 6e-7,
+            "output_cost_per_token": 2.2e-6,
+            "cache_creation_input_token_cost": 0,
+        })
+        self.assertEqual(out["cacheWrite5mPerMTok"], 0.0)
+
+    def test_published_one_hour_rate_beats_the_double_multiplier(self):
+        # claude-3-opus: input 15.0, 发布的 1h 价是 6.0，不是 30.0
+        out = convert_model({
+            "input_cost_per_token": 1.5e-5,
+            "output_cost_per_token": 7.5e-5,
+            "cache_creation_input_token_cost_above_1hr": 6e-6,
+        })
+        self.assertEqual(out["cacheWrite1hPerMTok"], 6.0)
+
+    def test_absent_cache_fields_derive_fallbacks(self):
+        out = convert_model({"input_cost_per_token": 1e-5, "output_cost_per_token": 5e-5})
+        self.assertEqual(out["cacheReadPerMTok"], 1.0)      # input * 0.1
+        self.assertEqual(out["cacheWrite5mPerMTok"], 12.5)  # input * 1.25
+        self.assertEqual(out["cacheWrite1hPerMTok"], 20.0)  # input * 2.0
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -6,47 +6,38 @@ final class PricingTests: XCTestCase {
         let snapshot = try PricingSnapshot.loadBundled()
         XCTAssertFalse(snapshot.snapshotVersion.isEmpty)
         XCTAssertEqual(snapshot.source, "litellm")
-        XCTAssertGreaterThan(snapshot.models.count, 50)
+        // 353 个模型。掉到 300 以下说明过滤条件坏了。
+        XCTAssertGreaterThan(snapshot.models.count, 300)
     }
 
-    func testBundledSnapshotContainsModelsUsedOnThisMachine() throws {
+    func testBundledSnapshotPricesTheModelsThisMachineActuallyUses() throws {
         let snapshot = try PricingSnapshot.loadBundled()
-        let canonicalKeys = Set(snapshot.models.keys.map(ModelNameNormalizer.canonical))
-        XCTAssertTrue(canonicalKeys.contains { $0.contains("opus") }, "缺少 opus 系列定价")
-        XCTAssertTrue(canonicalKeys.contains { $0.contains("sonnet") }, "缺少 sonnet 系列定价")
+        var byCanonical: [String: ModelPricing] = [:]
+        for (key, pricing) in snapshot.models {
+            byCanonical[ModelNameNormalizer.canonical(key)] = pricing
+        }
+
+        // 本机四个 agent 实际上报的模型名
+        for model in ["claude-fable-5", "glm-4.6"] {
+            let pricing = try XCTUnwrap(byCanonical[model], "\(model) 缺定价，成本会静默变成 unknown")
+            XCTAssertGreaterThan(pricing.inputPerMTok, 0, "\(model) 的 input 价必须为正")
+            XCTAssertGreaterThan(pricing.outputPerMTok, 0, "\(model) 的 output 价必须为正")
+        }
     }
 
-    func testBundledSnapshotContainsGlmPricing() throws {
+    func testEveryBundledModelHasPositiveBasePrices() throws {
         let snapshot = try PricingSnapshot.loadBundled()
-        let canonicalKeys = Set(snapshot.models.keys.map(ModelNameNormalizer.canonical))
-        // OpenCode 在本机跑 glm-4.6，缺定价会让它的成本静默变成 unknown
-        XCTAssertTrue(canonicalKeys.contains("glm-4.6"))
-    }
-
-    func testUsesPublishedOneHourCacheRateNotAHardcodedMultiple() throws {
-        let snapshot = try PricingSnapshot.loadBundled()
-        let ratios = snapshot.models.values
-            .filter { $0.inputPerMTok > 0 }
-            .map { $0.cacheWrite1hPerMTok / $0.inputPerMTok }
-        // 若脚本硬编码 input*2，所有比值都会恰好是 2.0
-        XCTAssertTrue(ratios.contains { abs($0 - 2.0) > 0.01 },
-                      "全部模型的 1h 缓存价都恰好是 input×2，说明用的是硬编码倍率而不是 LiteLLM 发布的真实价格")
-    }
-
-    func testTreatsExplicitZeroCacheCostAsFreeNotMissing() throws {
-        let snapshot = try PricingSnapshot.loadBundled()
-        let glm = try XCTUnwrap(snapshot.models["zai/glm-4.6"])
-        // LiteLLM 明确写 0 表示免费。真值判断会把它当成缺失并派生出 input×1.25 = 0.75
-        XCTAssertEqual(glm.cacheWrite5mPerMTok, 0.0, accuracy: 1e-9,
-                       "LiteLLM 声明缓存写入免费，不得派生出收费价格")
-        // 但 cacheRead 字段 LiteLLM 是给了真实值的，不能被误置零
-        XCTAssertEqual(glm.cacheReadPerMTok, 0.11, accuracy: 1e-9)
+        // 转换脚本会跳过没有基础价的条目，快照里不该有零价模型
+        for (key, pricing) in snapshot.models {
+            XCTAssertGreaterThan(pricing.inputPerMTok, 0, "\(key) 的 inputPerMTok 为零")
+            XCTAssertGreaterThan(pricing.outputPerMTok, 0, "\(key) 的 outputPerMTok 为零")
+        }
     }
 
     func testDecodesModelPricing() throws {
         let json = """
         {
-          "snapshotVersion": "2026-07-09",
+          "snapshotVersion": "abc123",
           "source": "litellm",
           "models": {
             "claude-opus-4-8": {

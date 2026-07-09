@@ -22,5 +22,6 @@ node "$RESOURCES_DIR/Electron/node_modules/electron/cli.js" --version >/dev/null
 codesign --remove-signature "$APP_DIR" 2>/dev/null || true
 codesign --force --deep --sign - --identifier com.luwei.tokenmeter "$APP_DIR" >/dev/null
 cp -R "$ROOT_DIR/.build/debug/TokenMeter_TokenMeterApp.bundle" "$APP_DIR/TokenMeter_TokenMeterApp.bundle"
+cp -R "$ROOT_DIR/.build/debug/TokenMeter_TokenMeterCore.bundle" "$APP_DIR/TokenMeter_TokenMeterCore.bundle"
 
 echo "$APP_DIR"
