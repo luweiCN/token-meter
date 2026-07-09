@@ -26,6 +26,10 @@ public struct JSONLReadResult: Equatable {
 
 public enum JSONLStreamReader {
     private static let newlineByte = UInt8(ascii: "\n")
+    /// Drain the autorelease pool every this many physical lines while reading (see the pool in
+    /// `readLines`). 512 keeps accumulated chunk `Data` to a few MB without draining so often the
+    /// per-line overhead shows up in wall time.
+    private static let poolLineInterval = 512
 
     /// Array-returning overload. Test-only: it materializes every surfaced line in memory,
     /// which defeats the purpose of streaming for large files (e.g. Codex's 257k-line, 3+ GB
@@ -91,35 +95,52 @@ public enum JSONLStreamReader {
         var currentLine = Data()
         var currentLineOffset = offset
 
-        while let chunk = try handle.read(upToCount: chunkSize), !chunk.isEmpty {
-            var searchStart = chunk.startIndex
-            while searchStart < chunk.endIndex {
-                if let newlineIndex = chunk[searchStart...].firstIndex(of: newlineByte) {
-                    currentLine.append(chunk[searchStart..<newlineIndex])
-                    // currentLine now holds the whole line's bytes (it may have been assembled
-                    // across several chunks), so its count is the true line length regardless
-                    // of where in this chunk the terminating newline landed.
-                    let nextOffset = currentLineOffset + Int64(currentLine.count) + 1
+        // `handle.read(upToCount:)` returns bridged, autoreleased `Data`. A single per-file pool
+        // (in the scanner) drains them only after the whole file, so reading the largest Codex
+        // session (3.28 GB) piles ~3.28 GB of chunk `Data` before it drains. Wrapping the chunk
+        // loop in a pool that closes every `poolLineInterval` lines caps that accumulation to a
+        // few MB. `currentLine` / `lines` are Swift-owned buffers declared outside, so they
+        // survive the drains untouched.
+        var atEnd = false
+        while !atEnd {
+            try autoreleasepool {
+                var linesInPool = 0
+                while linesInPool < poolLineInterval {
+                    guard let chunk = try handle.read(upToCount: chunkSize), !chunk.isEmpty else {
+                        atEnd = true
+                        return
+                    }
+                    var searchStart = chunk.startIndex
+                    while searchStart < chunk.endIndex {
+                        if let newlineIndex = chunk[searchStart...].firstIndex(of: newlineByte) {
+                            currentLine.append(chunk[searchStart..<newlineIndex])
+                            // currentLine now holds the whole line's bytes (it may have been assembled
+                            // across several chunks), so its count is the true line length regardless
+                            // of where in this chunk the terminating newline landed.
+                            let nextOffset = currentLineOffset + Int64(currentLine.count) + 1
 
-                    if !currentLine.isEmpty, markerBytes.map({ containsAnyMarker(currentLine, markerBytes: $0) }) ?? true {
-                        let line = JSONLLine(
-                            text: String(decoding: currentLine, as: UTF8.self),
-                            offset: currentLineOffset,
-                            nextOffset: nextOffset
-                        )
-                        if retainingLines {
-                            lines.append(line)
+                            if !currentLine.isEmpty, markerBytes.map({ containsAnyMarker(currentLine, markerBytes: $0) }) ?? true {
+                                let line = JSONLLine(
+                                    text: String(decoding: currentLine, as: UTF8.self),
+                                    offset: currentLineOffset,
+                                    nextOffset: nextOffset
+                                )
+                                if retainingLines {
+                                    lines.append(line)
+                                } else {
+                                    try onLine?(line)
+                                }
+                            }
+
+                            currentLine.removeAll(keepingCapacity: true)
+                            currentLineOffset = nextOffset
+                            searchStart = chunk.index(after: newlineIndex)
+                            linesInPool += 1
                         } else {
-                            try onLine?(line)
+                            currentLine.append(chunk[searchStart...])
+                            searchStart = chunk.endIndex
                         }
                     }
-
-                    currentLine.removeAll(keepingCapacity: true)
-                    currentLineOffset = nextOffset
-                    searchStart = chunk.index(after: newlineIndex)
-                } else {
-                    currentLine.append(chunk[searchStart...])
-                    searchStart = chunk.endIndex
                 }
             }
         }
