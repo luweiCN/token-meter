@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public final class LocalAgentScanner {
@@ -141,14 +142,19 @@ public final class LocalAgentScanner {
         let relativePath = relativePath(for: file, rootURL: root.rootURL)
         let existing = try existingSourceFile(rootId: root.id, relativePath: relativePath)
 
-        // 指纹未变、上次已完整解析、且 usage_events 里确实已有该文件的事件 → 跳过，不重读。
-        // 最后一条是 v1→v2 升级的关键：v1 把 source_files 全标成了 ok，但 v2 的 usage_events
-        // 还是空的；只看 ok 会把每个文件都跳过，导致升级后一条事件都不落。
+        // 大小 + mtime + 开头指纹都未变、上次已完整解析、且 usage_events 里确实已有该文件的
+        // 事件 → 跳过，不重读。指纹挡住"同大小同 mtime 的原地改写"这种 size/mtime 看不出的情况。
+        // 这里大小相等，所以取样窗口一致，直接比整串指纹即可（无需 oldPrefixIntact 那套重算）。
+        // `let existingFingerprint` 让缺指纹（旧行无指纹，或本次读不出）走 fail closed —— 重读而非跳过，
+        // 顺带在 v1→v2 升级时补上指纹。最后一条（有事件）也是升级关键：v1 把 source_files 全标成 ok，
+        // 但 v2 的 usage_events 还空着；只看 ok 会把每个文件都跳过，导致升级后一条事件都不落。
         if let existing,
            existing.parseStatus == "ok",
            existing.lastParsedRunId != nil,
            existing.sizeBytes == metadata.sizeBytes,
            existing.mtimeNanoseconds == metadata.mtimeNanoseconds,
+           let existingFingerprint = existing.contentFingerprint,
+           existingFingerprint == metadata.contentFingerprint,
            try writer.lastSourceOffset(sourceFileId: existing.id) != nil {
             try markSourceFileSeen(sourceFileId: existing.id, runId: runId)
             return false
@@ -160,7 +166,7 @@ public final class LocalAgentScanner {
         // 一个 session 横跨父 jsonl 与多个 subagent jsonl，各文件偏移互不相干。
         // 绝不能用 max(source_offset)+1：source_offset 是行首字节，加一落在行内——今天靠半行
         // JSON 解析失败侥幸不重复，但以空白开头的行残片仍是合法 JSON，会被重复消费并造成重复计数。
-        let planResume = shouldResume(existing: existing, metadata: metadata)
+        let planResume = shouldResume(existing: existing, metadata: metadata, file: file)
         let startOffset: Int64 = planResume ? (existing?.parserState?.resumeOffset ?? 0) : 0
         // 只有真正续读（startOffset>0）才把上次的 parser_state 传给 parser；否则全量重读、状态清零。
         let resumeState = startOffset > 0 ? existing?.parserState : nil
@@ -436,13 +442,19 @@ public final class LocalAgentScanner {
         }
     }
 
-    /// 续读条件：上次 ok、文件变大、且 inode/dev 未变（同一个物理文件被追加，而非改写）。
-    private func shouldResume(existing: ExistingSourceFile?, metadata: FileMetadata) -> Bool {
+    /// 续读条件：上次 ok、文件变大、inode/dev 未变、且**旧记录的前缀在新文件里原样还在**。
+    ///
+    /// 最后一条不可少：同 inode + 更大 size 既可能是"纯追加"，也可能是"原地改写成更大的内容"
+    /// （Data.write 非原子，改写保留 inode）。少了它，改写会被误当追加：新的开头永不被解析、
+    /// 旧内容的事件也不会被 deleteEvents 清掉、parser 还带着旧会话身份续读，全乱套。
+    /// oldPrefixIntact 拿【旧】len 去读【新】文件比 hash：不变 = 追加 → 续读；变了 = 改写 → 全量重读。
+    private func shouldResume(existing: ExistingSourceFile?, metadata: FileMetadata, file: URL) -> Bool {
         guard let existing,
               existing.parseStatus == "ok",
               metadata.sizeBytes > existing.sizeBytes,
               existing.inode == metadata.inode,
-              existing.dev == metadata.dev else {
+              existing.dev == metadata.dev,
+              oldPrefixIntact(existing: existing, file: file, currentSize: metadata.sizeBytes) else {
             return false
         }
         return true
@@ -534,7 +546,7 @@ public final class LocalAgentScanner {
     private func existingSourceFile(rootId: Int64, relativePath: String) throws -> ExistingSourceFile? {
         guard let row = try database.query(
             """
-            SELECT id, size_bytes, mtime_ns, inode, dev, parser_state, parse_status, last_parsed_run_id
+            SELECT id, size_bytes, mtime_ns, inode, dev, content_fingerprint, parser_state, parse_status, last_parsed_run_id
             FROM source_files
             WHERE scan_root_id = ? AND relative_path = ?
             """,
@@ -552,6 +564,7 @@ public final class LocalAgentScanner {
             mtimeNanoseconds: mtimeNanoseconds,
             inode: row.int("inode"),
             dev: row.int("dev"),
+            contentFingerprint: row.string("content_fingerprint"),
             parserState: decodeParserState(row.string("parser_state")),
             parseStatus: parseStatus,
             lastParsedRunId: row.int("last_parsed_run_id")
@@ -617,6 +630,7 @@ public final class LocalAgentScanner {
                 mtime_ns,
                 inode,
                 dev,
+                content_fingerprint,
                 first_seen_run_id,
                 last_seen_run_id,
                 last_parsed_run_id,
@@ -624,7 +638,7 @@ public final class LocalAgentScanner {
                 parse_status,
                 parse_error,
                 parser_state
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)
             ON CONFLICT(scan_root_id, relative_path) DO UPDATE SET
                 canonical_path = excluded.canonical_path,
                 file_type = excluded.file_type,
@@ -632,6 +646,7 @@ public final class LocalAgentScanner {
                 mtime_ns = excluded.mtime_ns,
                 inode = excluded.inode,
                 dev = excluded.dev,
+                content_fingerprint = excluded.content_fingerprint,
                 last_seen_run_id = excluded.last_seen_run_id,
                 last_parsed_run_id = excluded.last_parsed_run_id,
                 disappeared_at = NULL,
@@ -649,6 +664,7 @@ public final class LocalAgentScanner {
                 .int(metadata.mtimeNanoseconds),
                 sqliteInt(metadata.inode),
                 sqliteInt(metadata.dev),
+                sqliteText(metadata.contentFingerprint),
                 .int(runId),
                 .int(runId),
                 parsed ? .int(runId) : .null,
@@ -694,8 +710,51 @@ public final class LocalAgentScanner {
             sizeBytes: sizeBytes,
             mtimeNanoseconds: Int64((modifiedAt.timeIntervalSince1970 * 1_000_000_000).rounded()),
             inode: (attributes[.systemFileNumber] as? NSNumber)?.int64Value,
-            dev: (attributes[.systemNumber] as? NSNumber)?.int64Value
+            dev: (attributes[.systemNumber] as? NSNumber)?.int64Value,
+            contentFingerprint: contentFingerprint(for: url, sizeBytes: sizeBytes)
         )
+    }
+
+    /// 存进 source_files 的内容指纹，格式 `"<len>:<sha256hex>"`：
+    /// len = min(4096, size) 是取样字节数，hash 是前 len 字节的摘要。
+    ///
+    /// 只哈希开头：真正的追加永不改动开头字节。**len 必须随 hash 一起存**——续读判定要拿
+    /// 【旧记录的】len 去读【新文件】的前 len 字节再比（见 oldPrefixIntact）。若改用新文件大小
+    /// 重新取样，每次追加都会换取样窗口，追加就永远被误判成改写。
+    /// 绝不能为"省一次读"把范围扩大到整文件：那会让 3 GB 的文件每次扫描都从头哈希一遍。
+    /// 用有界读取（read(upToCount:)），不要把整文件读进内存。
+    private func contentFingerprint(for url: URL, sizeBytes: Int64) -> String? {
+        let length = Int(min(4096, max(0, sizeBytes)))
+        guard let hash = hashPrefix(of: url, length: length) else { return nil }
+        return "\(length):\(hash)"
+    }
+
+    private func hashPrefix(of url: URL, length: Int) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        let data = length > 0 ? ((try? handle.read(upToCount: length)) ?? Data()) : Data()
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func parseFingerprint(_ fingerprint: String) -> (length: Int, hash: String)? {
+        guard let colon = fingerprint.firstIndex(of: ":"),
+              let length = Int(fingerprint[..<colon]) else { return nil }
+        return (length, String(fingerprint[fingerprint.index(after: colon)...]))
+    }
+
+    /// 旧记录的前缀是否在新文件里原样保留 —— 即"这是纯追加而非改写"。
+    ///
+    /// 缺指纹（读不出，或该行早于指纹功能）一律返回 false（fail closed）：
+    /// Optional 的 `nil == nil` 为 true，若直接比 `existing == metadata` 会在读不出指纹时反而放行，
+    /// 让一个无法评估的安全检查默默通过。这里用 `guard let` 把每一种"取不到值"都收敛成"不续读"。
+    private func oldPrefixIntact(existing: ExistingSourceFile, file: URL, currentSize: Int64) -> Bool {
+        guard let fingerprint = existing.contentFingerprint,
+              let (oldLength, oldHash) = parseFingerprint(fingerprint),
+              currentSize >= Int64(oldLength),
+              let newHash = hashPrefix(of: file, length: oldLength) else {
+            return false
+        }
+        return newHash == oldHash
     }
 
     private func relativePath(for file: URL, rootURL: URL) -> String {
@@ -786,6 +845,7 @@ private struct ExistingSourceFile {
     let mtimeNanoseconds: Int64
     let inode: Int64?
     let dev: Int64?
+    let contentFingerprint: String?
     let parserState: ParserState?
     let parseStatus: String
     let lastParsedRunId: Int64?
@@ -797,4 +857,5 @@ private struct FileMetadata {
     let mtimeNanoseconds: Int64
     let inode: Int64?
     let dev: Int64?
+    let contentFingerprint: String?
 }

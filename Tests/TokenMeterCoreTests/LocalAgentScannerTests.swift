@@ -751,6 +751,107 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM scan_roots"), 4)
         XCTAssertEqual(try database.query("SELECT stable_source_key FROM scan_roots WHERE kind = ?", [.text(SourceKind.codexJSONL.rawValue)]).first?.string("stable_source_key"), "codex_jsonl:/tmp/token-meter-home/.codex/sessions")
     }
+
+    func testInPlaceRewriteToLargerBodyDoesNotResumeWithStaleContent() async throws {
+        // 原地改写成更大的不同内容（同 inode + 更大 size）与"追加"在 shouldResume 眼里长得一样。
+        // 只有内容指纹能分辨：改写会改开头字节，指纹变 → 全量重读，而非从旧游标续读。
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("rollout.jsonl")
+        let initialJSONL = """
+        {"type":"session_meta","payload":{"id":"session-A","cwd":"/work/a"}}
+        {"type":"event_msg","timestamp":"2026-07-08T01:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":5,"output_tokens":3}}}}
+
+        """
+        let rewrittenJSONL = """
+        {"type":"session_meta","payload":{"id":"session-B","cwd":"/work/b"}}
+        {"type":"event_msg","timestamp":"2026-07-08T02:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":20}}}}
+        {"type":"event_msg","timestamp":"2026-07-08T02:01:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":15,"output_tokens":30}}}}
+
+        """
+        // 改写必须更大，否则 shouldResume 的 size 判据先兜住，测不到指纹这一层。
+        XCTAssertGreaterThan(Data(rewrittenJSONL.utf8).count, Data(initialJSONL.utf8).count)
+        try writeJSONL(initialJSONL, to: file)
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+
+        try await scanner.scanRoot(id: 1)
+        let inodeBefore = (try FileManager.default.attributesOfItem(atPath: file.path)[.systemFileNumber] as? NSNumber)?.int64Value
+
+        // Data.write 非原子，原地覆盖保留 inode——这正是 shouldResume 靠 inode 分辨不出改写的原因。
+        try writeJSONL(rewrittenJSONL, to: file)
+        let inodeAfter = (try FileManager.default.attributesOfItem(atPath: file.path)[.systemFileNumber] as? NSNumber)?.int64Value
+        XCTAssertEqual(inodeBefore, inodeAfter, "原地改写应保留 inode")
+
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(
+            try scalarInt(database, "SELECT count(*) AS value FROM usage_events WHERE session_id = (SELECT id FROM agent_sessions WHERE source_session_key = 'session-A')"),
+            0,
+            "stale event from overwritten content A must not persist"
+        )
+        let bTotals = try database.query(
+            """
+            SELECT e.tokens_total
+            FROM agent_sessions s JOIN usage_events e ON e.session_id = s.id
+            WHERE s.source_session_key = 'session-B'
+            ORDER BY e.event_seq
+            """
+        ).compactMap { $0.int("tokens_total") }
+        XCTAssertEqual(bTotals, [30, 15], "改写后只应有 B 的事件")
+    }
+
+    func testNullFingerprintRowFullRereadsInsteadOfResuming() async throws {
+        // content_fingerprint 为 NULL（读不出，或行早于指纹功能）时必须 fail closed：全量重读，不续读。
+        // 若续读，会用旧的 resumeOffset（这里故意指到文件末尾之后），读不到任何东西、陈旧事件残留。
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("rollout.jsonl")
+        try writeJSONL(codexJSONL(inputTokens: 9, outputTokens: 4, sessionId: "real-session"), to: file)
+        let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
+        let sizeBytes = try XCTUnwrap((attributes[.size] as? NSNumber)?.int64Value)
+        let mtimeNs = Int64((try XCTUnwrap(attributes[.modificationDate] as? Date).timeIntervalSince1970 * 1_000_000_000).rounded())
+        let inode = (attributes[.systemFileNumber] as? NSNumber)?.int64Value
+        let dev = (attributes[.systemNumber] as? NSNumber)?.int64Value
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        try database.execute("INSERT INTO scan_runs(id, scan_root_id, run_kind, status) VALUES (99,1,'incremental','ok')")
+        try database.execute("INSERT INTO agent_sessions(id, source_kind, source_session_key, scan_root_id, provider_id, source_revision) VALUES (77,'codex_jsonl','stale-session',1,'codex','r')")
+        // size 比现在小（看起来"变大了" → 满足 shouldResume 的 grew 判据），mtime 不一致（skip 失效），
+        // content_fingerprint 为 NULL，resumeOffset 指到文件末尾之后。
+        try database.execute(
+            """
+            INSERT INTO source_files(id, scan_root_id, relative_path, canonical_path, file_type, size_bytes, mtime_ns,
+                inode, dev, first_seen_run_id, last_seen_run_id, last_parsed_run_id, content_fingerprint, parse_status, parser_state)
+            VALUES (5, 1, 'rollout.jsonl', ?, 'jsonl_session', ?, ?, ?, ?, 99, 99, 99, NULL, 'ok', ?)
+            """,
+            [
+                .text(file.path),
+                .int(1),
+                .int(mtimeNs - 1),
+                inode.map(SQLiteValue.int) ?? .null,
+                dev.map(SQLiteValue.int) ?? .null,
+                .text("{\"lastEventSeq\":5,\"resumeOffset\":\(sizeBytes + 100)}")
+            ]
+        )
+        try database.execute(
+            """
+            INSERT INTO usage_events(session_id, source_file_id, event_seq, observed_epoch_ms, model_canonical, tokens_input, cost_source, source_offset)
+            VALUES (77, 5, 1, 1000, 'stale-model', 999, 'unknown', 0)
+            """
+        )
+
+        try await LocalAgentScanner(database: database).scanRoot(id: 1)
+
+        XCTAssertEqual(
+            try scalarInt(database, "SELECT count(*) AS value FROM usage_events WHERE session_id = 77"),
+            0,
+            "指纹缺失时必须全量重读、清掉陈旧事件，而不是续读"
+        )
+        XCTAssertEqual(
+            try scalarInt(database, "SELECT count(*) AS value FROM usage_events WHERE session_id = (SELECT id FROM agent_sessions WHERE source_session_key = 'real-session')"),
+            1
+        )
+    }
 }
 
 // MARK: - Fixtures
