@@ -1,9 +1,9 @@
 import Foundation
 
-/// 把 `ParsedSession` 落库到 schema v2 的 `usage_events` / `agent_sessions` / `projects`。
+/// 把 `ParsedSession` 落库到 `usage_events` / `agent_sessions` / `projects`。
 ///
-/// 与 v1 的 `LocalAgentUsageRepository` 并存：后者继续喂 scanner、写 v1 表，
-/// 直到 Task 14 切换 scanner，Task 18 再删掉 v1 表。这里只做加法，不碰任何旧表。
+/// 唯一的用量写入方：Task 14 让 scanner 只调本类，Task 18 删掉了 v1 的
+/// `LocalAgentUsageRepository` 与三张 v1 用量表。
 public final class UsageEventWriter {
     private let database: SQLiteDatabase
     private let costCalculator: CostCalculator
