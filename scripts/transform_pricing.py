@@ -14,6 +14,12 @@ import sys
 KEEP_PROVIDERS = {"anthropic", "openai", "vertex_ai-anthropic_models", "bedrock", "zai"}
 M = 1_000_000
 
+# 必须与 Swift 的 ModelNameNormalizer.providerPrefixes 逐项对齐，顺序也一样
+# （顺序决定 break 时剥掉的是哪个前缀）。两边是各自独立的实现，没有共享真相源，
+# 只改一边就会静默漂移。test_transform_pricing.py 会从 Swift 源码里把这个列表
+# 抠出来对账。
+PROVIDER_PREFIXES = ("vertex_ai/", "bedrock/", "anthropic/", "openai/", "openai-codex/", "zai/")
+
 
 def should_keep(name: str, spec: object) -> bool:
     if name == "sample_spec" or not isinstance(spec, dict):
@@ -53,7 +59,7 @@ def convert_model(spec: dict) -> dict:
 def canonical(name: str) -> str:
     """必须与 Swift 的 ModelNameNormalizer.canonical 保持一致。"""
     name = name.lower()
-    for prefix in ("vertex_ai/", "bedrock/", "anthropic/", "openai/", "openai-codex/", "zai/"):
+    for prefix in PROVIDER_PREFIXES:
         if name.startswith(prefix):
             name = name[len(prefix):]
             break

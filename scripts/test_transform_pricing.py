@@ -6,9 +6,45 @@
 这些测试用合成数据，不依赖 LiteLLM 的真实内容。快照里的真实价格
 由 Swift 侧的 PricingTests 负责断言。
 """
+import pathlib
+import re
 import unittest
 
-from transform_pricing import canonical, convert_model, divergent_collisions, rate, should_keep
+from transform_pricing import (
+    PROVIDER_PREFIXES,
+    canonical,
+    convert_model,
+    divergent_collisions,
+    rate,
+    should_keep,
+)
+
+
+class CrossLanguageContractTests(unittest.TestCase):
+    """Python 的 canonical 与 Swift 的 ModelNameNormalizer 是两份独立实现。
+
+    没有共享真相源：给 Swift 加一个前缀而忘了 Python，撞名检测会静默漏报，
+    而运行时的计价以 Swift 为准。这个测试直接从 Swift 源码里把列表抠出来对账。
+    """
+
+    def test_provider_prefixes_match_swift(self):
+        swift_file = (
+            pathlib.Path(__file__).resolve().parent.parent
+            / "Sources" / "TokenMeterCore" / "ModelNameNormalizer.swift"
+        )
+        source = swift_file.read_text(encoding="utf-8")
+
+        block = re.search(r"providerPrefixes\s*=\s*\[(.*?)\]", source, re.S)
+        self.assertIsNotNone(block, "在 Swift 源码里找不到 providerPrefixes")
+
+        # 只取每行开头的字符串字面量，避开行尾注释里可能出现的引号
+        swift_prefixes = tuple(re.findall(r'^\s*"([^"]+)"', block.group(1), re.M))
+
+        self.assertEqual(
+            swift_prefixes,
+            PROVIDER_PREFIXES,
+            "Swift 与 Python 的 provider 前缀表已经漂移",
+        )
 
 
 class RateTests(unittest.TestCase):
