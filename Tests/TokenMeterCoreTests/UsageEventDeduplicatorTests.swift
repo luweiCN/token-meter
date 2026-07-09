@@ -8,6 +8,7 @@ final class UsageEventDeduplicatorTests: XCTestCase {
         messageId: String?,
         requestId: String?,
         input: Int64 = 1,
+        output: Int64 = 0,
         isSidechain: Bool = false
     ) -> UsageEvent {
         UsageEvent(
@@ -18,6 +19,7 @@ final class UsageEventDeduplicatorTests: XCTestCase {
             // dedupeKey 现由构造者提供；复刻 Claude parser 的派生规则驱动这些用例。
             dedupeKey: messageId.flatMap { messageId in requestId.map { "\(messageId)\u{1F}\($0)" } },
             inputTokens: input,
+            outputTokens: output,
             sourceOffset: Int64(seq),
             isSidechain: isSidechain
         )
@@ -31,6 +33,62 @@ final class UsageEventDeduplicatorTests: XCTestCase {
 
         XCTAssertEqual(result.count, 1)
         XCTAssertEqual(result[0].observedAt, Date(timeIntervalSince1970: 100))
+    }
+
+    func testKeepsLargestTotalFrameOfStreamedResponse() {
+        // 同一次 API 调用（同 messageId+requestId，故 dedupeKey 相同）在流式过程中被多次
+        // 落盘，output 单调增长：4 → 4 → 559。保留最早那条会记下最不完整的一帧（4），
+        // 少算 output。规则一必须保留 tokensTotal 最大的那条（= 最终帧 559）。
+        let frame1 = event(seq: 1, at: 100, messageId: "m1", requestId: "r1", output: 4)
+        let frame2 = event(seq: 2, at: 200, messageId: "m1", requestId: "r1", output: 4)
+        let frame3 = event(seq: 3, at: 300, messageId: "m1", requestId: "r1", output: 559)
+
+        let result = UsageEventDeduplicator.deduplicate([frame1, frame2, frame3])
+
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].outputTokens, 559)
+    }
+
+    func testExactCopiesCollapseToOneDeterministically() {
+        // resume/fork 的逐字节副本：同 dedupeKey、所有 token 字段与时间都相等，只 eventSeq 不同。
+        // 总量并列 → 时间并列 → 由 eventSeq 决出确定胜者（最小），结果恒为一条、且可重现。
+        let copyA = event(seq: 3, at: 100, messageId: "m1", requestId: "r1", input: 10, output: 20)
+        let copyB = event(seq: 1, at: 100, messageId: "m1", requestId: "r1", input: 10, output: 20)
+        let copyC = event(seq: 2, at: 100, messageId: "m1", requestId: "r1", input: 10, output: 20)
+
+        let result = UsageEventDeduplicator.deduplicate([copyA, copyB, copyC])
+
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].eventSeq, 1)
+        XCTAssertEqual(result[0].outputTokens, 20)
+    }
+
+    func testTotalOrderIsLoadBearingAtEveryLevel() {
+        // 规则一的三级全序都必须在场，缺一级就会挑错 winner。所有事件同 dedupeKey，故都在
+        // 规则一（byExactKey）里碰撞。输入刻意乱序，把并列的高 seq 帧排在最小 seq 之前，
+        // 好让「删掉 eventSeq 级」这类退化在单次运行里就确定地失败。
+        //
+        // 预期 winner W：total=100、obs=10、seq=2。
+        //   L1（total=50、obs=1、seq=9）  ：总量最小但时间最早——删掉「总量」级它就靠最早时间夺冠。
+        //   L2（total=100、obs=20、seq=1）：总量并列但时间更晚、seq 最小——删掉「时间」级它就靠最小 seq 夺冠。
+        //   L3a/L3b（total=100、obs=10、seq=5/7）：与 W 总量、时间都并列、seq 更大——
+        //     删掉「eventSeq」级，且它们排在 W 之前，就会把先到的高 seq 帧留下。
+        let w = event(seq: 2, at: 10, messageId: "m1", requestId: "r1", input: 100)
+        let l1 = event(seq: 9, at: 1, messageId: "m1", requestId: "r1", input: 50)
+        let l2 = event(seq: 1, at: 20, messageId: "m1", requestId: "r1", input: 100)
+        let l3a = event(seq: 5, at: 10, messageId: "m1", requestId: "r1", input: 100)
+        let l3b = event(seq: 7, at: 10, messageId: "m1", requestId: "r1", input: 100)
+
+        // 乱序输入：L3a/L3b 在 W 之前，L1/L2 穿插其中。
+        let result = UsageEventDeduplicator.deduplicate([l3a, l3b, l2, l1, w])
+
+        XCTAssertEqual(result.count, 1)
+        // 总量级：winner 总量必须是 100（否则 L1 的 50 会冒头）。
+        XCTAssertEqual(result[0].totalTokens, 100)
+        // 时间级：winner 时间必须是 10（否则 L2 的 20 会冒头）。
+        XCTAssertEqual(result[0].observedAt, Date(timeIntervalSince1970: 10))
+        // eventSeq 级：winner seq 必须是 2（否则先到的 L3a/L3b 会被留下）。
+        XCTAssertEqual(result[0].eventSeq, 2)
     }
 
     func testDropsSidechainReplayOfSameMessageId() {
