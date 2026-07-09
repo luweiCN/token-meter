@@ -3911,6 +3911,39 @@ it('reports unknown-cost events so the UI does not silently treat them as zero',
 });
 ```
 
+再加一条跨表不变量。`overview()` 的总 token 取自 `session_rollup`，而趋势图取自 `daily_rollup`；两张表都由 `RollupBuilder` 从同一张 `usage_events` 派生，总量必须相等。若不等，用户会看到"总计"与"按天求和"对不上——一个没有任何报错的数字矛盾。
+
+这个测试**不建 fixture**，直接跑 Swift 侧真实扫描产物的等价 SQL。放在 `Electron/src/main/dashboardRepository.test.ts` 里，用 v2 建表 + 一批横跨两天两模型的 `usage_events` 行，然后让被测代码之外的一段裸 SQL 校验：
+
+```typescript
+it('keeps session_rollup and daily_rollup in agreement on total tokens', () => {
+  // 两天、两模型、三个会话，其中一个会话跨天——跨天是关键，
+  // 它是 daily_rollup 会拆行而 session_rollup 不会的唯一情形。
+  seedUsageEvents(db, [
+    { sessionId: 1, day: '2026-07-07', model: 'claude-fable-5', input: 100, output: 10 },
+    { sessionId: 1, day: '2026-07-08', model: 'claude-fable-5', input: 200, output: 20 },
+    { sessionId: 2, day: '2026-07-08', model: 'claude-opus-4-8', input: 300, output: 30 },
+    { sessionId: 3, day: '2026-07-08', model: 'claude-opus-4-8', input: 400, output: 40 }
+  ]);
+  rebuildRollups(db);
+
+  const fromSessions = db.prepare('SELECT sum(tokens_total) AS n FROM session_rollup').get().n;
+  const fromDays = db
+    .prepare(
+      `SELECT sum(tokens_input + tokens_output + tokens_cache_read
+                  + tokens_cache_write_5m + tokens_cache_write_1h) AS n FROM daily_rollup`
+    )
+    .get().n;
+
+  expect(fromSessions).toBe(1100);
+  expect(fromDays).toBe(fromSessions);
+});
+```
+
+`seedUsageEvents` 与 `rebuildRollups` 是这个测试文件里的本地 helper——`rebuildRollups` 必须执行与 Swift 的 `RollupBuilder` **相同的 SQL**。不要在 TypeScript 里重写聚合逻辑，那样测的就是 helper 而不是产物。把 `RollupBuilder.swift` 里的两条 `INSERT ... SELECT` 原样抄过来，并在 helper 上方注释指明来源文件与行号，让它漂移时有据可查。
+
+如果抄 SQL 显得笨重，那是个信号：应当把这两条语句提到一个 `.sql` 资源文件里，两侧共用。**本任务不做这件事**，只记录。
+
 - [ ] **Step 2: 运行测试确认失败**
 
 Run: `cd Electron && npx vitest run src/main/dashboardRepository.test.ts`
