@@ -33,6 +33,16 @@ final class PricingTests: XCTestCase {
                       "全部模型的 1h 缓存价都恰好是 input×2，说明用的是硬编码倍率而不是 LiteLLM 发布的真实价格")
     }
 
+    func testTreatsExplicitZeroCacheCostAsFreeNotMissing() throws {
+        let snapshot = try PricingSnapshot.loadBundled()
+        let glm = try XCTUnwrap(snapshot.models["zai/glm-4.6"])
+        // LiteLLM 明确写 0 表示免费。真值判断会把它当成缺失并派生出 input×1.25 = 0.75
+        XCTAssertEqual(glm.cacheWrite5mPerMTok, 0.0, accuracy: 1e-9,
+                       "LiteLLM 声明缓存写入免费，不得派生出收费价格")
+        // 但 cacheRead 字段 LiteLLM 是给了真实值的，不能被误置零
+        XCTAssertEqual(glm.cacheReadPerMTok, 0.11, accuracy: 1e-9)
+    }
+
     func testDecodesModelPricing() throws {
         let json = """
         {

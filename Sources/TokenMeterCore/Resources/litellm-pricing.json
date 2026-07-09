@@ -2439,35 +2439,35 @@
     "zai/glm-4.6": {
       "cacheReadPerMTok": 0.11,
       "cacheWrite1hPerMTok": 1.2,
-      "cacheWrite5mPerMTok": 0.75,
+      "cacheWrite5mPerMTok": 0,
       "inputPerMTok": 0.6,
       "outputPerMTok": 2.2
     },
     "zai/glm-4.7": {
       "cacheReadPerMTok": 0.11,
       "cacheWrite1hPerMTok": 1.2,
-      "cacheWrite5mPerMTok": 0.75,
+      "cacheWrite5mPerMTok": 0,
       "inputPerMTok": 0.6,
       "outputPerMTok": 2.2
     },
     "zai/glm-5": {
       "cacheReadPerMTok": 0.2,
       "cacheWrite1hPerMTok": 2.0,
-      "cacheWrite5mPerMTok": 1.25,
+      "cacheWrite5mPerMTok": 0,
       "inputPerMTok": 1.0,
       "outputPerMTok": 3.2
     },
     "zai/glm-5-code": {
       "cacheReadPerMTok": 0.3,
       "cacheWrite1hPerMTok": 2.4,
-      "cacheWrite5mPerMTok": 1.5,
+      "cacheWrite5mPerMTok": 0,
       "inputPerMTok": 1.2,
       "outputPerMTok": 5.0
     },
     "zai/glm-5.1": {
       "cacheReadPerMTok": 0.26,
       "cacheWrite1hPerMTok": 2.8,
-      "cacheWrite5mPerMTok": 1.75,
+      "cacheWrite5mPerMTok": 0,
       "inputPerMTok": 1.4,
       "outputPerMTok": 4.4
     }
