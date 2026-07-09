@@ -143,6 +143,10 @@ final class ProviderStore: ObservableObject {
         }
     }
 
+    /// 供 IPC 的流式全量重扫使用：scanner 本身不绑定 MainActor，取出引用后可在后台队列上跑，
+    /// 避免几分钟的扫描占住 MainActor 冻结菜单栏。
+    var localAgentScanner: LocalAgentScanner? { scanner }
+
     @discardableResult
     func refreshLocalAgentIndex() async -> LocalIndexRefreshResult {
         guard let database, let scanner else {

@@ -1230,6 +1230,86 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(try scalarInt(database, "SELECT event_seq AS value FROM usage_events"), 1,
                        "逐字节相同的重复帧不得替换原行：原行 event_seq=1 必须保留")
     }
+
+    // MARK: - Full rescan
+
+    func testFullRescanClearsEventsAndRebuildsThem() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeJSONL(codexJSONL(inputTokens: 1, outputTokens: 2, sessionId: "rescan-a"), to: directory.appendingPathComponent("a.jsonl"))
+        try writeJSONL(codexJSONL(inputTokens: 3, outputTokens: 4, sessionId: "rescan-b"), to: directory.appendingPathComponent("b.jsonl"))
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+
+        // fullRescan 清理后一切都是 pending，本身就包含一次首扫。先跑一遍拿基线。
+        try scanner.fullRescan()
+        let firstCount = try scalarInt(database, "SELECT count(*) AS value FROM usage_events")
+        let firstTotal = try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events")
+        XCTAssertEqual(firstCount, 2)
+
+        // 再全量重扫：事件数与 token 总量必须一致——不是零，也不是两倍。
+        try scanner.fullRescan()
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), firstCount)
+        XCTAssertEqual(try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"), firstTotal)
+        XCTAssertGreaterThan(try scalarInt(database, "SELECT count(*) AS value FROM daily_rollup"), 0)
+    }
+
+    func testFullRescanResetsParserState() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("rollout.jsonl")
+        try writeJSONL(codexJSONL(inputTokens: 5, outputTokens: 6, sessionId: "reset-state"), to: file)
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+
+        try scanner.fullRescan()
+        // 人为把 parser_state 污染成 lastEventSeq=42，模拟一份陈旧续读游标。
+        try database.execute(
+            "UPDATE source_files SET parser_state = ? WHERE relative_path = 'rollout.jsonl'",
+            [.text(#"{"lastEventSeq":42}"#)]
+        )
+
+        try scanner.fullRescan()
+
+        // usage_events 已被清空后从头重建：event_seq 必须从 1 重新编号，而不是从 43 续下去。
+        // 否则新事件的 event_seq 与文件内行序永久错位。
+        let seqs = try database.query("SELECT event_seq FROM usage_events ORDER BY event_seq").compactMap { $0.int("event_seq") }
+        XCTAssertEqual(seqs, [1], "全量重扫必须清掉陈旧 parser_state，event_seq 从 1 重编而非从 43 续")
+        XCTAssertEqual(try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"), 11)
+    }
+
+    func testInterruptedFullRescanSelfHealsOnNextIncrementalScan() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeJSONL(codexJSONL(inputTokens: 1, outputTokens: 2, sessionId: "heal-a"), to: directory.appendingPathComponent("a.jsonl"))
+        try writeJSONL(codexJSONL(inputTokens: 3, outputTokens: 4, sessionId: "heal-b"), to: directory.appendingPathComponent("b.jsonl"))
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+
+        // 先完整扫一遍拿到基线。
+        try await scanner.scanRoot(id: 1)
+        let baselineEvents = try scalarInt(database, "SELECT count(*) AS value FROM usage_events")
+        let baselineTotal = try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events")
+        XCTAssertEqual(baselineEvents, 2)
+
+        // 模拟「fullRescan 的清理已完成、扫描尚未开始」时进程崩溃：手工执行清理语句，不跑扫描。
+        try database.execute("DELETE FROM daily_rollup")
+        try database.execute("DELETE FROM session_rollup")
+        try database.execute("DELETE FROM usage_events")
+        try database.execute("UPDATE source_files SET parser_state = NULL, parse_status = 'pending'")
+        try database.execute("UPDATE scan_roots SET last_successful_cursor = NULL")
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 0)
+
+        // 关键：普通的增量扫描——不是 fullRescan——必须把它补回来。
+        // 清理后的状态（parser_state=NULL、parse_status='pending'、无事件）与「从未扫描过」等价，
+        // 这正是 fullRescan 敢于不开事务的正当性：任何时刻崩溃，下一次增量扫描都会自愈。
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), baselineEvents,
+                       "清理后中断，下一次增量扫描必须把事件补回到与完整扫描一致")
+        XCTAssertEqual(try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"), baselineTotal)
+        XCTAssertGreaterThan(try scalarInt(database, "SELECT count(*) AS value FROM daily_rollup"), 0)
+    }
 }
 
 // MARK: - Fixtures

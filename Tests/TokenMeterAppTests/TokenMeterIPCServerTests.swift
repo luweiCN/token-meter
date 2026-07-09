@@ -210,6 +210,59 @@ final class TokenMeterIPCServerTests: XCTestCase {
         XCTAssertFalse(response.ok, "scanNow must fail when every enabled scan root fails to parse")
     }
 
+    func testScanRequestFullStreamsProgressLinesThenFinished() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanup() }
+
+        // 造一个装了两个小 session 文件的 scan root，让 fullRescan 真的有字节可推进。
+        let rootDirectory = fixture.homeDirectory.appendingPathComponent("claude-root", isDirectory: true)
+        try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
+        func claudeSession(_ key: String, input: Int, output: Int) -> Data {
+            Data((#"{"sessionId":"\#(key)","cwd":"/repo","timestamp":"2026-07-03T02:00:00Z","type":"assistant","message":{"role":"assistant","model":"claude-sonnet","usage":{"input_tokens":\#(input),"output_tokens":\#(output)}}}"# + "\n").utf8)
+        }
+        try claudeSession("stream-a", input: 10, output: 20).write(to: rootDirectory.appendingPathComponent("a.jsonl"))
+        try claudeSession("stream-b", input: 30, output: 40).write(to: rootDirectory.appendingPathComponent("b.jsonl"))
+
+        let database = try SQLiteDatabase(path: fixture.databaseURL.path)
+        try insertScanRoot(database, id: 1, kind: .claudeJSONL, rootPath: rootDirectory.path, displayName: "Claude")
+
+        let server = try await startServer(store: fixture.store)
+        defer { server.stop() }
+
+        let lines = try await sendJSONLinesUntilClose(
+            #"{"id":"rescan-1","method":"scan.requestFull"}"#,
+            to: try XCTUnwrap(server.boundPort)
+        )
+
+        XCTAssertGreaterThanOrEqual(lines.count, 2, "全量重扫必须至少发一条 progress 加一条 finished")
+
+        let decoded = try lines.map { try JSONDecoder().decode(ScanStreamLineProbe.self, from: Data($0.utf8)) }
+        XCTAssertEqual(decoded.last?.kind, "scan.finished")
+        XCTAssertEqual(decoded.last?.status, "ok")
+
+        let progressLines = decoded.dropLast()
+        XCTAssertFalse(progressLines.isEmpty, "scan.finished 之前必须至少有一条 scan.progress")
+        for progress in progressLines {
+            XCTAssertEqual(progress.kind, "scan.progress")
+        }
+        let bytesDone = progressLines.map { $0.bytesDone ?? -1 }
+        XCTAssertEqual(bytesDone, bytesDone.sorted(), "progress 的 bytesDone 必须单调不减")
+
+        // 数据真的落库了：两条 session 各一条事件。
+        XCTAssertEqual(
+            try database.query("SELECT count(*) AS value FROM usage_events")[0].int("value"),
+            2,
+            "全量重扫必须把事件真正写进库，而不只是发进度"
+        )
+    }
+
+    private func sendJSONLinesUntilClose(_ line: String, to port: UInt16) async throws -> [String] {
+        let data = try await TCPStreamClient(port: port).send(line + "\n")
+        return String(decoding: data, as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+    }
+
     private func startServer(store: ProviderStore) async throws -> TokenMeterIPCServer {
         let server = TokenMeterIPCServer(store: store)
         try server.start(port: 0)
@@ -325,6 +378,66 @@ private struct IPCServerFixture {
 
     func cleanup() {
         try? FileManager.default.removeItem(at: homeDirectory)
+    }
+}
+
+private struct ScanStreamLineProbe: Decodable {
+    let kind: String
+    let status: String?
+    let bytesDone: Int64?
+}
+
+/// 读到连接关闭为止的流式客户端：全量重扫会发多行（progress…finished）再关连接。
+private struct TCPStreamClient {
+    let port: UInt16
+
+    func send(_ text: String) async throws -> Data {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                do {
+                    continuation.resume(returning: try sendSynchronously(text))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private func sendSynchronously(_ text: String) throws -> Data {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { throw TCPLineClientError.socketFailed(errno) }
+        defer { close(fd) }
+
+        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        _ = withUnsafePointer(to: &timeout) { pointer in
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, pointer, socklen_t(MemoryLayout<timeval>.size))
+        }
+        _ = withUnsafePointer(to: &timeout) { pointer in
+            setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, pointer, socklen_t(MemoryLayout<timeval>.size))
+        }
+
+        try TCPHost.loopback.connect(fd: fd, port: port)
+
+        let request = Array(text.utf8)
+        try request.withUnsafeBytes { buffer in
+            var sent = 0
+            while sent < buffer.count {
+                let result = Darwin.send(fd, buffer.baseAddress!.advanced(by: sent), buffer.count - sent, 0)
+                guard result > 0 else { throw TCPLineClientError.sendFailed(errno) }
+                sent += result
+            }
+        }
+
+        var response = Data()
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let received = Darwin.recv(fd, &chunk, chunk.count, 0)
+            if received == 0 { break } // EOF: server 发完 finished 后关连接
+            guard received > 0 else { throw TCPLineClientError.closedBeforeNewline }
+            response.append(contentsOf: chunk[0..<received])
+            guard response.count <= 1024 * 1024 else { throw TCPLineClientError.responseTooLarge }
+        }
+        return response
     }
 }
 

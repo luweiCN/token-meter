@@ -48,7 +48,8 @@ const mockIndexStatusRepository = vi.hoisted(() => ({
 }));
 
 const mockSwiftClient = vi.hoisted(() => ({
-  notifySwift: vi.fn()
+  notifySwift: vi.fn(),
+  requestFullRescan: vi.fn()
 }));
 
 vi.mock('./database.js', () => ({
@@ -93,7 +94,8 @@ vi.mock('./indexStatusRepository.js', () => ({
 }));
 
 vi.mock('./tokenMeterSocketClient.js', () => ({
-  notifySwift: mockSwiftClient.notifySwift
+  notifySwift: mockSwiftClient.notifySwift,
+  requestFullRescan: mockSwiftClient.requestFullRescan
 }));
 
 vi.mock('electron', () => ({
@@ -150,7 +152,7 @@ const allowedIpcChannels: Record<string, true> = {
 
 const allowedPreloadApiShape: Record<string, string[]> = {
   dashboard: ['queryDailyUsage', 'queryOverview'],
-  index: ['startFullReindex', 'status'],
+  index: ['onScanProgress', 'startFullReindex', 'status'],
   sessions: ['query'],
   settings: ['get', 'update']
 };
@@ -353,5 +355,27 @@ describe('Electron secure scaffold', () => {
 
     expect(mockIndexStatusRepository.constructor).toHaveBeenCalledWith(mockDatabase.instance);
     expect(mockIndexStatusRepository.status).toHaveBeenCalledWith();
+  });
+
+  it('index:fullReindex streams through requestFullRescan, forwards progress, then invalidates the dashboard', async () => {
+    // 关键行为变更：不再走 notifySwift('scanNow')（2 秒空闲超时，会在首次几分钟的索引里误报
+    // timeout），改走流式的 requestFullRescan（30s 空闲超时）。requestFullRescan 内部的空闲超时
+    // 语义——尤其是「开扫前沉默 3 秒不得拒绝」——由 tokenMeterSocketClient.test.ts 用真实的假
+    // server + 真实的 requestFullRescan 在临时端口上验证；这里不绑定固定端口 47731，以免误连到
+    // 正在运行的生产 App 并触发一次真实全量重扫。
+    const progress = { kind: 'scan.progress', filesTotal: 3, filesDone: 1, bytesTotal: 100, bytesDone: 50, currentRoot: 'Claude' };
+    mockSwiftClient.requestFullRescan.mockImplementation(async (onProgress: (event: unknown) => void) => {
+      onProgress(progress);
+    });
+    const send = vi.fn();
+    const fullReindexHandler = registerAndFindHandler('index:fullReindex');
+
+    await expect(fullReindexHandler({ sender: { send } } as never)).resolves.toBeUndefined();
+
+    expect(mockSwiftClient.requestFullRescan).toHaveBeenCalledTimes(1);
+    // 不再依赖 notifySwift 的一问一答 2 秒超时路径。
+    expect(mockSwiftClient.notifySwift).not.toHaveBeenCalled();
+    expect(send).toHaveBeenNthCalledWith(1, 'index:scanProgress', progress);
+    expect(send).toHaveBeenNthCalledWith(2, 'dashboard:invalidate');
   });
 });

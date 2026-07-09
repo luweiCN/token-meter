@@ -16,6 +16,11 @@ contextBridge.exposeInMainWorld('tokenMeter', {
   },
   index: {
     status: () => ipcRenderer.invoke('index:status'),
-    startFullReindex: (rootId?: string) => ipcRenderer.invoke('index:fullReindex', rootId)
+    startFullReindex: (rootId?: string) => ipcRenderer.invoke('index:fullReindex', rootId),
+    onScanProgress: (callback: (progress: unknown) => void) => {
+      const listener = (_event: unknown, progress: unknown) => callback(progress);
+      ipcRenderer.on('index:scanProgress', listener);
+      return () => ipcRenderer.removeListener('index:scanProgress', listener);
+    }
   }
 });

@@ -1,5 +1,8 @@
 import Foundation
 import Network
+// scanner 是非 Sendable 的 LocalAgentScanner，但全量重扫里它只在唯一那条后台队列上被使用，
+// 捕获它跨队列是安全的。@preconcurrency 抑制这一处跨模块的 Sendable 告警。
+@preconcurrency import TokenMeterCore
 
 struct IPCRequest: Codable {
     let id: String
@@ -113,6 +116,12 @@ final class TokenMeterIPCServer {
             return
         }
 
+        // 全量重扫要跑几分钟并持续推进度，不能走「答完即关」的常规一问一答路径。
+        if request.method == "scan.requestFull" {
+            streamFullRescan(on: connection)
+            return
+        }
+
         Task { @MainActor in
             let response = await self.response(for: request)
             var payload = (try? JSONEncoder().encode(response)) ?? Data()
@@ -120,6 +129,30 @@ final class TokenMeterIPCServer {
             connection.send(content: payload, completion: .contentProcessed { _ in
                 connection.cancel()
             })
+        }
+    }
+
+    /// 流式全量重扫：逐条 progress 一行 JSON（不 cancel），末尾一条 scan.finished。
+    /// 扫描在后台队列跑；若客户端中途断开，扫描仍跑到底（数据必须落库），只是不再发进度。
+    private func streamFullRescan(on connection: NWConnection) {
+        let writer = RescanStreamWriter(connection: connection)
+        guard let scanner = store.localAgentScanner else {
+            writer.finish(encodeFinishedLine(status: "failed", error: "local session index unavailable"))
+            return
+        }
+
+        let scanQueue = DispatchQueue(label: "TokenMeterIPCServer.fullRescan", qos: .utility)
+        scanQueue.async {
+            do {
+                try scanner.fullRescan { event in
+                    if let payload = encodeProgressLine(event) {
+                        writer.sendProgress(payload)
+                    }
+                }
+                writer.finish(encodeFinishedLine(status: "ok", error: nil))
+            } catch {
+                writer.finish(encodeFinishedLine(status: "failed", error: "full rescan failed"))
+            }
         }
     }
 
@@ -163,4 +196,78 @@ final class TokenMeterIPCServer {
 
 private enum TokenMeterIPCServerError: Error {
     case invalidPort(UInt16)
+}
+
+/// 把全量重扫的多行响应写回连接。所有 send 走同一个串行队列——这保证 finished 永远排在
+/// 所有 progress 之后，不会因为并发调度越到前面。NWConnection.send 本身线程安全。
+///
+/// `@unchecked Sendable` 是名副其实的：唯一的可变状态 `stopped` 只在私有串行 `queue` 上读写，
+/// `connection` 只用于线程安全的 send。
+private final class RescanStreamWriter: @unchecked Sendable {
+    private let connection: NWConnection
+    private let queue = DispatchQueue(label: "TokenMeterIPCServer.rescanStream")
+    private var stopped = false
+
+    init(connection: NWConnection) {
+        self.connection = connection
+    }
+
+    /// 只在客户端还在听时发进度。send 失败（客户端中途断开）后置 stopped，停止再发进度——
+    /// 但**绝不**因此中断扫描，那由扫描队列独立跑完。
+    func sendProgress(_ payload: Data) {
+        queue.async { [self] in
+            guard !stopped else { return }
+            connection.send(content: payload, completion: .contentProcessed { [self] error in
+                if error != nil {
+                    queue.async { self.stopped = true }
+                }
+            })
+        }
+    }
+
+    /// 末尾一行：写完才在 completion 里 cancel。先 cancel 会把最后一行丢掉。
+    /// 即便客户端已断开也照发，send 只会在 completion 里静默失败，无害。
+    func finish(_ payload: Data) {
+        queue.async { [self] in
+            connection.send(content: payload, completion: .contentProcessed { [self] _ in
+                connection.cancel()
+            })
+        }
+    }
+}
+
+private struct ScanProgressLine: Encodable {
+    let kind: String
+    let filesTotal: Int
+    let filesDone: Int
+    let bytesTotal: Int64
+    let bytesDone: Int64
+    let currentRoot: String
+}
+
+private struct ScanFinishedLine: Encodable {
+    let kind: String
+    let status: String
+    let error: String?
+}
+
+private func encodeProgressLine(_ event: ScanProgressEvent) -> Data? {
+    let line = ScanProgressLine(
+        kind: "scan.progress",
+        filesTotal: event.filesTotal,
+        filesDone: event.filesDone,
+        bytesTotal: event.bytesTotal,
+        bytesDone: event.bytesDone,
+        currentRoot: event.currentRoot
+    )
+    guard var data = try? JSONEncoder().encode(line) else { return nil }
+    data.append(UInt8(ascii: "\n"))
+    return data
+}
+
+private func encodeFinishedLine(status: String, error: String?) -> Data {
+    let line = ScanFinishedLine(kind: "scan.finished", status: status, error: error)
+    var data = (try? JSONEncoder().encode(line)) ?? Data(#"{"kind":"scan.finished","status":"failed"}"#.utf8)
+    data.append(UInt8(ascii: "\n"))
+    return data
 }

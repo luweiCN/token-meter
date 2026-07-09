@@ -42,7 +42,40 @@ public final class LocalAgentScanner {
     }
 
     public func scanRoot(id rootId: Int64) async throws {
+        try scan(rootId: rootId, reporter: nil)
+    }
+
+    /// 用户显式触发的全量重扫。清空明细与解析状态，把所有源文件重置为「从未扫描过」，再逐根重读。
+    ///
+    /// **刻意不包在一个事务里**：真实数据下要跑数分钟、写 27 万行，长写事务会把整个库锁死，
+    /// 且 WAL 会膨胀到明细表大小。安全性由自愈保证——清理之后的状态
+    ///（parser_state=NULL、parse_status='pending'、无事件）与「从未扫描过」等价，任何时刻崩溃，
+    /// 下一次增量扫描都会补全。`testInterruptedFullRescanSelfHealsOnNextIncrementalScan` 钉住这一点。
+    public func fullRescan(onProgress: @escaping (ScanProgressEvent) -> Void = { _ in }) throws {
+        try database.execute("DELETE FROM daily_rollup")
+        try database.execute("DELETE FROM session_rollup")
+        try database.execute("DELETE FROM usage_events")
+        try database.execute("UPDATE source_files SET parser_state = NULL, parse_status = 'pending'")
+        // OpenCode 的 changedSessions(after:) 用这个游标做增量过滤：不清空它，被删掉的 OpenCode
+        // 事件在重扫时会因「游标之后无变化」而不被重建。JSONL 的续读走 per-file parser_state，
+        // 与此列无关，清空对它无害。
+        try database.execute("UPDATE scan_roots SET last_successful_cursor = NULL")
+
+        let rootIds = try loadEnabledRootIds()
+        let totals = try corpusTotals(rootIds: rootIds)
+        let reporter = FullRescanProgress(filesTotal: totals.files, bytesTotal: totals.bytes, onProgress: onProgress)
+
+        // 单根解析失败按 scan_runs 记为 partial（与增量路径一致），不因一根出错而中止整轮重扫。
+        for rootId in rootIds {
+            try? scan(rootId: rootId, reporter: reporter)
+        }
+        // 末尾一条必发，否则 UI 停在 99.x%。
+        reporter.finish()
+    }
+
+    private func scan(rootId: Int64, reporter: FullRescanProgress?) throws {
         guard let root = try loadEnabledRoot(id: rootId) else { return }
+        reporter?.currentRoot = root.displayName
 
         let runId = try startRun(
             rootId: root.id,
@@ -54,10 +87,10 @@ public final class LocalAgentScanner {
         do {
             switch root.kind {
             case .claudeJSONL, .codexJSONL, .ompJSONL:
-                try scanJSONLRoot(root, runId: runId, progress: progress)
+                try scanJSONLRoot(root, runId: runId, progress: progress, reporter: reporter)
 
             case .opencodeSQLite:
-                try scanOpenCodeRoot(root, runId: runId, progress: progress)
+                try scanOpenCodeRoot(root, runId: runId, progress: progress, reporter: reporter)
             }
 
             try finishRun(
@@ -92,7 +125,7 @@ public final class LocalAgentScanner {
     private func loadEnabledRoot(id rootId: Int64) throws -> ScanRoot? {
         let rows = try database.query(
             """
-            SELECT id, kind, root_path, source_db_path, scan_mode, last_successful_cursor
+            SELECT id, kind, root_path, source_db_path, scan_mode, last_successful_cursor, display_name
             FROM scan_roots
             WHERE id = ? AND enabled = 1 AND scan_mode != 'disabled'
             """,
@@ -113,11 +146,42 @@ public final class LocalAgentScanner {
             rootURL: URL(fileURLWithPath: rootPath, isDirectory: kind != .opencodeSQLite),
             sourceDatabaseURL: row.string("source_db_path").map { URL(fileURLWithPath: $0) },
             runKind: runKind,
-            lastSuccessfulCursor: row.string("last_successful_cursor")
+            lastSuccessfulCursor: row.string("last_successful_cursor"),
+            displayName: row.string("display_name") ?? kind.rawValue
         )
     }
 
-    private func scanJSONLRoot(_ root: ScanRoot, runId: Int64, progress: ScanProgress) throws {
+    private func loadEnabledRootIds() throws -> [Int64] {
+        try database.query(
+            "SELECT id FROM scan_roots WHERE enabled = 1 AND scan_mode != 'disabled' ORDER BY id"
+        ).compactMap { $0.int("id") }
+    }
+
+    /// 全量重扫前统计要处理的文件数与总字节，供进度条用。多做一遍目录枚举 + stat，
+    /// 相对一次动辄数分钟的重扫可忽略。文件不可读时字节按 0 计，不让统计本身失败。
+    private func corpusTotals(rootIds: [Int64]) throws -> (files: Int, bytes: Int64) {
+        var files = 0
+        var bytes: Int64 = 0
+        for rootId in rootIds {
+            guard let root = try loadEnabledRoot(id: rootId) else { continue }
+            switch root.kind {
+            case .claudeJSONL, .codexJSONL, .ompJSONL:
+                for file in try jsonlFiles(under: root.rootURL) {
+                    files += 1
+                    bytes += (try? fileMetadata(for: file).sizeBytes) ?? 0
+                }
+            case .opencodeSQLite:
+                let databaseURL = root.sourceDatabaseURL ?? root.rootURL
+                if fileExists(at: databaseURL) {
+                    files += 1
+                    bytes += (try? fileMetadata(for: databaseURL).sizeBytes) ?? 0
+                }
+            }
+        }
+        return (files, bytes)
+    }
+
+    private func scanJSONLRoot(_ root: ScanRoot, runId: Int64, progress: ScanProgress, reporter: FullRescanProgress?) throws {
         var failureCount = 0
         for file in try jsonlFiles(under: root.rootURL) {
             progress.filesSeen += 1
@@ -133,6 +197,11 @@ public final class LocalAgentScanner {
                 }
             } catch {
                 failureCount += 1
+            }
+            // 进度按字节推进：无论跳过还是重读，走完一个文件就把它的大小计入。
+            // 仅在全量重扫（reporter 非 nil）时多做一次 stat；增量路径不付这个代价。
+            if let reporter {
+                reporter.advance(bytes: (try? fileMetadata(for: file).sizeBytes) ?? 0)
             }
         }
 
@@ -335,13 +404,14 @@ public final class LocalAgentScanner {
         return hasResidual
     }
 
-    private func scanOpenCodeRoot(_ root: ScanRoot, runId: Int64, progress: ScanProgress) throws {
+    private func scanOpenCodeRoot(_ root: ScanRoot, runId: Int64, progress: ScanProgress, reporter: FullRescanProgress?) throws {
         let databaseURL = root.sourceDatabaseURL ?? root.rootURL
         guard fileExists(at: databaseURL) else { return }
 
         progress.filesSeen = 1
 
         let metadata = try fileMetadata(for: databaseURL)
+        reporter?.advance(bytes: metadata.sizeBytes)
         let relativePath = databaseURL.lastPathComponent.isEmpty ? databaseURL.path : databaseURL.lastPathComponent
         let existing = try existingSourceFile(rootId: root.id, relativePath: relativePath)
         let fingerprintChanged = existing?.sizeBytes != metadata.sizeBytes
@@ -933,6 +1003,46 @@ private struct ScanRoot {
     let sourceDatabaseURL: URL?
     let runKind: String
     let lastSuccessfulCursor: String?
+    let displayName: String
+}
+
+/// 全量重扫的进度累加器：跨所有 root 累计 filesDone/bytesDone，经 ScanProgressThrottle 节流后
+/// 回调 onProgress。每处理完一个文件调 advance，全部跑完调 finish 强发末尾一条。
+private final class FullRescanProgress {
+    let filesTotal: Int
+    let bytesTotal: Int64
+    var currentRoot = ""
+    private var filesDone = 0
+    private var bytesDone: Int64 = 0
+    private var throttle = ScanProgressThrottle()
+    private let onProgress: (ScanProgressEvent) -> Void
+
+    init(filesTotal: Int, bytesTotal: Int64, onProgress: @escaping (ScanProgressEvent) -> Void) {
+        self.filesTotal = filesTotal
+        self.bytesTotal = bytesTotal
+        self.onProgress = onProgress
+    }
+
+    func advance(bytes: Int64) {
+        filesDone += 1
+        bytesDone += bytes
+        emit(isFinal: false)
+    }
+
+    func finish() {
+        emit(isFinal: true)
+    }
+
+    private func emit(isFinal: Bool) {
+        guard throttle.shouldEmit(bytesDone: bytesDone, bytesTotal: bytesTotal, isFinal: isFinal) else { return }
+        onProgress(ScanProgressEvent(
+            filesTotal: filesTotal,
+            filesDone: filesDone,
+            bytesTotal: bytesTotal,
+            bytesDone: bytesDone,
+            currentRoot: currentRoot
+        ))
+    }
 }
 
 private final class ScanProgress {
