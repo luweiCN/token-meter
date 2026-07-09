@@ -74,8 +74,9 @@ CREATE TABLE usage_events (
   tokens_cache_read INTEGER NOT NULL DEFAULT 0,
   tokens_cache_write_5m INTEGER NOT NULL DEFAULT 0,
   tokens_cache_write_1h INTEGER NOT NULL DEFAULT 0,
+  -- reasoning 是 output 的子集，不计入 total，见 4.3.1
   tokens_total INTEGER GENERATED ALWAYS AS (
-    tokens_input + tokens_output + tokens_reasoning +
+    tokens_input + tokens_output +
     tokens_cache_read + tokens_cache_write_5m + tokens_cache_write_1h
   ) VIRTUAL,
   cost_usd_micros INTEGER,
@@ -184,6 +185,35 @@ public protocol LocalAgentSessionParser {
 | OpenCode | SQLite，`message.data` 是 JSON 文本 | 解析 `data` 后取 tokens 与 cost |
 
 `resuming state:` 参数服务于增量续读：Codex 的差分需要知道上一条的累计值。`source_files.parser_state` 字段已预留位置。
+
+#### 4.3.1 token 语义归一（关键）
+
+各源对「input」和「output」的定义**不一致**。以下结论均由本机真实数据的算术恒等式验证得出，不是从文档推断的：
+
+| 源 | 恒等式 | 含义 | 验证样本 |
+|---|---|---|---|
+| Codex | `total = input + output` | `cached_input ⊂ input`，`reasoning ⊂ output` | 598/600 条成立 |
+| omp | `total = input + output + cacheRead` | cache **独立于** input，`reasoning ⊂ output` | 3024 条反例证伪了 `total = input + output` |
+| Claude Code | 无 total 字段 | `input_tokens` 不含 cache（cache 是独立字段），无 reasoning 字段 | Anthropic API 语义 |
+
+`UsageEvent` 的字段定义因此固定为：
+
+- `inputTokens` — **非缓存**输入。
+- `cacheReadTokens` — 缓存读取，与 `inputTokens` **不重叠**。
+- `outputTokens` — 输出，**已包含** reasoning。
+- `reasoningTokens` — `outputTokens` 的子集，仅供展示，**不计入 total**。
+
+各 adapter 的转换规则：
+
+| 源 | inputTokens | cacheReadTokens |
+|---|---|---|
+| Claude Code | `input_tokens` 原样 | `cache_read_input_tokens` |
+| Codex | `input_tokens - cached_input_tokens` | `cached_input_tokens` |
+| omp | `input` 原样 | `cacheRead` |
+
+**若不做这个减法，Codex 的 token 会被计成将近两倍**——那个 3.2 GB 的 session 里 `cached_input` 占 `input` 的 94.6%。
+
+Codex 另有畸形事件（`input = output = 0` 但 `total > 0`，600 条中出现 2 条）。adapter 必须跳过这类事件并计数，不得把 `total` 当作 output 写入。
 
 ### 4.4 去重
 
@@ -371,7 +401,8 @@ Electron 窗口默认 1180×760，当前未设 `minWidth`。本设计设 `minWid
 ### 9.1 Swift
 
 - 每个 adapter 的 parser 单测，输入为**真实样本的脱敏切片**（保留结构，抹去路径与内容）。
-- Codex 累计值差分逻辑的单测，含乱序、缺失、重置（`compacted` 事件）等边界。
+- Codex 累计值差分逻辑的单测，含乱序、缺失、重置（`compacted` 事件）等边界，以及 `input = output = 0 && total > 0` 的畸形事件必须被跳过。
+- **token 语义归一单测**（见 4.3.1）：给 Codex adapter 喂 `input_tokens = 1000, cached_input_tokens = 900`，断言产出 `inputTokens = 100, cacheReadTokens = 900`，`totalTokens` 不把 900 算两遍。给 omp adapter 喂同样数值的 `input = 1000, cacheRead = 900`，断言产出 `inputTokens = 1000, cacheReadTokens = 900`。两者的 `reasoningTokens` 均不计入 `totalTokens`。
 - 去重规则单测：精确键碰撞保留早者；`messageId` 退化匹配时丢弃 sidechain 副本。
 - 时区分桶单测（bug 的最小复现）：构造 `observed_epoch_ms` 对应 UTC `2026-07-08T16:30:00Z` 的事件。在东八区，它的本地时间是 `2026-07-09 00:30`，应归入 `usage_date = 2026-07-09`。当前实现 `substr(observed_at, 1, 10)` 会得到 `2026-07-08`。
 - pricing 解析单测：四级 fallback 各命中一次。
