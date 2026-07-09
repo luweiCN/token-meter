@@ -198,15 +198,20 @@ omp 的会话元信息在 **`"type":"session"`** 行里（`id`、`cwd`、`timest
 | 源 | 恒等式 | 含义 | 验证样本 |
 |---|---|---|---|
 | Codex | `total = input + output` | `cached_input ⊂ input`，`reasoning ⊂ output` | 598/600 条成立 |
-| omp | `total = input + output + cacheRead` | cache **独立于** input，`reasoning ⊂ output` | 3024 条反例证伪了 `total = input + output` |
+| omp | `total = input + output + cacheRead` | cache **独立于** input，`reasoning ⊂ output` | 3024 条反例证伪了 `total = input + output`；25,553 条 `output > reasoning`、0 条 `output < reasoning` |
 | Claude Code | 无 total 字段 | `input_tokens` 不含 cache（cache 是独立字段），无 reasoning 字段 | Anthropic API 语义 |
+| **OpenCode** | — | **`reasoning` 独立于 `output`** | **716 条 `output < reasoning`**（例：`output=53, reasoning=226`，glm-5.1）。反证了子集关系 |
 
 `UsageEvent` 的字段定义因此固定为：
 
 - `inputTokens` — **非缓存**输入。
 - `cacheReadTokens` — 缓存读取，与 `inputTokens` **不重叠**。
-- `outputTokens` — 输出，**已包含** reasoning。
+- `outputTokens` — **完整输出，含 reasoning**。这是 `tokens_total` 生成列不加 `tokens_reasoning` 的前提。
 - `reasoningTokens` — `outputTokens` 的子集，仅供展示，**不计入 total**。
+
+**归一发生在 adapter 边界，不在生成列里分情况。** 源若把 reasoning 记在 `output` 之外（OpenCode 就是如此），它的 adapter 必须写入 `output + reasoning`；否则那部分输出永远不进 `tokens_total`。OpenCode 的 adapter 起初没做这件事，少算了 702,828 token。
+
+"reasoning 是不是 output 的子集"必须**逐源用真实数据证伪**，不能因为三个源都成立就推广到第四个。判据很直接：找一条 `output < reasoning` 的记录。找不到不代表包含，但找到了就一定不包含。
 
 各 adapter 的转换规则：
 
@@ -553,7 +558,22 @@ codex 事件既无 `messageId` 也无 `requestId`，所以 `UsageEvent.dedupeKey
 
 修完后仍比 ccusage 多 93,496,521（0.91%），原因待查，留给 Task 17。
 
-#### 9.3.5 codex 的 token 数据从 2026-04-16 才存在
+#### 9.3.5 三个源的对账终局
+
+| 源 | 我们 | ccusage | 差 |
+|---|---:|---:|---|
+| Codex | 18,455,520,473 | 18,455,520,473 | **0** |
+| Claude Code | 10,338,357,758 | 10,244,861,237 | +93,496,521（0.91%），待查 |
+| OpenCode | 1,572,548,852 | 1,572,519,757 | +29,095（0.0018%），待查 |
+| omp | 4,968,233,477 | 不支持 | — |
+
+omp 独立核对：42,372 事件与 parser 输出一致；`(timestamp, usage)` 重复为 **0**，不需要合成 `dedupe_key`。
+
+OpenCode 的 `opencode.db` 全程以 `mode=ro&immutable=1` 打开，前后 md5 一致（`d27179d88a6ee5c9233541aee4708e0e`）。
+
+三个源、三种缺陷、三个方向：codex 少算（漏目录）又多算（重复行），claude 多算（去重失效），opencode 少算（reasoning 未归一）。没有一个是解析逻辑写错了。**它们全部是语义假设的问题**，而语义假设只能靠真实数据和一个不共享你假设的第三方来证伪。
+
+#### 9.3.6 codex 的 token 数据从 2026-04-16 才存在
 
 本机 19,971 个 codex rollout 文件里，**96.7% 完全不含 `token_count` 行**（随机抽样 300 个，290 个为零）。按文件名日期分组后边界是干净的：2026-02 与 2026-03 的文件无一例外没有 token 记录，2026-05 之后无一例外都有，交界在 **2026-04-16**（当日 15 个有、1 个无）。
 
@@ -666,7 +686,7 @@ Task 14 的代码审查用变异测试（把不变量对应的那一行改坏，
 
 一次"什么都没变"的增量扫描，代价必须与**变化的**文件数成正比，而不是与文件总数成正比。这条被破坏过一次：为续读安全加的指纹一度放在 `fileMetadata` 里，于是每个文件在跳过判据生效之前就被 open + 读 4 KB + 哈希。
 
-跳过判据最终是 `parse_status = 'ok'` ∧ size 未变 ∧ `mtime_ns` 未变 ∧ `parser_state IS NOT NULL`。最后一项一石二鸟：它精确表达"v2 的 scanner 完整解析过这个文件"，因而既能识别 v1 遗留行（旧格式解不成 v2 的 `ParserState`）要重扫，又让 19,211 个零事件的 codex 文件（§9.3.5）终于能被跳过——旧判据用"`usage_events` 里有没有这个文件的行"，把"没有事件"和"没解析过"混为一谈。
+跳过判据最终是 `parse_status = 'ok'` ∧ size 未变 ∧ `mtime_ns` 未变 ∧ `parser_state IS NOT NULL`。最后一项一石二鸟：它精确表达"v2 的 scanner 完整解析过这个文件"，因而既能识别 v1 遗留行（旧格式解不成 v2 的 `ParserState`）要重扫，又让 19,211 个零事件的 codex 文件（§9.3.6）终于能被跳过——旧判据用"`usage_events` 里有没有这个文件的行"，把"没有事件"和"没解析过"混为一谈。
 
 真实 codex 根，第二遍空扫：
 
