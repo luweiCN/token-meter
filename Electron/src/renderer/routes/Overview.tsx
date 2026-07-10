@@ -119,38 +119,38 @@ export function Overview({ intervalMs = 60_000 }: { intervalMs?: number }) {
               <StackedBarChart bars={ready.trend} />
             </section>
 
-            <div className="overview__split">
-              <section className="empty-panel" aria-label="年度活动热力图">
-                <div className="overview__panel-head">
-                  <h2>年度活动</h2>
-                  <div className="metric-switch" role="group" aria-label="热力图指标">
-                    {HEATMAP_METRICS.map((m) => (
-                      <button
-                        key={m.metric}
-                        type="button"
-                        className={metric === m.metric ? 'active' : ''}
-                        aria-pressed={metric === m.metric}
-                        onClick={() => setMetric(m.metric)}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
+            <section className="empty-panel" aria-label="年度活动热力图">
+              <div className="overview__panel-head">
+                <h2>年度活动</h2>
+                <div className="metric-switch" role="group" aria-label="热力图指标">
+                  {HEATMAP_METRICS.map((m) => (
+                    <button
+                      key={m.metric}
+                      type="button"
+                      className={metric === m.metric ? 'active' : ''}
+                      aria-pressed={metric === m.metric}
+                      onClick={() => setMetric(m.metric)}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
                 </div>
-                <YearHeatmap
-                  days={ready.heatmap}
-                  lastDay={ready.heatmapLastDay}
-                  count={ready.heatmapDays}
-                  metric={metric}
-                  onSelectDate={setSelectedDay}
-                />
-              </section>
+              </div>
+              <YearHeatmap
+                days={ready.heatmap}
+                lastDay={ready.heatmapLastDay}
+                count={ready.heatmapDays}
+                metric={metric}
+                onSelectDate={setSelectedDay}
+              />
+            </section>
 
-              <section className="empty-panel" aria-label="模型排行">
-                <h2>模型排行（按成本）</h2>
-                <ModelRankingList rows={ready.modelRanking} />
-              </section>
-            </div>
+            {/* 模型可能有几十上百个，塞在热力图旁边那条窄列里挤不下。放到主区最底部，
+                单独占一整行，随内容自然向下延伸，不设高度上限——页面本身可以滚动。 */}
+            <section className="empty-panel" aria-label="模型排行">
+              <h2>模型排行（按成本）</h2>
+              <ModelRankingList rows={ready.modelRanking} />
+            </section>
           </div>
 
           <aside className="overview__rail empty-panel" aria-label="会话列表">
