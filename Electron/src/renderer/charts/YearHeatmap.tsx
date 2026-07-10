@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from 'react';
+import { useRef, useState, type MouseEvent } from 'react';
 import type { HeatmapDay } from '../../main/overviewRepository.js';
 import { buildCalendarGrid } from './calendar.js';
 import { logBucket } from './scale.js';
@@ -23,28 +23,48 @@ export interface YearHeatmapProps {
 /// 取日期，而不是给 371 个格子各挂一对处理器。
 export function YearHeatmap({ days, lastDay, count = 371, metric = 'tokens', onSelectDate }: YearHeatmapProps) {
   const [hovered, setHovered] = useState<string | null>(null);
+  const [pos, setPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const gridRef = useRef<HTMLDivElement>(null);
 
   const valueByDate = new Map(days.map(d => [d.date, d[metric]]));
   const max = Math.max(0, ...valueByDate.values());
   const columns = buildCalendarGrid(lastDay, count);
 
   const dateOf = (e: MouseEvent): string | undefined => (e.target as HTMLElement).dataset?.date;
-  const handleOver = (e: MouseEvent) => { const d = dateOf(e); if (d) setHovered(d); };
+  const handleOver = (e: MouseEvent) => {
+    const d = dateOf(e);
+    if (!d) { setHovered(null); return; }
+    // 相对网格自身定位（而非写死 0,0），跟着悬停的格子走；再在容器内夹取，
+    // 避免最右侧几列的 tooltip 溢出可滚动区域。
+    const host = gridRef.current;
+    if (host) {
+      const hostBox = host.getBoundingClientRect();
+      const cellBox = (e.target as HTMLElement).getBoundingClientRect();
+      setPos({ x: cellBox.left - hostBox.left + host.scrollLeft, y: cellBox.top - hostBox.top });
+    }
+    setHovered(d);
+  };
   const handleClick = (e: MouseEvent) => { const d = dateOf(e); if (d) onSelectDate(d); };
 
   return (
     <div className="year-heatmap" style={{ position: 'relative' }}>
       <div
+        ref={gridRef}
         className="year-heatmap__grid"
         style={{ display: 'flex', gap: 3 }}
         onMouseOver={handleOver}
         onMouseLeave={() => setHovered(null)}
         onClick={handleClick}
       >
-        {columns.map(column => (
-          <div key={column[0].date} className="year-heatmap__col"
+        {columns.map((column, colIndex) => (
+          <div key={colIndex} className="year-heatmap__col"
             style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {column.map(cell => {
+            {column.map((cell, rowIndex) => {
+              // 占位格：首列里早于起始日的星期行，只为对齐、没有真实日期，
+              // 不可 hover/click，也不参与配色。
+              if (cell.date === null) {
+                return <div key={rowIndex} style={{ width: 11, height: 11 }} aria-hidden="true" />;
+              }
               const level = logBucket(valueByDate.get(cell.date) ?? 0, max);
               return (
                 <div key={cell.date} className="year-heatmap__cell"
@@ -61,7 +81,7 @@ export function YearHeatmap({ days, lastDay, count = 371, metric = 'tokens', onS
 
       {hovered && (
         <div role="tooltip" className="year-heatmap__tooltip"
-          style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none' }}>
+          style={{ position: 'absolute', top: pos.y - 34, left: pos.x, pointerEvents: 'none' }}>
           <span className="year-heatmap__tooltip-date">{hovered}</span>
           {': '}
           <span className="year-heatmap__tooltip-value">

@@ -19,7 +19,8 @@ describe('buildCalendarGrid under daylight saving time', () => {
     // 371 天窗口（2025-07-05..2026-07-10）跨越 2025 秋季与 2026 春季两个 DST 切换日。
     // 实测：日历步进得 371 天；`+= 86_400_000` 只得 370 天（丢了一天）。
     // 所以这两条断言在 DST 时区里对 epoch 步进有真牙齿。
-    const dates = buildCalendarGrid('2026-07-10', 371).flat().map(d => d.date);
+    const dates = buildCalendarGrid('2026-07-10', 371).flat()
+      .map(d => d.date).filter((d): d is string => d !== null);
     expect(dates).toHaveLength(371);
     expect(new Set(dates).size).toBe(371);
   });
