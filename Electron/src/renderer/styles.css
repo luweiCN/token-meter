@@ -120,6 +120,35 @@ body {
   margin: 0;
 }
 
+/* 全局滚动条：不用系统原生样式（macOS 亮色系的滚动条在深色界面里很突兀），
+   走 WebKit 的 ::-webkit-scrollbar，Electron 的 Chromium 内核原生支持，
+   不需要额外依赖。细、圆角、配色跟主题走，不悬停时几乎隐形。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+  background-clip: padding-box;
+}
+
 button,
 select {
   font: inherit;
@@ -483,12 +512,6 @@ select {
   gap: 16px;
 }
 
-.overview__split {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 360px);
-  gap: 16px;
-}
-
 .overview__panel-head {
   display: flex;
   align-items: center;
@@ -556,6 +579,25 @@ select {
 /* 年度热力图窄屏时横向滚动，不撑破页面（spec §7.6）。 */
 .year-heatmap {
   overflow-x: auto;
+}
+
+/* 整张网格挂载时淡入 + 轻微上浮，跟趋势图的 tm-chart-in 一个手法。
+   371 个格子共用【一个】入场动画（不是每格各播一次）——每格单独播放对
+   371 个元素同时触发 reflow/paint，没必要为看不出区别的效果付这个代价。 */
+.year-heatmap__grid {
+  animation: tm-chart-in 0.32s ease-out;
+}
+
+/* 切指标（Token/成本/会话/事件）时颜色平滑过渡，不是瞬间跳变；
+   hover 时格子轻微放大，给「这格可以点」一个即时反馈。
+   transform 用 scale 不改 width/height，不触发其余格子重排。 */
+.year-heatmap__cell {
+  transition: background-color 0.25s ease, transform 0.12s ease-out;
+  cursor: pointer;
+}
+
+.year-heatmap__cell:hover {
+  transform: scale(1.35);
 }
 
 /* 右栏会话列表：标题吸顶不动，这个列表在自己的高度里滚动（父级 .overview__rail
@@ -849,28 +891,12 @@ select {
   display: none;
 }
 
-/* 年度活动热力图 + 模型排行这一行单独提前折行。
-   .overview__split 是 minmax(0,1fr)（热力图）配 minmax(0,360px)（排行），
-   排行的 360px 是固定预算，热力图靠 1fr 兜底剩余空间——但主区宽度在
-   960~1600px 这个区间只有约 500~800px（248px 侧栏 + 300px 右栏吃掉大半），
-   实测本机默认窗口下主区仅约 520px，排行占 360px 后热力图只剩 144px，
-   53 列的年度网格连标题「年度活动」四个字都排不下、被压成竖排。
-   在 960px 通用断点之外单独给这一行加一档，宽度门槛按「排行 360px +
-   间距 + 热力图至少要有的 300px 可读宽度」倒推，而不是跟着整页断点走。 */
-@container shell (max-width: 1399.98px) {
-  .overview__split {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
 /* 断点（spec §7.5），查询 shell 容器（≈窗口宽）。
    ≥1600：默认网格已是「主区 1fr + 右栏 300」，max-width:1720 居中即为该行为。
-   <960：全部单列，右栏移出文档流，脉冲徽标登场。 */
+   <960：全部单列，右栏移出文档流，脉冲徽标登场。
+   年度活动与模型排行不再并排（各自整行），不需要专属断点了。 */
 @container shell (max-width: 959.98px) {
   .overview__body {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .overview__split {
     grid-template-columns: minmax(0, 1fr);
   }
   .kpi-row {
@@ -892,5 +918,11 @@ select {
   .trend-chart__plot .uplot,
   .trend-chart__plot canvas {
     animation: none;
+  }
+  .year-heatmap__grid {
+    animation: none;
+  }
+  .year-heatmap__cell {
+    transition: none;
   }
 }
