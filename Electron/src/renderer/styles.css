@@ -10,8 +10,6 @@
 
   /* Derived from the user's ghostty "lu-coolnight" palette. */
   --bg: #00111e;                          /* page (palette background) */
-  --bg-glow: rgba(15, 197, 237, 0.10);    /* faint cyan depth, top-left */
-  --bg-grad-2: #001a2e;                   /* page gradient far corner */
   --sidebar-bg: rgba(8, 22, 36, 0.72);
   --surface: #0a1826;                     /* card / panel (a step up from bg) */
   --surface-solid: #0e2033;               /* opaque controls (select, badge) */
@@ -65,8 +63,6 @@
   color-scheme: light;
 
   --bg: oklch(97% 0.006 255);
-  --bg-glow: oklch(91% 0.035 230 / 0.65);
-  --bg-grad-2: oklch(94% 0.012 250);
   --sidebar-bg: oklch(95% 0.01 255 / 0.86);
   --surface: oklch(99% 0.004 255 / 0.82);
   --surface-solid: oklch(99% 0.004 255);
@@ -133,9 +129,8 @@ select {
   min-height: 100vh;
   display: grid;
   grid-template-columns: 248px 1fr;
-  background:
-    radial-gradient(circle at 18% 14%, var(--bg-glow), transparent 30%),
-    linear-gradient(135deg, var(--bg), var(--bg-grad-2));
+  /* 纯色，不做渐变——之前的角落径向光晕 + 对角线性渐变在深色背景下不好看。 */
+  background: var(--bg);
   /* 概览页的响应式走容器查询，查询本层的宽度（≈窗口宽），不装 JS resize 监听——
      窗口 resize 时的 re-render 是常驻内存与 CPU 的主要来源之一（spec §7.5）。 */
   container-type: inline-size;
@@ -501,8 +496,18 @@ select {
   gap: 12px;
 }
 
+/* 会话数不该由后端猜一个「屏幕大概能放几条」的魔法数字——query 端已经放宽到
+   足够多（见 overviewRepository.ts 的 SESSION_RAIL_LIMIT），这里改成让 CSS
+   按【实际可用高度】决定显示几条：整栏吸顶，标题常驻，列表自己滚动。
+   窗口拉高就多看见几条、拉矮就少看见几条，天然跟着屏幕高度走，不用猜。 */
 .overview__rail {
   align-self: start;
+  position: sticky;
+  top: 24px;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .metric-card__foot {
@@ -553,11 +558,15 @@ select {
   overflow-x: auto;
 }
 
-/* 右栏会话列表。 */
+/* 右栏会话列表：标题吸顶不动，这个列表在自己的高度里滚动（父级 .overview__rail
+   已经 overflow:hidden + max-height，这里补 flex:1 + 自身 overflow-y:auto）。 */
 .session-rail__list {
   list-style: none;
   margin: 14px 0 0;
-  padding: 0;
+  padding: 0 4px 4px 0;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: grid;
   gap: 12px;
 }

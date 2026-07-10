@@ -89,7 +89,10 @@ export interface ModelRank {
 /// 热力图走一年（371 天，与 YearHeatmap 的默认格数一致）。
 const TREND_DAYS = 30;
 const HEATMAP_DAYS = 371;
-const SESSION_RAIL_LIMIT = 20;
+// 20 是任意猜的「大概一屏能放几条」。实际能显示几条现在由 CSS 按可用高度决定
+// （.overview__rail 吸顶、.session-rail__list 自身滚动）——这里只需要取够多，
+// 保证列表本身不是滚动条出现的瓶颈，不用去猜某台机器的屏幕能放几条。
+const SESSION_RAIL_LIMIT = 60;
 
 export interface OverviewReady {
   dataState: 'ready';
