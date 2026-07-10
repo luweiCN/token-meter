@@ -2,10 +2,20 @@ import { describe, it, expect } from 'vitest';
 import { buildCalendarGrid } from './calendar.js';
 
 describe('buildCalendarGrid', () => {
-  it('every column is exactly 7 rows, real or padded', () => {
+  it('every column is exactly 7 rows, real or padded — a clean rectangle', () => {
     const grid = buildCalendarGrid('2026-07-10', 371);
-    for (const col of grid.slice(0, -1)) expect(col).toHaveLength(7); // 末列可以不满
-    expect(grid[grid.length - 1].length).toBeLessThanOrEqual(7);
+    for (const col of grid) expect(col).toHaveLength(7);
+  });
+
+  it('pads the last column with nulls past lastDay, out to Saturday', () => {
+    // 2026-07-10（末日）是周五（getDay()=5），末列到周四为止都是真实日期，
+    // 第 6 行（周六，也就是明天）必须是占位格——不补的话末列比其他列矮一截，
+    // 整张热力图右下角缺一块，不是长方形。
+    const grid = buildCalendarGrid('2026-07-10', 371);
+    const last = grid[grid.length - 1];
+    expect(last.slice(0, 6).every(c => c.date !== null)).toBe(true);
+    expect(last[5].date).toBe('2026-07-10');
+    expect(last[6].date).toBeNull();
   });
 
   it('places every real cell in the row matching its actual weekday', () => {

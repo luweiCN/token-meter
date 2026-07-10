@@ -26,7 +26,8 @@ describe('buildCalendarGrid under daylight saving time', () => {
   });
 
   it('still ends on the requested last day in a DST timezone', () => {
-    const flat = buildCalendarGrid('2026-07-10', 371).flat();
-    expect(flat[flat.length - 1].date).toBe('2026-07-10');
+    // 末列会补到周六，数组末尾可能是占位格——过滤掉再看最后一个真实日期。
+    const real = buildCalendarGrid('2026-07-10', 371).flat().filter(c => c.date !== null);
+    expect(real[real.length - 1].date).toBe('2026-07-10');
   });
 });
