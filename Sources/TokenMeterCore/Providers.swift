@@ -123,6 +123,7 @@ public struct CodexUsageProvider: UsageProvider {
                 try runProcess(
                     executable: "/usr/bin/env",
                     arguments: ["node", "-e", Self.nodeScript],
+                    environmentOverrides: ["PATH": Self.executableSearchPath()],
                     timeout: 10
                 )
             }.value
@@ -136,6 +137,24 @@ public struct CodexUsageProvider: UsageProvider {
                 message: ProviderErrorMessage.sanitized(providerName: displayName, errorMessage: error.localizedDescription)
             )
         }
+    }
+
+    // TokenMeter 由 LaunchAgent 拉起，继承的 PATH 只有系统四件套
+    // （/usr/bin:/bin:/usr/sbin:/sbin），既没有 node（常见于 .volta/bin
+    // 等版本管理器路径），也没有 codex 本体（常见于 .local/bin）。子进程
+    // 靠 `env node` 按名字查找，PATH 里没有就直接失败——显式拼一条更完整
+    // 的 PATH 传给子进程，不依赖父进程继承到的贫瘠环境。
+    static func executableSearchPath(homeDirectory: String = NSHomeDirectory()) -> String {
+        [
+            URL(fileURLWithPath: homeDirectory).appendingPathComponent(".local/bin").path,
+            URL(fileURLWithPath: homeDirectory).appendingPathComponent(".volta/bin").path,
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin"
+        ].joined(separator: ":")
     }
 
     private static let nodeScript = """
@@ -1696,10 +1715,20 @@ private func providerErrorSnapshot(providerId: String, displayName: String, mess
     )
 }
 
-private func runProcess(executable: String, arguments: [String], timeout: TimeInterval) throws -> Data {
+private func runProcess(
+    executable: String,
+    arguments: [String],
+    environmentOverrides: [String: String] = [:],
+    timeout: TimeInterval
+) throws -> Data {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = arguments
+    if !environmentOverrides.isEmpty {
+        var environment = ProcessInfo.processInfo.environment
+        environmentOverrides.forEach { environment[$0] = $1 }
+        process.environment = environment
+    }
 
     let output = Pipe()
     let error = Pipe()
