@@ -89,10 +89,10 @@ export interface ModelRank {
 /// 热力图走一年（371 天，与 YearHeatmap 的默认格数一致）。
 const TREND_DAYS = 30;
 const HEATMAP_DAYS = 371;
-// 20 是任意猜的「大概一屏能放几条」。实际能显示几条现在由 CSS 按可用高度决定
-// （.overview__rail 吸顶、.session-rail__list 自身滚动）——这里只需要取够多，
-// 保证列表本身不是滚动条出现的瓶颈，不用去猜某台机器的屏幕能放几条。
-const SESSION_RAIL_LIMIT = 60;
+// 右栏只做「最新动态」，不做「全部会话」——那是「会话」页要做的事。固定取
+// 8 条：sessionRail 已经按 isLive 置顶、组内按最近事件倒序排好，所以这 8 条
+// 就是「最近有动静的 8 个会话」，不需要滚动、也不需要按屏幕高度猜数量。
+const SESSION_RAIL_LIMIT = 8;
 
 export interface OverviewReady {
   dataState: 'ready';
