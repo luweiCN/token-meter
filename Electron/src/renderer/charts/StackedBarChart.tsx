@@ -162,7 +162,10 @@ export function StackedBarChart({ bars, height = 240, width: widthProp }: Stacke
       cursor: { x: true, y: false, points: { show: false }, drag: { x: false, y: false, setScale: false } },
       legend: { show: false },
       scales: {
-        x: { time: false },
+        // x 轴不给 range 时，uPlot 按数据的 min/max（0 和 N-1）精确定边界，
+        // 第一根/最后一根柱子的中心就正好落在画布边缘——柱宽被砍掉一半。
+        // 两侧各留半格，让边缘柱子跟其余柱子一样两侧对称。
+        x: { time: false, range: (_u, min, max) => [min - 0.5, max + 0.5] },
         y: { range: (_u, _min, max) => (mode === 'share' ? [0, 1] : [0, max * 1.04]) }
       },
       axes: [
