@@ -293,19 +293,30 @@ export class OverviewRepository {
   /// 【不能】对 daily_rollup.sessions_count 求和——同一会话当天用两个模型会占两行
   /// （RollupBuilder.swift L44-49）。热力图不补空洞：没数据的那天就是 level 0，
   /// 由组件按日历网格摆放，无需 repository 造零行。
+  ///
+  /// sessions 曾用「按 d.usage_date 相关的子查询」逐天现算，371 天 × usage_events
+  /// 全表扫描一遍——生产库 26 万行事件时实测单次查询 6 秒多，同步卡住 Electron 主进程，
+  /// 点一下刷新整个应用能卡住好几秒。改成子查询先按天一次性 GROUP BY 聚合、
+  /// 再 LEFT JOIN 回来，usage_events 只扫一遍：同一份生产数据从 6113ms 降到 160ms。
   heatmap(from: string, to: string): HeatmapDay[] {
     return this.db.prepare(
       `SELECT d.usage_date AS date,
               coalesce(sum(d.tokens_input + d.tokens_output + d.tokens_cache_read
                            + d.tokens_cache_write_5m + d.tokens_cache_write_1h), 0) AS tokens,
               coalesce(sum(d.cost_usd_micros), 0) AS costUsdMicros,
-              (SELECT count(DISTINCT e.session_id) FROM usage_events e
-                WHERE date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime') = d.usage_date) AS sessions,
+              coalesce(max(s.sessions), 0) AS sessions,
               coalesce(sum(d.events_count), 0) AS events
          FROM daily_rollup d
+         LEFT JOIN (
+              SELECT date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime') AS usage_date,
+                     count(DISTINCT e.session_id) AS sessions
+                FROM usage_events e
+               WHERE date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime') BETWEEN ? AND ?
+            GROUP BY usage_date
+         ) s ON s.usage_date = d.usage_date
         WHERE d.usage_date BETWEEN ? AND ?
      GROUP BY d.usage_date ORDER BY d.usage_date`
-    ).all(from, to) as HeatmapDay[];
+    ).all(from, to, from, to) as HeatmapDay[];
   }
 
   /// `sortBy` 是联合类型，orderBy 由它派生——不拼接用户输入的排序列。
