@@ -5,6 +5,7 @@ import { StackedBarChart } from '../charts/StackedBarChart.js';
 import { YearHeatmap, type HeatmapMetric } from '../charts/YearHeatmap.js';
 import { SessionRail } from '../components/SessionRail.js';
 import { formatCount, formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
+import { useAnimatedNumber } from '../hooks/useAnimatedNumber.js';
 import { useAutoRefresh } from '../hooks/useAutoRefresh.js';
 
 type OverviewState =
@@ -177,24 +178,29 @@ function KpiRow({ kpis }: { kpis: OverviewKpis }) {
     <div className="kpi-row" aria-label="今日指标">
       <article className="metric-card">
         <span>今日 Token</span>
-        <strong>{formatTokens(kpis.todayTokens)}</strong>
+        <strong><AnimatedNumber value={kpis.todayTokens} format={formatTokens} /></strong>
         <span className="metric-card__foot">昨日 {formatTokens(kpis.yesterdayTokens)}</span>
       </article>
       <article className="metric-card">
         <span>今日成本</span>
-        <strong>{formatUsdMicros(kpis.todayCostUsdMicros)}</strong>
+        <strong><AnimatedNumber value={kpis.todayCostUsdMicros} format={formatUsdMicros} /></strong>
         {unknownNote ? <span className="cost-unknown">{unknownNote}</span> : null}
       </article>
       <article className="metric-card">
         <span>今日会话</span>
-        <strong>{formatCount(kpis.todaySessions)}</strong>
+        <strong><AnimatedNumber value={kpis.todaySessions} format={formatCount} /></strong>
       </article>
       <article className="metric-card">
         <span>本月成本</span>
-        <strong>{formatUsdMicros(kpis.monthCostUsdMicros)}</strong>
+        <strong><AnimatedNumber value={kpis.monthCostUsdMicros} format={formatUsdMicros} /></strong>
       </article>
     </div>
   );
+}
+
+/// KPI 大数字刷新时的过渡入口：见 useAnimatedNumber 关于为什么首次挂载不动画。
+function AnimatedNumber({ value, format }: { value: number; format: (n: number) => string }) {
+  return <>{format(useAnimatedNumber(value))}</>;
 }
 
 /// 额度行占位（spec §7.5「额度 3 列」）；额度接入是 Phase 2B。
