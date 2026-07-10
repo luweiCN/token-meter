@@ -59,6 +59,31 @@ final class StatusBarControllerTests: XCTestCase {
         XCTAssertTrue(didQuit)
     }
 
+    func testPopoverClosesWhenAppResignsActive() throws {
+        // TokenMeter 是 LSUIElement，实测 popover 的 .transient 不总能在切到
+        // 另一个 App（比如仪表盘的 Electron 窗口）时自动收起。显式监听失活
+        // 通知、手动关闭，不能只靠 .transient 自己判断。
+        //
+        // 用 SpyPopover 而不是真的 NSPopover：XCTest 是无头环境
+        // （NSApp.isRunning == false），真实 NSPopover.show() 在这里静默不
+        // 生效、isShown 永远是 false，没法验证「失活即关闭」这条逻辑本身。
+        let spyPopover = SpyPopover()
+        let controller = StatusBarController(
+            store: makeStore(),
+            mainInterfaceLauncher: RecordingMainInterfaceLauncher(),
+            quitApplication: {},
+            popover: spyPopover
+        )
+
+        controller.showPopoverForTesting()
+        XCTAssertTrue(controller.isPopoverShownForTesting)
+
+        NotificationCenter.default.post(name: NSApplication.didResignActiveNotification, object: nil)
+
+        XCTAssertFalse(controller.isPopoverShownForTesting)
+        XCTAssertEqual(spyPopover.performCloseCallCount, 1)
+    }
+
     func testElectronLauncherUsesPreparedElectronCliWithoutUserShell() throws {
         let electronDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -127,5 +152,23 @@ private final class RecordingMainInterfaceLauncher: MainInterfaceLaunching {
 
     func openMainInterface() {
         openCount += 1
+    }
+}
+
+@MainActor
+private final class SpyPopover: PopoverPresenting {
+    var behavior: NSPopover.Behavior = .transient
+    private(set) var isShown = false
+    var contentSize: NSSize = .zero
+    var contentViewController: NSViewController?
+    private(set) var performCloseCallCount = 0
+
+    func show(relativeTo positioningRect: NSRect, of positioningView: NSView, preferredEdge: NSRectEdge) {
+        isShown = true
+    }
+
+    func performClose(_ sender: Any?) {
+        performCloseCallCount += 1
+        isShown = false
     }
 }

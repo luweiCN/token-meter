@@ -99,11 +99,27 @@ enum StatusItemClickAction: Equatable {
     case showContextMenu
 }
 
+// `NSPopover` 是 final class，没法子类化出一个测试替身；而它的「show」在
+// XCTest 的无头环境里（`NSApp.isRunning == false`）会静默不生效，isShown
+// 永远是 false，导致没法验证「失活即关闭」这条逻辑。抽出这个协议，测试里
+// 注入一个记录调用的替身，绕开对真实 AppKit 渲染管线的依赖。
+@MainActor
+protocol PopoverPresenting: AnyObject {
+    var behavior: NSPopover.Behavior { get set }
+    var isShown: Bool { get }
+    var contentSize: NSSize { get set }
+    var contentViewController: NSViewController? { get set }
+    func show(relativeTo positioningRect: NSRect, of positioningView: NSView, preferredEdge: NSRectEdge)
+    func performClose(_ sender: Any?)
+}
+
+extension NSPopover: PopoverPresenting {}
+
 @MainActor
 final class StatusBarController: NSObject {
     private let store: ProviderStore
     private let statusItem: NSStatusItem
-    private let popover: NSPopover
+    private let popover: PopoverPresenting
     private let mainInterfaceLauncher: MainInterfaceLaunching
     private let quitApplication: () -> Void
     private var cancellables: Set<AnyCancellable> = []
@@ -111,11 +127,12 @@ final class StatusBarController: NSObject {
     init(
         store: ProviderStore,
         mainInterfaceLauncher: MainInterfaceLaunching? = nil,
-        quitApplication: (() -> Void)? = nil
+        quitApplication: (() -> Void)? = nil,
+        popover: PopoverPresenting? = nil
     ) {
         self.store = store
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        self.popover = NSPopover()
+        self.popover = popover ?? NSPopover()
         self.mainInterfaceLauncher = mainInterfaceLauncher ?? ElectronMainInterfaceLauncher()
         self.quitApplication = quitApplication ?? { NSApp.terminate(nil) }
 
@@ -144,6 +161,33 @@ final class StatusBarController: NSObject {
     private func configurePopover() {
         popover.behavior = .transient
         updatePopoverContent(relativeTo: statusItem.button)
+
+        // `.transient` 理论上会在应用失去激活状态时自动关闭，但 TokenMeter 是
+        // LSUIElement（无 Dock 图标的常驻程序）——这类「accessory」应用与常规
+        // 应用在「激活/非激活」状态的语义上历来不完全一致，实测点开这个弹窗、
+        // 再点进另一个 App（比如仪表盘的 Electron 窗口），弹窗不会自动收起。
+        // 显式监听失活通知、手动关掉，不依赖 .transient 自己判断是否该收起。
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(closePopoverOnResignActive),
+            name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
+    }
+
+    @objc private func closePopoverOnResignActive() {
+        if popover.isShown {
+            popover.performClose(nil)
+        }
+    }
+
+    /// 测试专用：popover 是 private，用这两个方法间接触发/查看它的状态。
+    func showPopoverForTesting() {
+        togglePopover()
+    }
+
+    var isPopoverShownForTesting: Bool {
+        popover.isShown
     }
 
     private func bindStore() {
