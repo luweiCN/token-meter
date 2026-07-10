@@ -11,16 +11,3 @@ export function logBucket(value: number, max: number): number {
   const ratio = Math.log1p(clamped) / Math.log1p(max);
   return Math.min(HEATMAP_LEVELS - 1, Math.max(0, Math.round(ratio * (HEATMAP_LEVELS - 1))));
 }
-
-/// Y 轴刻度：0 起步，末位 ≥ max，全是整数且互不相同。
-export function niceTicks(max: number, count: number): number[] {
-  if (max <= 0) return [0];
-  const rawStep = max / Math.max(1, count);
-  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
-  const normalized = rawStep / magnitude;
-  const niceStep = (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10) * magnitude;
-  const step = Math.max(1, Math.round(niceStep));
-  const out: number[] = [];
-  for (let v = 0; v < max + step; v += step) out.push(v);
-  return out;
-}

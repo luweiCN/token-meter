@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { logBucket, niceTicks, HEATMAP_LEVELS } from './scale.js';
+import { logBucket, HEATMAP_LEVELS } from './scale.js';
 
 describe('logBucket', () => {
   it('maps zero to level 0 and the max to the top level', () => {
@@ -29,19 +29,5 @@ describe('logBucket', () => {
 
   it('clamps a value above max rather than overflowing the palette', () => {
     expect(logBucket(2000, 1000)).toBe(HEATMAP_LEVELS - 1);
-  });
-});
-
-describe('niceTicks', () => {
-  it('produces round numbers covering the max', () => {
-    expect(niceTicks(0, 4)).toEqual([0]);
-    const t = niceTicks(2300, 4);
-    expect(t[0]).toBe(0);
-    expect(t[t.length - 1]).toBeGreaterThanOrEqual(2300);
-    expect(t.every(v => Number.isInteger(v))).toBe(true);
-  });
-
-  it('never returns duplicate ticks for tiny maxima', () => {
-    expect(new Set(niceTicks(3, 4)).size).toBe(niceTicks(3, 4).length);
   });
 });

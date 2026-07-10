@@ -16,16 +16,17 @@
     "better-sqlite3": "latest",
     "electron": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "uplot": "^1.6.32"
   },
   "devDependencies": {
+    "@electron/rebuild": "latest",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/better-sqlite3": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "@electron/rebuild": "latest",
     "jsdom": "^29.1.1",
     "typescript": "latest",
     "vite": "latest",
