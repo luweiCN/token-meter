@@ -35,7 +35,9 @@ select {
   border-right: 1px solid oklch(88% 0.01 255);
   padding: 24px;
   background: oklch(95% 0.01 255 / 0.86);
-  backdrop-filter: blur(18px);
+  /* 不加 backdrop-filter: blur()。实测（Phase 2A Task 10）它让 GPU 进程常驻多占 ~135MB
+     物理内存（IOSurface 38MB→147MB）——而侧栏背后只有一层静态渐变，模糊几乎不可见。
+     常驻工具应用不该为一个看不出来的效果付这个代价。 */
 }
 
 .brand-block {

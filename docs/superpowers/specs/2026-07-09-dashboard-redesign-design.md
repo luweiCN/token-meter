@@ -495,6 +495,40 @@ Electron 窗口默认 1180×760，当前未设 `minWidth`。本设计设 `minWid
 - better-sqlite3 以 `readonly` 打开，复用 prepared statement。
 - 零图表库依赖。
 
+### 8.1 Phase 2A Task 10 实测（Electron 43.0.0，Apple Silicon，2× Retina）
+
+**量法。** `process.getProcessMemoryInfo().private`（KB）——主进程直接取、renderer 经沙箱 preload 取。
+先做一次校准：主/renderer 的 `private` 与 macOS `footprint` 的 `phys_footprint` 几乎相等（主 62.5MB↔63MB、
+renderer 60.9MB↔61MB），所以 `private` 可信。`app.getAppMetrics().workingSetSize` 把四个进程加起来约
+500MB——它把共享的框架页重复计进每个进程，**不可用**（`ps` RSS 同理）。数据库走 `TOKEN_METER_DB_PATH`
+指向 scratchpad 副本，绝不碰生产库；ready 库用 `scripts/reconcile-with-ccusage.sh` 的同款 Swift 驱动
+（真 `LocalAgentScanner`）扫真实语料得到（259,542 条 usage_events）。生产库 mtime 前后一致。
+
+**三态常驻空闲（main / renderer private，静置 10 分钟每 30s 采样）：**
+
+| 状态 | main | renderer | 和（main+rend） | 曲线 |
+|---|---|---|---|---|
+| Electron floor（空白 BrowserWindow） | ~42 MB | ~16 MB | **~58 MB** | 平 |
+| needs-reindex（空状态屏） | ~59 MB | ~36 MB | **~95 MB**（峰 98） | 10 分钟纹丝不动 |
+| ready（真数据，全部图表） | ~59 MB | ~54 MB | **~113 MB**（峰 118） | 暖机后回落至 ~112，平，无泄漏 |
+
+按验收所用的 main+renderer 口径，三态都 **< 200 MB**。
+
+**窗口隐藏停止查询（已实测，非假设）。** 给 `db.prepare` 出来的每条语句计数：可见时 `useAutoRefresh`
+每 60s 触发一次 `buildOverview`（+11 条语句）；调 `win.hide()` 后 renderer 的 `document.visibilityState`
+确实翻成 `hidden`，接下来隐藏的 210 秒里计数**一次不涨**（本该有 ~3 次轮询全被 visibility 守卫掐掉）；
+再 `show()` 立刻补取一次，计数恢复增长。隐藏期 renderer private 还从 ~52MB 掉到 ~46MB。单飞去重生效，
+无查询风暴。
+
+**GPU 进程是真正的大头，且是 app-shell 驱动的。** 上表只含 main+renderer；把 GPU/Utility 也算进
+「全部 Electron 进程之和」时，ready 的 `phys_footprint` 之和约 **320MB**，其中 GPU 进程 201MB——
+147MB 是 IOSurface（合成器表面）。空白窗口的 GPU IOSurface 只有 16KB，而空状态屏（无任何图表）就已经
+128MB，说明这笔开销来自 **app-shell 而非图表**。A/B 定位（同环境只改一行）：`.sidebar` 的
+`backdrop-filter: blur(18px)` 一去掉，GPU IOSurface 147MB→38MB、GPU `phys_footprint` 201MB→66MB，
+全进程之和 **320MB→185MB**（main/renderer private 不变，因为这是合成器内存不是 JS 堆）。侧栏背后只有
+一层静态渐变、模糊几乎看不出来，却常驻多占 ~135MB 物理内存——对常驻工具应用不划算，故移除
+（见 `styles.css` `.sidebar`）。移除后按「全部进程之和」口径也落到 < 200MB。
+
 ## 9. 测试策略
 
 ### 9.1 Swift
