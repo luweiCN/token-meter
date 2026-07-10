@@ -11,6 +11,7 @@ import {
   buildStackedSeries,
   tooltipRows,
   type Segment,
+  type StackedSeries,
   type TrendMode
 } from './trendSeries.js';
 
@@ -45,7 +46,11 @@ const FONT = '11px -apple-system, BlinkMacSystemFont, system-ui, sans-serif';
 
 /// 悬停跟随光标的 tooltip + 高亮当前柱子。uPlot 的 cursor 给出 idx / left(px)，
 /// tooltip 就定位在【那一根柱子】旁并做右缘夹取——修掉旧实现写死 top:0/left:0 的 bug。
-function hoverPlugin(bars: TrendBucket[], mode: TrendMode, seg: Record<Segment, string>): uPlot.Plugin {
+///
+/// `barsRef` 而不是直接传 `bars`：这个 plugin 对象只在 uPlot 实例创建时构造一次，
+/// 之后每次刷新只 setData（见下方组件），不会重新构造 plugin——若直接闭包捕获
+/// `bars`，刷新后 tooltip 里显示的还是创建那一刻的旧数据。走 ref 让它总读到最新值。
+function hoverPlugin(barsRef: { current: TrendBucket[] }, mode: TrendMode, seg: Record<Segment, string>): uPlot.Plugin {
   let tip: HTMLDivElement;
   let band: HTMLDivElement;
 
@@ -71,6 +76,7 @@ function hoverPlugin(bars: TrendBucket[], mode: TrendMode, seg: Record<Segment, 
         over.addEventListener('mouseleave', hide);
       },
       setCursor: (u) => {
+        const bars = barsRef.current;
         const { idx, left, top } = u.cursor;
         if (idx == null || left == null || left < 0 || !bars[idx]) {
           hide();
@@ -115,14 +121,34 @@ function hoverPlugin(bars: TrendBucket[], mode: TrendMode, seg: Record<Segment, 
   };
 }
 
+function alignedData(series: StackedSeries): uPlot.AlignedData {
+  // series/data 从「总量段」到「输入段」的顺序排列：uPlot 先画的在下、后画的覆盖在上，
+  // 每条都从 0 基线画满到各自累积高度，靠覆盖叠出四段颜色（详见 trendSeries）。
+  return [
+    series.x,
+    series.cumulative[3],
+    series.cumulative[2],
+    series.cumulative[1],
+    series.cumulative[0]
+  ];
+}
+
 export function StackedBarChart({ bars, height = 240, width: widthProp }: StackedBarChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const plotRef = useRef<HTMLDivElement>(null);
+  const plotInstanceRef = useRef<uPlot | null>(null);
+  // hoverPlugin 与 x 轴标签的回调只在【创建】uPlot 时构造一次；之后每次刷新只
+  // setData，不重新构造这些闭包。它们改从 ref 读，才能看见刷新后的最新 bars。
+  const barsRef = useRef(bars);
   const [measured, setMeasured] = useState(0);
   const [mode, setMode] = useState<TrendMode>('absolute');
 
   const width = widthProp ?? measured;
   const series = useMemo(() => buildStackedSeries(bars, mode), [bars, mode]);
+
+  useEffect(() => {
+    barsRef.current = bars;
+  }, [bars]);
 
   useEffect(() => {
     if (widthProp !== undefined) return;
@@ -133,27 +159,20 @@ export function StackedBarChart({ bars, height = 240, width: widthProp }: Stacke
     return () => ro.disconnect();
   }, [widthProp]);
 
+  // 建实例：只在 mode/尺寸变化时重新构造整个 uPlot（y 轴量程、刻度格式都随 mode
+  // 变）。【不】依赖 bars/series——单纯的数据刷新走下面那个 effect 的 setData，
+  // 不销毁重建整个 canvas，避免用户每次刷新都看到图表闪一下重绘。
   useEffect(() => {
     const target = plotRef.current;
-    if (!target || width <= 0 || bars.length === 0) return;
+    if (!target || width <= 0 || barsRef.current.length === 0) return;
     // 画布不可用（jsdom 等无 canvas 环境）就不建 uPlot——组件外壳照常渲染，不抛错。
     const probe = document.createElement('canvas');
     if (!probe.getContext || !probe.getContext('2d')) return;
 
     const { seg, axis, grid } = resolveColors(containerRef.current ?? target);
-    const stride = axisLabelStride(bars.length);
+    const stride = axisLabelStride(barsRef.current.length);
     const barsPath = uPlot.paths.bars?.({ size: [0.68, 46], align: 0 });
-
-    // series/data 从「总量段」到「输入段」的顺序排列：uPlot 先画的在下、后画的覆盖在上，
-    // 每条都从 0 基线画满到各自累积高度，靠覆盖叠出四段颜色（详见 trendSeries）。
     const fillsTopDown = [seg.output, seg.cacheRead, seg.cacheWrite, seg.input];
-    const data: uPlot.AlignedData = [
-      series.x,
-      series.cumulative[3],
-      series.cumulative[2],
-      series.cumulative[1],
-      series.cumulative[0]
-    ];
 
     const opts: uPlot.Options = {
       width,
@@ -175,8 +194,8 @@ export function StackedBarChart({ bars, height = 240, width: widthProp }: Stacke
           grid: { show: false },
           ticks: { show: false },
           gap: 6,
-          splits: () => series.x.filter((i) => i % stride === 0),
-          values: (_u, splits) => splits.map((i) => (bars[i] ? xLabel(bars[i].bucket) : ''))
+          splits: () => barsRef.current.map((_b, i) => i).filter((i) => i % stride === 0),
+          values: (_u, splits) => splits.map((i) => (barsRef.current[i] ? xLabel(barsRef.current[i].bucket) : ''))
         },
         {
           stroke: axis,
@@ -192,12 +211,24 @@ export function StackedBarChart({ bars, height = 240, width: widthProp }: Stacke
         {},
         ...fillsTopDown.map((fill) => ({ stroke: fill, fill, width: 1, paths: barsPath, points: { show: false } }))
       ],
-      plugins: [hoverPlugin(bars, mode, seg)]
+      plugins: [hoverPlugin(barsRef, mode, seg)]
     };
 
-    const plot = new uPlot(opts, data, target);
-    return () => plot.destroy();
-  }, [bars, mode, width, height, series]);
+    const plot = new uPlot(opts, alignedData(series), target);
+    plotInstanceRef.current = plot;
+    return () => {
+      plotInstanceRef.current = null;
+      plot.destroy();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 首次挂载用当时的 series 建图，故意不把它列进依赖：变化交给下面的 setData effect。
+  }, [mode, width, height]);
+
+  // 数据刷新：已有实例就 setData 原地更新，不销毁重建。首次挂载时上面那个
+  // effect 已经用当下的 series 建好了图，这里会紧接着再 setData 一次同样的数据，
+  // 无害但确保两个 effect 的数据来源只有一处（alignedData）。
+  useEffect(() => {
+    plotInstanceRef.current?.setData(alignedData(series));
+  }, [series]);
 
   return (
     <div ref={containerRef} className="trend-chart">
