@@ -21,7 +21,6 @@ const HEATMAP_METRICS: Array<{ metric: HeatmapMetric; label: string }> = [
 
 export function Overview({ intervalMs = 60_000 }: { intervalMs?: number }) {
   const [state, setState] = useState<OverviewState>({ kind: 'loading' });
-  const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [metric, setMetric] = useState<HeatmapMetric>('tokens');
   const [railOpen, setRailOpen] = useState(false);
   const [reindexing, setReindexing] = useState(false);
@@ -64,10 +63,6 @@ export function Overview({ intervalMs = 60_000 }: { intervalMs?: number }) {
       setReindexing(false);
     }
   }, [load]);
-
-  if (selectedDay) {
-    return <UsagePlaceholder day={selectedDay} onBack={() => setSelectedDay(null)} />;
-  }
 
   const ready = state.kind === 'loaded' && state.payload.dataState === 'ready' ? state.payload : null;
   const liveCount = ready ? ready.sessionRail.filter((s) => s.isLive).length : 0;
@@ -141,7 +136,6 @@ export function Overview({ intervalMs = 60_000 }: { intervalMs?: number }) {
                 lastDay={ready.heatmapLastDay}
                 count={ready.heatmapDays}
                 metric={metric}
-                onSelectDate={setSelectedDay}
               />
             </section>
 
@@ -293,30 +287,4 @@ function progressPct(p: ScanProgress): number {
   if (p.filesTotal > 0) return Math.min(100, Math.round((p.filesDone / p.filesTotal) * 100));
   if (p.bytesTotal > 0) return Math.min(100, Math.round((p.bytesDone / p.bytesTotal) * 100));
   return 0;
-}
-
-/// 热力图点击某天 → 用量页（from = to = 该天，粒度 hour）。用量页是 Phase 2B，这里先给占位。
-function UsagePlaceholder({ day, onBack }: { day: string; onBack: () => void }) {
-  return (
-    <>
-      <p className="eyebrow">用量</p>
-      <div className="page-heading-row">
-        <h1>用量</h1>
-        <button className="primary-button" type="button" onClick={onBack}>
-          返回概览
-        </button>
-      </div>
-      <section className="empty-panel" aria-label="用量筛选（占位）">
-        <p className="lede">用量页将在 Phase 2B 实现。当前筛选：</p>
-        <dl className="usage-placeholder__filter">
-          <dt>开始</dt>
-          <dd>{day}</dd>
-          <dt>结束</dt>
-          <dd>{day}</dd>
-          <dt>粒度</dt>
-          <dd>hour</dd>
-        </dl>
-      </section>
-    </>
-  );
 }

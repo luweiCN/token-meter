@@ -1,19 +1,17 @@
 // @vitest-environment jsdom
 
 import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { YearHeatmap } from './YearHeatmap.js';
 
 const days = [
-  { date: '2026-07-10', tokens: 1_000_000_000, costUsdMicros: 0, sessions: 0, events: 0 }, // 峰值 → level 4
+  { date: '2026-07-10', tokens: 1_000_000_000, costUsdMicros: 5_000_000, sessions: 3, events: 40 }, // 峰值 → level 4
   { date: '2026-07-09', tokens: 0, costUsdMicros: 0, sessions: 0, events: 0 }               // 零值 → level 0
 ];
 
 describe('YearHeatmap', () => {
   it('renders one cell per day in the window, with levels from logBucket', () => {
-    const { container } = render(
-      <YearHeatmap days={days} lastDay="2026-07-10" onSelectDate={() => {}} />
-    );
+    const { container } = render(<YearHeatmap days={days} lastDay="2026-07-10" />);
     expect(container.querySelectorAll('[data-date]')).toHaveLength(371);
 
     // 有数据但为零的一天是 level 0，不是空洞
@@ -24,21 +22,45 @@ describe('YearHeatmap', () => {
     expect(container.querySelector('[data-date="2026-01-01"]')!.getAttribute('data-level')).toBe('0');
   });
 
-  it('calls onSelectDate with the clicked cell date', () => {
-    const onSelectDate = vi.fn();
-    const { container } = render(
-      <YearHeatmap days={days} lastDay="2026-07-10" onSelectDate={onSelectDate} />
-    );
-    fireEvent.click(container.querySelector('[data-date="2026-07-10"]')!);
-    expect(onSelectDate).toHaveBeenCalledWith('2026-07-10');
-  });
-
-  it('shows a tooltip with the hovered cell date via one delegated listener', () => {
-    const { container } = render(
-      <YearHeatmap days={days} lastDay="2026-07-10" onSelectDate={() => {}} />
-    );
+  it('shows a card with the day\'s total tokens on hover, regardless of the selected metric', () => {
+    const { container } = render(<YearHeatmap days={days} lastDay="2026-07-10" metric="events" />);
     expect(screen.queryByRole('tooltip')).toBeNull();
     fireEvent.mouseOver(container.querySelector('[data-date="2026-07-10"]')!);
-    expect(screen.getByRole('tooltip').textContent).toContain('2026-07-10');
+
+    const card = screen.getByRole('tooltip');
+    expect(card.textContent).toContain('2026-07-10');
+    expect(card.textContent).toContain('1.00B'); // formatTokens(1_000_000_000)
+  });
+
+  it('hides the hover card again once the mouse leaves, when nothing is pinned', () => {
+    const { container } = render(<YearHeatmap days={days} lastDay="2026-07-10" />);
+    fireEvent.mouseOver(container.querySelector('[data-date="2026-07-10"]')!);
+    expect(screen.queryByRole('tooltip')).not.toBeNull();
+    fireEvent.mouseLeave(container.querySelector('.year-heatmap__grid')!);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('pins the card on click so it survives mouse leave, and shows a close button', () => {
+    const { container } = render(<YearHeatmap days={days} lastDay="2026-07-10" />);
+    fireEvent.click(container.querySelector('[data-date="2026-07-10"]')!);
+    fireEvent.mouseLeave(container.querySelector('.year-heatmap__grid')!);
+
+    const card = screen.getByRole('tooltip');
+    expect(card.textContent).toContain('2026-07-10');
+    expect(screen.queryByRole('button', { name: '关闭' })).not.toBeNull();
+  });
+
+  it('unpins on a second click of the same day, or via the close button', () => {
+    const { container } = render(<YearHeatmap days={days} lastDay="2026-07-10" />);
+    const cell = container.querySelector('[data-date="2026-07-10"]')!;
+
+    fireEvent.click(cell);
+    fireEvent.click(cell);
+    fireEvent.mouseLeave(container.querySelector('.year-heatmap__grid')!);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.click(cell);
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 });

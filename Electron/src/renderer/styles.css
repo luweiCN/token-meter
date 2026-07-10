@@ -600,6 +600,66 @@ select {
   transform: scale(1.35);
 }
 
+/* hover/点击某天弹出的小卡片，视觉上跟顶部 KPI 的 .metric-card 是一家人：
+   同样的边框/圆角/阴影，只是浮层定位、体积更小。钉住状态多一圈强调色边框，
+   跟"只是路过悬停"区分开。 */
+.year-heatmap__card {
+  z-index: 5;
+  min-width: 168px;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow);
+  animation: tm-chart-in 0.15s ease-out;
+}
+
+.year-heatmap__card.is-pinned {
+  border-color: var(--accent);
+}
+
+.year-heatmap__card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.year-heatmap__card-close {
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.year-heatmap__card-close:hover {
+  color: var(--accent);
+}
+
+.year-heatmap__card-total {
+  font-size: 20px;
+}
+
+.year-heatmap__card-total span {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.year-heatmap__card-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 /* 右栏会话列表：标题吸顶不动，这个列表在自己的高度里滚动（父级 .overview__rail
    已经 overflow:hidden + max-height，这里补 flex:1 + 自身 overflow-y:auto）。 */
 .session-rail__list {
@@ -745,22 +805,6 @@ select {
   display: block;
   height: 100%;
   background: var(--bar-fill);
-}
-
-.usage-placeholder__filter {
-  display: grid;
-  grid-template-columns: 60px 1fr;
-  gap: 6px 12px;
-  margin: 12px 0 0;
-}
-
-.usage-placeholder__filter dt {
-  color: var(--text-muted);
-  font-weight: 700;
-}
-
-.usage-placeholder__filter dd {
-  margin: 0;
 }
 
 /* ── 用量趋势图（StackedBarChart / uPlot）──────────────────────────── */
@@ -924,5 +968,8 @@ select {
   }
   .year-heatmap__cell {
     transition: none;
+  }
+  .year-heatmap__card {
+    animation: none;
   }
 }

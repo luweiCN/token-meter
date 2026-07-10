@@ -117,7 +117,7 @@ describe('Overview (ready)', () => {
     await waitFor(() => { expect(screen.getAllByText(/4 条事件价格未知/).length).toBeGreaterThanOrEqual(2); });
   });
 
-  it('navigates to the usage placeholder with from=to=day and hour granularity on a heatmap click', async () => {
+  it('pins a card with that day\'s totals in place on a heatmap click, without navigating away', async () => {
     render(<Overview />);
     await screen.findByText('token-meter');
 
@@ -125,10 +125,11 @@ describe('Overview (ready)', () => {
     expect(cell).toBeTruthy();
     fireEvent.click(cell);
 
-    expect(await screen.findByRole('heading', { level: 1, name: '用量' })).toBeTruthy();
-    const filter = screen.getByLabelText('用量筛选（占位）');
-    expect(within(filter).getAllByText('2026-07-10')).toHaveLength(2);     // from 与 to
-    expect(within(filter).getByText('hour')).toBeTruthy();                 // 粒度
+    // 概览页原地留着——不再跳到别的路由。
+    expect(screen.getByRole('heading', { level: 1, name: '概览' })).toBeTruthy();
+    const card = screen.getByRole('tooltip');
+    expect(card.textContent).toContain('2026-07-10');
+    expect(card.textContent).toContain('220'); // heatmap fixture 里那天的 tokens
   });
 
   it('opens the session rail as an overlay when the badge is clicked', async () => {
