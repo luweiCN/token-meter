@@ -51,7 +51,12 @@ beforeEach(() => {
       tokens_cache_write_5m INTEGER NOT NULL DEFAULT 0,
       tokens_cache_write_1h INTEGER NOT NULL DEFAULT 0,
       cost_usd_micros INTEGER,
-      cost_source TEXT NOT NULL DEFAULT 'reported'
+      cost_source TEXT NOT NULL DEFAULT 'reported',
+      is_sidechain INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE source_files (
+      id INTEGER PRIMARY KEY, scan_root_id INTEGER NOT NULL DEFAULT 1,
+      relative_path TEXT NOT NULL DEFAULT '', subagent_label TEXT
     );
     -- 空状态判据表（TokenMeterDatabaseSchema.swift 的 scan_roots，取本判据用到的列）。
     CREATE TABLE scan_roots (
@@ -95,6 +100,57 @@ function seedEvent(id: number, sessionId: number, localDateTime: string, model =
   db.prepare(`INSERT INTO usage_events(id, session_id, observed_epoch_ms, model_canonical)
               VALUES (?,?,?,?)`).run(id, sessionId, Date.parse(localDateTime), model);
 }
+
+function seedSourceFile(id: number, subagentLabel: string | null) {
+  db.prepare(`INSERT INTO source_files(id, relative_path, subagent_label) VALUES (?,?,?)`)
+    .run(id, `f${id}.jsonl`, subagentLabel);
+}
+
+/// Claude 子代理事件：is_sidechain=1，归在父会话，按 source_file 区分是哪个子代理。
+function seedSidechainEvent(id: number, sessionId: number, sourceFileId: number, localDateTime: string,
+                           tokensInput: number, model = 'm') {
+  db.prepare(`INSERT INTO usage_events(id, session_id, source_file_id, observed_epoch_ms, model_canonical, tokens_input, is_sidechain)
+              VALUES (?,?,?,?,?,?,1)`).run(id, sessionId, sourceFileId, Date.parse(localDateTime), model, tokensInput);
+}
+
+describe('subagentBreakdown', () => {
+  it('lists the sub-sessions of a non-Claude main session, newest first, with labels and totals', () => {
+    seedSession(1, 'codex', 'proj', 60_000, 1000);
+    seedSubSession(2, 'codex', 's1', 'worker', 30 * 60_000, 500, 2000);   // 30 分钟前
+    seedSubSession(3, 'codex', 's1', 'explorer', 60_000, 300, 1500);      // 1 分钟前
+
+    const rows = new OverviewRepository(db, () => NOW).subagentBreakdown(1);
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0].label).toBe('explorer');           // 按 lastEvent 倒序
+    expect(rows[0].tokens).toBe(300);
+    expect(rows[0].costUsdMicros).toBe(1500);
+    expect(rows[1].label).toBe('worker');
+    expect(rows[1].tokens).toBe(500);
+  });
+
+  it('groups a Claude main session\'s sidechain events by source file, labeled from the file', () => {
+    seedSession(1, 'claude', 'proj', 60_000, 1000);   // source_kind = 'claude_jsonl'
+    seedSourceFile(10, 'general-purpose');
+    seedSourceFile(11, 'Explore');
+    seedSidechainEvent(100, 1, 10, '2026-07-10T11:00:00+08:00', 400);
+    seedSidechainEvent(101, 1, 10, '2026-07-10T11:05:00+08:00', 100);   // 同文件第二条
+    seedSidechainEvent(102, 1, 11, '2026-07-10T11:50:00+08:00', 200);
+
+    const rows = new OverviewRepository(db, () => NOW).subagentBreakdown(1);
+
+    expect(rows).toHaveLength(2);                       // 两个子代理文件
+    expect(rows[0].label).toBe('Explore');             // 11:50 最近
+    expect(rows[0].tokens).toBe(200);
+    expect(rows[1].label).toBe('general-purpose');
+    expect(rows[1].tokens).toBe(500);                  // 400 + 100（同文件两条）
+  });
+
+  it('returns nothing for a main session with no sub-agents', () => {
+    seedSession(1, 'codex', 'proj', 60_000, 1000);
+    expect(new OverviewRepository(db, () => NOW).subagentBreakdown(1)).toEqual([]);
+  });
+});
 
 describe('sessionRail sub-agent merging', () => {
   it('lists only main sessions, sums sub-agent tokens/cost, and folds their activity into isLive', () => {

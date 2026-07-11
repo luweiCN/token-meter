@@ -37,6 +37,17 @@ export interface ActivityRow {
   subagentCount: number;
 }
 
+/// 主会话下钻浮窗里每个子代理一行。两种数据形态（Claude 的 sidechain 事件 / 其他三家的
+/// 独立子会话）都投影成这个统一结构，差异封装在 subagentBreakdown 内。
+export interface SubagentRow {
+  label: string;
+  tokens: number;
+  costUsdMicros: number;
+  durationMs: number;
+  model: string | null;
+  lastEventMs: number;
+}
+
 type ActivityQueryRow = Omit<ActivityRow, 'msSinceLastEvent' | 'isLive'> & { lastEventEpochMs: number };
 
 const ACTIVITY_SELECT =
@@ -235,6 +246,47 @@ export class OverviewRepository {
     const { lastEventEpochMs, ...rest } = r;
     // recentActivity 走 ACTIVITY_SELECT 不带 subagentCount → 兜 0；sessionRail 归并查询带真实值。
     return { ...rest, subagentCount: r.subagentCount ?? 0, msSinceLastEvent, isLive: msSinceLastEvent < LIVE_WINDOW_MS };
+  }
+
+  /// 主会话的子代理明细下钻（spec §6.3）。两种数据形态、对外统一结构：
+  /// - Claude：子代理是父会话里 is_sidechain=1 的事件，按 source_file 分组，名字取 source_files.subagent_label。
+  /// - 其他三家：子代理是独立子会话（root_session_key 指向本会话），名字取 agent_sessions.subagent_label。
+  /// token 口径与别处一致：不含 reasoning。
+  subagentBreakdown(sessionId: number): SubagentRow[] {
+    const session = this.db.prepare(
+      `SELECT source_kind AS sourceKind, source_session_key AS sourceSessionKey FROM agent_sessions WHERE id = ?`
+    ).get(sessionId) as { sourceKind: string; sourceSessionKey: string } | undefined;
+    if (!session) return [];
+
+    if (session.sourceKind === 'claude_jsonl') {
+      return this.db.prepare(
+        `SELECT coalesce(f.subagent_label, '子代理') AS label,
+                sum(e.tokens_input + e.tokens_output + e.tokens_cache_read
+                    + e.tokens_cache_write_5m + e.tokens_cache_write_1h) AS tokens,
+                coalesce(sum(e.cost_usd_micros), 0) AS costUsdMicros,
+                max(e.observed_epoch_ms) - min(e.observed_epoch_ms) AS durationMs,
+                max(e.model_canonical) AS model,
+                max(e.observed_epoch_ms) AS lastEventMs
+           FROM usage_events e
+           JOIN source_files f ON f.id = e.source_file_id
+          WHERE e.session_id = ? AND e.is_sidechain = 1
+          GROUP BY e.source_file_id
+          ORDER BY lastEventMs DESC`
+      ).all(sessionId) as SubagentRow[];
+    }
+
+    return this.db.prepare(
+      `SELECT coalesce(cs.subagent_label, cs.source_session_key) AS label,
+              csr.tokens_total AS tokens,
+              coalesce(csr.cost_usd_micros, 0) AS costUsdMicros,
+              csr.last_event_epoch_ms - csr.first_event_epoch_ms AS durationMs,
+              csr.primary_model AS model,
+              csr.last_event_epoch_ms AS lastEventMs
+         FROM agent_sessions cs
+         JOIN session_rollup csr ON csr.session_id = cs.id
+        WHERE cs.source_kind = ? AND cs.root_session_key = ? AND cs.status != 'deleted'
+        ORDER BY lastEventMs DESC`
+    ).all(session.sourceKind, session.sourceSessionKey) as SubagentRow[];
   }
 
   kpis(): OverviewKpis {
