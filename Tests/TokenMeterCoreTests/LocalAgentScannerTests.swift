@@ -2,6 +2,35 @@ import XCTest
 @testable import TokenMeterCore
 
 final class LocalAgentScannerTests: XCTestCase {
+    func testOmpSubagentGetsRootSessionKeyFromPath() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let uuid = "019f247b-3a29-7000-9fcd-9677ee2fec1e"
+        let proj = root.appendingPathComponent("-proj")
+        let subdir = proj.appendingPathComponent("2026-07-01T11-20-18Z_\(uuid)")
+        try FileManager.default.createDirectory(at: subdir, withIntermediateDirectories: true)
+        // 主会话文件（session 行 id == 纯 UUID，== source_session_key）
+        try writeJSONL(
+            "{\"type\":\"session\",\"id\":\"\(uuid)\",\"timestamp\":\"2026-07-08T01:00:00Z\",\"cwd\":\"/repo\"}\n" +
+            "{\"type\":\"message\",\"id\":\"m1\",\"timestamp\":\"2026-07-08T01:05:00Z\",\"message\":{\"role\":\"assistant\",\"model\":\"m\",\"usage\":{\"input\":10}}}\n",
+            to: proj.appendingPathComponent("2026-07-01T11-20-18Z_\(uuid).jsonl"))
+        // 子代理文件（自己的 UUID，靠目录路径关联根）
+        try writeJSONL(
+            "{\"type\":\"session\",\"id\":\"child-uuid\",\"timestamp\":\"2026-07-08T01:10:00Z\",\"cwd\":\"/repo\"}\n" +
+            "{\"type\":\"message\",\"id\":\"m2\",\"timestamp\":\"2026-07-08T01:11:00Z\",\"message\":{\"role\":\"assistant\",\"model\":\"m\",\"usage\":{\"input\":5}}}\n",
+            to: subdir.appendingPathComponent("Developer-X.jsonl"))
+        let database = try migratedDatabase(rootKind: .ompJSONL, rootPath: root.path)
+
+        try await LocalAgentScanner(database: database).scanRoot(id: 1)
+
+        let subRoot = try database.query("SELECT root_session_key FROM agent_sessions WHERE source_session_key = 'child-uuid'").first?.string("root_session_key")
+        XCTAssertEqual(subRoot, uuid, "子代理的 root_session_key 应从路径推导为根 UUID")
+        let subLabel = try database.query("SELECT subagent_label FROM agent_sessions WHERE source_session_key = 'child-uuid'").first?.string("subagent_label")
+        XCTAssertEqual(subLabel, "Developer-X")
+        let mainRoot = try database.query("SELECT root_session_key FROM agent_sessions WHERE source_session_key = '\(uuid)'").first?.string("root_session_key")
+        XCTAssertNil(mainRoot, "主会话不应有 root")
+    }
+
     func testScansCodexJSONLOnceThenSkipsUnchangedFile() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

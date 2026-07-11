@@ -141,4 +141,27 @@ public final class OmpUsageEventParser: UsageEventParser {
         }
         return nil
     }
+
+    /// 从子代理文件相对 scan root 的路径推导 (根主会话 UUID, 子代理名字)。
+    /// omp 按父会话递归嵌套：主会话文件 `<proj>/<ts>_<UUID>.jsonl`（2 段）旁有同名目录，
+    /// 子代理落在 `<proj>/<ts>_<UUID>/[.../]<label>.jsonl`（≥3 段）。根主会话的
+    /// `source_session_key` 是 `session` 行的纯 UUID，而顶层目录名形如 `<ts>_<UUID>`，
+    /// 故从顶层那段目录名里提取标准 UUID 段。
+    /// 主会话（≤2 段）或顶层目录名不含标准 UUID（主会话曾回落到短 id）→ (nil, nil)，退化不报错。
+    public static func subagentAttribution(relativePath: String) -> (rootSessionKey: String?, label: String?) {
+        let parts = relativePath.split(separator: "/").map(String.init)
+        guard parts.count >= 3, let uuid = standardUUID(in: parts[1]) else { return (nil, nil) }
+        let label = parts[parts.count - 1].replacingOccurrences(of: ".jsonl", with: "")
+        return (uuid, label.isEmpty ? nil : label)
+    }
+
+    private static let uuidRegex = try! NSRegularExpression(
+        pattern: "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+    private static func standardUUID(in text: String) -> String? {
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = uuidRegex.firstMatch(in: text, range: range),
+              let matched = Range(match.range, in: text) else { return nil }
+        return String(text[matched])
+    }
 }

@@ -372,7 +372,14 @@ public final class LocalAgentScanner {
 
         // step 2：写事件（各自事务提交）。
         do {
-            try writer.write(session, scanRootId: root.id, sourceFileId: fileId, runId: runId)
+            // omp 的子代理靠文件路径关联根主会话（文件内容不带父引用）；其余家在 parser
+            // 内已填 ParsedSession.rootSessionKey，这里 override 为 nil、不覆盖。
+            let ompAttribution = root.kind == .ompJSONL
+                ? OmpUsageEventParser.subagentAttribution(relativePath: relativePath)
+                : (rootSessionKey: nil, label: nil)
+            try writer.write(session, scanRootId: root.id, sourceFileId: fileId, runId: runId,
+                             rootSessionKeyOverride: ompAttribution.rootSessionKey,
+                             subagentLabelOverride: ompAttribution.label)
         } catch {
             _ = try? upsertSourceFile(
                 rootId: root.id,

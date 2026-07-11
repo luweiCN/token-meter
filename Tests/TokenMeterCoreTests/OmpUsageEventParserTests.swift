@@ -166,4 +166,35 @@ final class OmpUsageEventParserTests: XCTestCase {
         XCTAssertEqual(session.events[0].sourceOffset, 42)
         XCTAssertEqual(state.lastEventSeq, 4)
     }
+
+    // MARK: - subagentAttribution（从相对路径推导根会话 + 子代理名，纯函数）
+
+    func testSubagentAttributionFromNestedPath() {
+        // 一层子代理：<proj>/<ts>_<UUID>/Developer-X.jsonl
+        let a = OmpUsageEventParser.subagentAttribution(
+            relativePath: "-code-ai-x/2026-07-01T11-20-18Z_019f247b-3a29-7000-9fcd-9677ee2fec1e/Developer-X.jsonl")
+        XCTAssertEqual(a.rootSessionKey, "019f247b-3a29-7000-9fcd-9677ee2fec1e")
+        XCTAssertEqual(a.label, "Developer-X")
+    }
+
+    func testSubagentAttributionPinsGrandchildToRoot() {
+        // 两层（孙代理）仍指向最顶层根 UUID（拍平）。
+        let a = OmpUsageEventParser.subagentAttribution(
+            relativePath: "-code-ai-x/2026-07-01T11-20-18Z_019f247b-3a29-7000-9fcd-9677ee2fec1e/Developer-X/Developer-X.Child.jsonl")
+        XCTAssertEqual(a.rootSessionKey, "019f247b-3a29-7000-9fcd-9677ee2fec1e")
+        XCTAssertEqual(a.label, "Developer-X.Child")
+    }
+
+    func testMainSessionPathHasNoAttribution() {
+        let a = OmpUsageEventParser.subagentAttribution(
+            relativePath: "-code-ai-x/2026-07-01T11-20-18Z_019f247b-3a29-7000-9fcd-9677ee2fec1e.jsonl")
+        XCTAssertNil(a.rootSessionKey)
+        XCTAssertNil(a.label)
+    }
+
+    func testNonUuidTopLevelDegradesToNoRoot() {
+        // 顶层目录名不含标准 UUID（主会话曾回落到短 id）→ 无法关联，退化，不报错。
+        let a = OmpUsageEventParser.subagentAttribution(relativePath: "-proj/2026-07-01T11-20Z_019f1d68/Child.jsonl")
+        XCTAssertNil(a.rootSessionKey)
+    }
 }
