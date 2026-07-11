@@ -191,6 +191,17 @@ describe('sessionRail sub-agent merging', () => {
     const s1 = rail.find(r => r.sessionId === 1)!;
     expect(s1.subagentCount).toBe(2);  // 两个 sidechain 文件 = 两个子代理
   });
+
+  it('shows the last-used model, not the dominant one', () => {
+    // seedSession 把 session_rollup.primary_model 设成 claude-fable-5（主导模型），
+    // 但用户早期用 gpt-5.5、后期切 gpt-5.6 → 卡片应显示最后用的 gpt-5.6。
+    seedSession(1, 'omp', 'proj', 60_000, 1000);
+    seedEvent(10, 1, '2026-07-10T10:00:00+08:00', 'gpt-5.5');
+    seedEvent(11, 1, '2026-07-10T11:00:00+08:00', 'gpt-5.6');
+
+    const rail = new OverviewRepository(db, () => NOW).sessionRail(10);
+    expect(rail.find(r => r.sessionId === 1)!.primaryModel).toBe('gpt-5.6');
+  });
 });
 
 describe('kpis todaySessions sub-agent handling', () => {

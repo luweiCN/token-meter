@@ -212,7 +212,8 @@ export class OverviewRepository {
       `SELECT sr.session_id AS sessionId,
               coalesce(s.provider_id, s.source_kind) AS providerId,
               coalesce(p.display_name, '未知项目') AS projectName,
-              sr.primary_model AS primaryModel,
+              (SELECT e2.model_canonical FROM usage_events e2 WHERE e2.session_id = sr.session_id
+                 ORDER BY e2.observed_epoch_ms DESC, e2.id DESC LIMIT 1) AS primaryModel,
               sr.tokens_total + coalesce(sub.tokens, 0) AS tokensTotal,
               sr.first_event_epoch_ms AS firstEventEpochMs,
               coalesce(sr.cost_usd_micros, 0) + coalesce(sub.cost, 0) AS costUsdMicros,
