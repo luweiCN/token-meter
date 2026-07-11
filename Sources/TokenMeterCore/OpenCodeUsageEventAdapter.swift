@@ -40,6 +40,7 @@ public final class OpenCodeUsageEventAdapter {
         }
 
         let directories = try sessionDirectories()
+        let attribution = try sessionAttribution()
 
         var sessions: [ParsedSession] = []
         for (sessionKey, parsedEvents) in eventsByKey {
@@ -97,7 +98,9 @@ public final class OpenCodeUsageEventAdapter {
                     startedAt: first.observedAt,
                     updatedAt: last.observedAt,
                     events: events,
-                    rawMeta: rawMeta(provider: provider)
+                    rawMeta: rawMeta(provider: provider),
+                    rootSessionKey: attribution[sessionKey]?.parent,
+                    subagentLabel: attribution[sessionKey]?.agent
                 )
             )
         }
@@ -173,6 +176,23 @@ public final class OpenCodeUsageEventAdapter {
             }
         }
         return directories
+    }
+
+    /// session 表原生的 (parent_id, agent)：子会话指向父会话、子代理名字。缺列时返回空表。
+    private func sessionAttribution() throws -> [String: (parent: String?, agent: String?)] {
+        guard try tableExists("session") else { return [:] }
+        let hasParent = try columnExists(table: "session", column: "parent_id")
+        let hasAgent = try columnExists(table: "session", column: "agent")
+        guard hasParent || hasAgent else { return [:] }
+        let rows = try sourceDatabase.query(
+            "SELECT id, \(hasParent ? "parent_id" : "NULL AS parent_id"), \(hasAgent ? "agent" : "NULL AS agent") FROM session"
+        )
+        var attribution: [String: (parent: String?, agent: String?)] = [:]
+        for row in rows {
+            guard let id = row.string("id") else { continue }
+            attribution[id] = (row.string("parent_id"), row.string("agent"))
+        }
+        return attribution
     }
 
     // MARK: - 复用旧适配器的 SQL 与 high-water-mark 逻辑

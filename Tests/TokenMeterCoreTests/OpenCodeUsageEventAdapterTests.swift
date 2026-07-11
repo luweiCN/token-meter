@@ -155,4 +155,50 @@ final class OpenCodeUsageEventAdapterTests: XCTestCase {
         XCTAssertEqual(sessions[0].events[0].eventSeq, 1)
         XCTAssertEqual(sessions[1].events[0].eventSeq, 1)
     }
+
+    func testAttributesSubSessionToParentViaParentId() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try database.execute(
+            """
+            CREATE TABLE session (
+              id TEXT PRIMARY KEY,
+              parent_id TEXT,
+              directory TEXT,
+              agent TEXT
+            )
+            """
+        )
+        try database.execute(
+            """
+            CREATE TABLE message (
+              id TEXT PRIMARY KEY,
+              session_id TEXT NOT NULL,
+              time_created INTEGER NOT NULL,
+              time_updated INTEGER NOT NULL,
+              data TEXT NOT NULL
+            )
+            """
+        )
+        try database.execute(
+            "INSERT INTO session(id, parent_id, directory, agent) VALUES (?, ?, ?, ?)",
+            [.text("main-1"), .null, .text("/repo"), .null]
+        )
+        try database.execute(
+            "INSERT INTO session(id, parent_id, directory, agent) VALUES (?, ?, ?, ?)",
+            [.text("sub-1"), .text("main-1"), .text("/repo"), .text("reviewer")]
+        )
+        try insert(database, id: "m1", sessionId: "main-1", createdMs: 1_000,
+            data: #"{"id":"m1","sessionID":"main-1","tokens":{"input":100,"output":10}}"#)
+        try insert(database, id: "m2", sessionId: "sub-1", createdMs: 2_000,
+            data: #"{"id":"m2","sessionID":"sub-1","tokens":{"input":50,"output":5}}"#)
+
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
+        let sub = try XCTUnwrap(sessions.first(where: { $0.sessionKey == "sub-1" }))
+        let main = try XCTUnwrap(sessions.first(where: { $0.sessionKey == "main-1" }))
+
+        XCTAssertEqual(sub.rootSessionKey, "main-1")
+        XCTAssertEqual(sub.subagentLabel, "reviewer")
+        XCTAssertNil(main.rootSessionKey, "主会话不应有 root")
+        XCTAssertNil(main.subagentLabel)
+    }
 }
