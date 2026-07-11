@@ -157,6 +157,7 @@ import '../preload.js';
 const allowedIpcChannels: Record<string, true> = {
   'dashboard:overview': true,
   'overview:query': true,
+  'overview:subagentBreakdown': true,
   'index:fullReindex': true,
   'index:status': true,
   'sessions:query': true,
@@ -166,7 +167,7 @@ const allowedIpcChannels: Record<string, true> = {
 
 const allowedPreloadApiShape: Record<string, string[]> = {
   dashboard: ['queryOverview'],
-  overview: ['onInvalidate', 'query'],
+  overview: ['onInvalidate', 'query', 'subagentBreakdown'],
   index: ['onScanProgress', 'startFullReindex', 'status'],
   sessions: ['query'],
   settings: ['get', 'update']
