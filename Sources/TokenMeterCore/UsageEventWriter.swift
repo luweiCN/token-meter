@@ -15,11 +15,22 @@ public final class UsageEventWriter {
         dateFormatter.formatOptions = [.withInternetDateTime]
     }
 
-    public func write(_ session: ParsedSession, scanRootId: Int64, sourceFileId: Int64, runId: Int64?) throws {
+    public func write(
+        _ session: ParsedSession,
+        scanRootId: Int64,
+        sourceFileId: Int64,
+        runId: Int64?,
+        rootSessionKeyOverride: String? = nil,
+        subagentLabelOverride: String? = nil
+    ) throws {
         try database.execute("BEGIN IMMEDIATE")
         do {
             let projectId = try upsertProject(session.projectPath)
-            try upsertAgentSession(session, scanRootId: scanRootId, projectId: projectId, runId: runId)
+            try upsertAgentSession(
+                session, scanRootId: scanRootId, projectId: projectId, runId: runId,
+                rootSessionKey: rootSessionKeyOverride ?? session.rootSessionKey,
+                subagentLabel: subagentLabelOverride ?? session.subagentLabel
+            )
             let sessionId = try lookupSessionId(sourceKind: session.sourceKind, sessionKey: session.sessionKey)
 
             for event in UsageEventDeduplicator.deduplicate(session.events) {
@@ -73,7 +84,10 @@ public final class UsageEventWriter {
         }
     }
 
-    private func upsertAgentSession(_ session: ParsedSession, scanRootId: Int64, projectId: Int64?, runId: Int64?) throws {
+    private func upsertAgentSession(
+        _ session: ParsedSession, scanRootId: Int64, projectId: Int64?, runId: Int64?,
+        rootSessionKey: String?, subagentLabel: String?
+    ) throws {
         // model_name / source_file_id 是 v1 遗留列，v2 写入路径不填它们，Task 18 会删掉这两列。
         try database.execute(
             """
@@ -90,8 +104,10 @@ public final class UsageEventWriter {
                 first_seen_run_id,
                 last_seen_run_id,
                 last_indexed_run_id,
-                raw_meta_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                raw_meta_json,
+                root_session_key,
+                subagent_label
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source_kind, source_session_key) DO UPDATE SET
                 scan_root_id = excluded.scan_root_id,
                 project_id = excluded.project_id,
@@ -102,7 +118,9 @@ public final class UsageEventWriter {
                 source_revision = excluded.source_revision,
                 last_seen_run_id = excluded.last_seen_run_id,
                 last_indexed_run_id = excluded.last_indexed_run_id,
-                raw_meta_json = excluded.raw_meta_json
+                raw_meta_json = excluded.raw_meta_json,
+                root_session_key = excluded.root_session_key,
+                subagent_label = excluded.subagent_label
             """,
             [
                 .text(session.sourceKind.rawValue),
@@ -117,7 +135,9 @@ public final class UsageEventWriter {
                 sqliteInt(runId),
                 sqliteInt(runId),
                 sqliteInt(runId),
-                sqliteText(rawMetaJSON(session.rawMeta))
+                sqliteText(rawMetaJSON(session.rawMeta)),
+                sqliteText(rootSessionKey),
+                sqliteText(subagentLabel)
             ]
         )
     }

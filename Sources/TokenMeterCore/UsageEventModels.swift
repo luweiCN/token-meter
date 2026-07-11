@@ -83,6 +83,8 @@ public struct ParsedSession: Equatable {
     public let updatedAt: Date?
     public let events: [UsageEvent]
     public let rawMeta: [String: String]
+    public let rootSessionKey: String?
+    public let subagentLabel: String?
 
     public init(
         sourceKind: SourceKind,
@@ -92,7 +94,9 @@ public struct ParsedSession: Equatable {
         startedAt: Date?,
         updatedAt: Date?,
         events: [UsageEvent],
-        rawMeta: [String: String]
+        rawMeta: [String: String],
+        rootSessionKey: String? = nil,
+        subagentLabel: String? = nil
     ) {
         self.sourceKind = sourceKind
         self.sessionKey = sessionKey
@@ -102,6 +106,8 @@ public struct ParsedSession: Equatable {
         self.updatedAt = updatedAt
         self.events = events
         self.rawMeta = rawMeta
+        self.rootSessionKey = rootSessionKey
+        self.subagentLabel = subagentLabel
     }
 }
 

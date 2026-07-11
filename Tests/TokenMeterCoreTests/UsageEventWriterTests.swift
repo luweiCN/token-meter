@@ -189,6 +189,46 @@ final class UsageEventWriterTests: XCTestCase {
         XCTAssertEqual(try database.query("SELECT count(*) AS n FROM agent_sessions")[0].int("n"), 1)
     }
 
+    func testWritesRootSessionKeyAndSubagentLabelFromParsedSession() throws {
+        let database = try makeDatabase()
+        let writer = UsageEventWriter(database: database, costCalculator: calculator())
+
+        let sub = ParsedSession(
+            sourceKind: .claudeJSONL, sessionKey: "child-1", projectPath: "/repo", cliVersion: nil,
+            startedAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1),
+            events: [event(seq: 1, at: 1)], rawMeta: [:],
+            rootSessionKey: "parent-1", subagentLabel: "Explore"
+        )
+        try writer.write(sub, scanRootId: 1, sourceFileId: 2, runId: nil)
+
+        let row = try database.query(
+            "SELECT root_session_key, subagent_label FROM agent_sessions WHERE source_session_key = 'child-1'"
+        )[0]
+        XCTAssertEqual(row.string("root_session_key"), "parent-1")
+        XCTAssertEqual(row.string("subagent_label"), "Explore")
+    }
+
+    func testWriteOverrideBeatsParsedSessionValue() throws {
+        let database = try makeDatabase()
+        let writer = UsageEventWriter(database: database, costCalculator: calculator())
+
+        // ParsedSession 自带一组值，但 scanner 用 override 传入另一组——必须 override 胜出。
+        let conflicting = ParsedSession(
+            sourceKind: .claudeJSONL, sessionKey: "s1", projectPath: "/repo", cliVersion: nil,
+            startedAt: Date(timeIntervalSince1970: 1), updatedAt: Date(timeIntervalSince1970: 1),
+            events: [event(seq: 1, at: 1)], rawMeta: [:],
+            rootSessionKey: "wrong-parent", subagentLabel: "wrong-label"
+        )
+        try writer.write(conflicting, scanRootId: 1, sourceFileId: 1, runId: nil,
+                         rootSessionKeyOverride: "root-x", subagentLabelOverride: "Developer-X")
+
+        let row = try database.query(
+            "SELECT root_session_key, subagent_label FROM agent_sessions WHERE source_session_key = 's1'"
+        )[0]
+        XCTAssertEqual(row.string("root_session_key"), "root-x", "override 必须胜过 ParsedSession 自带的值")
+        XCTAssertEqual(row.string("subagent_label"), "Developer-X")
+    }
+
     func testCreatesProjectFromPath() throws {
         let database = try makeDatabase()
         let writer = UsageEventWriter(database: database, costCalculator: calculator())
