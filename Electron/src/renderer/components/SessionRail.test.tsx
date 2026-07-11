@@ -52,4 +52,26 @@ describe('SessionRail sub-agent drill-down', () => {
     fireEvent.click(screen.getByRole('button', { name: '关闭' }));
     await waitFor(() => expect(screen.queryByText('explorer')).toBeNull());
   });
+
+  it('sorts sub-agents (tokens desc by default, re-sortable by name)', async () => {
+    render(<SessionRail sessions={[base]} now={Date.now()} />);
+    fireEvent.click(screen.getByRole('button', { name: /2 个子代理/ }));
+    await waitFor(() => expect(screen.getByText('explorer')).toBeTruthy());
+
+    const order = () => screen.getAllByText(/^(explorer|worker)$/).map(e => e.textContent);
+    expect(order()).toEqual(['worker', 'explorer']);  // 默认 token 降序：worker 500 > explorer 300
+
+    fireEvent.click(screen.getByRole('button', { name: '名称' }));
+    expect(order()).toEqual(['explorer', 'worker']);  // 名称升序
+  });
+
+  it('filters sub-agents by name', async () => {
+    render(<SessionRail sessions={[base]} now={Date.now()} />);
+    fireEvent.click(screen.getByRole('button', { name: /2 个子代理/ }));
+    await waitFor(() => expect(screen.getByText('explorer')).toBeTruthy());
+
+    fireEvent.change(screen.getByPlaceholderText('按名称筛选'), { target: { value: 'work' } });
+    expect(screen.queryByText('explorer')).toBeNull();
+    expect(screen.getByText('worker')).toBeTruthy();
+  });
 });

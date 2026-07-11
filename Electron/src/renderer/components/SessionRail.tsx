@@ -1,17 +1,15 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import type { ActivityRow, SubagentRow } from '../api.js';
 import { formatDuration, formatRelative, formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
 
-/// 右栏会话列表（spec §7.2）：进行中的（5 分钟内消耗过 token）置顶并打脉冲点，
+/// 右侧会话列表（spec §7.2）：进行中的（5 分钟内消耗过 token）置顶并打脉冲点，
 /// 下方是最近结束的若干条。数据已由 repository 的 sessionRail 排好序 + 子代理归并
-/// （token/成本/isLive 都是主会话含子代理的合计，subagentCount 含独立子会话与 Claude sidechain）。
+/// （token/成本/isLive 是主会话含子代理的合计，subagentCount 含独立子会话与 Claude sidechain，
+/// 模型取最后一次事件用的）。
 ///
 /// 「进行中」不等于「正在运行」——没有可靠的非侵入判据（spec §7.2.1），这里只陈述
 /// 磁盘上的事实：这个会话（含其子代理）在 5 分钟内消耗过 token。
-///
-/// 有子代理的主会话挂一个数量徽标；点开走 subagentBreakdown 拉明细，弹一个居中 modal
-/// （子代理动辄几十上百个，内联展开会把整条列表撑爆，故用带滚动的独立弹窗）。
 export function SessionRail({ sessions, now }: { sessions: ActivityRow[]; now: number }) {
   const [open, setOpen] = useState<{ projectName: string; rows: SubagentRow[] } | null>(null);
 
@@ -64,33 +62,85 @@ export function SessionRail({ sessions, now }: { sessions: ActivityRow[]; now: n
       </ul>
 
       {open ? (
-        <div
-          className="subagent-modal__overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label="子代理明细"
-          onClick={() => setOpen(null)}
-        >
-          <div className="subagent-modal" onClick={e => e.stopPropagation()}>
-            <div className="subagent-modal__head">
-              <h3 className="subagent-modal__title">{open.projectName} · {open.rows.length} 个子代理</h3>
-              <button type="button" className="subagent-modal__close" aria-label="关闭" onClick={() => setOpen(null)}>
-                ×
-              </button>
-            </div>
-            <div className="subagent-modal__list">
-              {open.rows.map((r, i) => (
-                <div key={i} className="subagent-modal__row">
-                  <span className="subagent-modal__idx">{i + 1}</span>
-                  <span className="subagent-modal__label" title={r.label}>{r.label}</span>
-                  <span className="subagent-modal__tokens">{formatTokens(r.tokens)} tokens</span>
-                  <span className="subagent-modal__cost">{formatUsdMicros(r.costUsdMicros)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+        <SubagentModal projectName={open.projectName} rows={open.rows} now={now} onClose={() => setOpen(null)} />
       ) : null}
     </>
+  );
+}
+
+type SortKey = 'tokens' | 'cost' | 'time' | 'label';
+
+const SORTS: Array<{ key: SortKey; label: string }> = [
+  { key: 'tokens', label: 'Token' },
+  { key: 'cost', label: '成本' },
+  { key: 'time', label: '时间' },
+  { key: 'label', label: '名称' }
+];
+
+/// 子代理下钻弹窗：子代理动辄几十上百个，故用居中 modal + 滚动，并带名称筛选与排序。
+function SubagentModal({
+  projectName, rows, now, onClose
+}: { projectName: string; rows: SubagentRow[]; now: number; onClose: () => void }) {
+  const [sortBy, setSortBy] = useState<SortKey>('tokens');
+  const [filter, setFilter] = useState('');
+
+  const shown = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    const kept = needle ? rows.filter(r => r.label.toLowerCase().includes(needle)) : rows;
+    return [...kept].sort((a, b) => {
+      switch (sortBy) {
+        case 'label': return a.label.localeCompare(b.label);
+        case 'time': return b.lastEventMs - a.lastEventMs;
+        case 'cost': return b.costUsdMicros - a.costUsdMicros;
+        default: return b.tokens - a.tokens;
+      }
+    });
+  }, [rows, filter, sortBy]);
+
+  return (
+    <div className="subagent-modal__overlay" role="dialog" aria-modal="true" aria-label="子代理明细" onClick={onClose}>
+      <div className="subagent-modal" onClick={e => e.stopPropagation()}>
+        <div className="subagent-modal__head">
+          <h3 className="subagent-modal__title">{projectName} · {rows.length} 个子代理</h3>
+          <button type="button" className="subagent-modal__close" aria-label="关闭" onClick={onClose}>×</button>
+        </div>
+        <div className="subagent-modal__toolbar">
+          <input
+            className="subagent-modal__filter"
+            placeholder="按名称筛选"
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+          />
+          <div className="metric-switch subagent-modal__sort" role="group" aria-label="排序">
+            {SORTS.map(s => (
+              <button
+                key={s.key}
+                type="button"
+                className={sortBy === s.key ? 'active' : ''}
+                aria-pressed={sortBy === s.key}
+                onClick={() => setSortBy(s.key)}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="subagent-modal__list">
+          {shown.length === 0 ? (
+            <p className="muted subagent-modal__empty">没有匹配的子代理。</p>
+          ) : (
+            shown.map((r, i) => (
+              <div key={i} className="subagent-modal__row">
+                <span className="subagent-modal__idx">{i + 1}</span>
+                <span className="subagent-modal__label" title={r.label}>{r.label}</span>
+                <span className="subagent-modal__time">{formatRelative(now - r.lastEventMs)}</span>
+                <span className="subagent-modal__tokens">{formatTokens(r.tokens)} tokens</span>
+                <span className="subagent-modal__cost">{formatUsdMicros(r.costUsdMicros)}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

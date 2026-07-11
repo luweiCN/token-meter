@@ -793,6 +793,34 @@ select {
   color: var(--accent);
 }
 
+.subagent-modal__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.subagent-modal__filter {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: inherit;
+  background: var(--surface);
+}
+
+.subagent-modal__sort {
+  flex-shrink: 0;
+}
+
+.subagent-modal__empty {
+  padding: 16px;
+  text-align: center;
+}
+
 .subagent-modal__list {
   overflow-y: auto;
   padding: 8px 6px 12px;
@@ -800,7 +828,7 @@ select {
 
 .subagent-modal__row {
   display: grid;
-  grid-template-columns: 28px 1fr auto auto;
+  grid-template-columns: 28px 1fr auto auto auto;
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
@@ -825,6 +853,7 @@ select {
   white-space: nowrap;
 }
 
+.subagent-modal__time,
 .subagent-modal__tokens,
 .subagent-modal__cost {
   color: var(--text-muted);
