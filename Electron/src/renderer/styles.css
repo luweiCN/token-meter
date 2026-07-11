@@ -676,62 +676,86 @@ select {
 .session-rail__item {
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: 11px 13px;
   display: grid;
-  gap: 4px;
+  gap: 7px;
 }
 
+/* live 卡片：淡薄荷底 + 微提亮的边，不喧宾夺主。 */
 .session-rail__item.is-live {
-  border-color: var(--success);
-  background: color-mix(in oklab, var(--success) 12%, transparent);
+  border-color: color-mix(in oklab, var(--success) 50%, var(--border));
+  background: color-mix(in oklab, var(--success) 7%, transparent);
 }
 
+/* 标题行：项目名（主）+ provider（弱）+ 状态（右）。 */
 .session-rail__head {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .session-rail__project {
   min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-bright);
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .session-rail__provider {
-  margin-left: auto;
+  flex-shrink: 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
+.session-rail__status {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.session-rail__status.is-live {
+  color: var(--success);
+  font-weight: 600;
+}
+
+/* 模型 tag：无边框、融入卡片的淡背景，安静的标识而非按钮。 */
 .session-rail__models {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin: 2px 0;
+  gap: 5px;
 }
 
 .session-rail__model-tag {
   font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-muted);
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
 .session-rail__model-tag.is-muted {
   opacity: 0.6;
 }
 
-.session-rail__meta,
-.session-rail__cost {
+/* 数字行：token 为主（提到正文色、加粗），成本/时长次要，靠间距分隔而非强行两列。 */
+.session-rail__stats {
   display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  color: var(--text-muted);
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 12px;
   font-size: 12px;
+  color: var(--text-muted);
+}
+
+.session-rail__tokens {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .session-rail__pulse {
@@ -832,8 +856,45 @@ select {
   background: var(--surface);
 }
 
+/* 排序区：带「排序」标签 + 无框按钮 + 方向箭头，跟左边的筛选框区分开、语义清楚。 */
 .subagent-modal__sort {
+  display: flex;
+  align-items: center;
+  gap: 3px;
   flex-shrink: 0;
+}
+
+.subagent-modal__sort-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-right: 3px;
+}
+
+.subagent-modal__sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: none;
+  background: none;
+  padding: 4px 7px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.subagent-modal__sort-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.subagent-modal__sort-btn.is-active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.subagent-modal__sort-dir {
+  font-size: 11px;
 }
 
 .subagent-modal__empty {

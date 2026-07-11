@@ -6,8 +6,9 @@ import { formatDuration, formatRelative, formatTokens, formatUnknownCostNote, fo
 /// 右侧会话列表（spec §7.2）：进行中的（5 分钟内消耗过 token）置顶并打脉冲点，
 /// 下方是最近结束的若干条。数据已由 repository 的 sessionRail 排好序 + 子代理归并。
 ///
-/// 卡片刻意区分两个层级：token/成本是【含子代理的合计】，故标「总」；模型 tag 是【主会话
-/// 自己用过的所有模型】（不含子代理），两者放一起才不会被误读成「这个模型用了这么多」。
+/// 卡片按信息层次排：标题（项目名 + 状态）→ 用过的模型（tag）→ 用量数字（token 为主，
+/// 成本/时长次要）→ 子代理徽标。token/成本是【含子代理的合计】故标「总」；模型 tag 是
+/// 【主会话自己用过的】（不含子代理），两个层级放一起才不会被误读成「这个模型用了这么多」。
 ///
 /// 「进行中」不等于「正在运行」——没有可靠的非侵入判据（spec §7.2.1），这里只陈述
 /// 磁盘上的事实：这个会话（含其子代理）在 5 分钟内消耗过 token。
@@ -25,43 +26,49 @@ export function SessionRail({ sessions, now }: { sessions: ActivityRow[]; now: n
   return (
     <>
       <ul className="session-rail__list">
-        {sessions.map(s => (
-          <li key={s.sessionId} className={`session-rail__item${s.isLive ? ' is-live' : ''}`}>
-            <div className="session-rail__head">
-              {s.isLive ? <span className="session-rail__pulse" aria-label="进行中" /> : null}
-              <strong className="session-rail__project">{s.projectName}</strong>
-              <span className="session-rail__provider">{s.providerId}</span>
-            </div>
-            <div className="session-rail__models" aria-label="主会话用过的模型">
-              {s.models.length > 0
-                ? s.models.map(m => <span key={m} className="session-rail__model-tag">{m}</span>)
-                : <span className="session-rail__model-tag is-muted">未知模型</span>}
-            </div>
-            <div className="session-rail__meta">
-              <span>总 {formatTokens(s.tokensTotal)} tokens</span>
-              <span>{s.isLive ? '进行中' : formatRelative(s.msSinceLastEvent)}</span>
-            </div>
-            <div className="session-rail__meta">
-              <span>
-                总 {formatUsdMicros(s.costUsdMicros)}
-                {formatUnknownCostNote(s.costUnknownEvents) ? (
-                  <span className="cost-unknown" title="部分事件价格未知，成本可能偏低"> · {formatUnknownCostNote(s.costUnknownEvents)}</span>
-                ) : null}
-              </span>
-              <span>时长 {formatDuration(Math.max(0, now - s.firstEventEpochMs))}</span>
-            </div>
-            {s.subagentCount > 0 ? (
-              <button
-                type="button"
-                className="session-rail__subagents"
-                aria-label={`${s.subagentCount} 个子代理，点开看明细`}
-                onClick={() => void openBreakdown(s)}
-              >
-                {s.subagentCount} 个子代理
-              </button>
-            ) : null}
-          </li>
-        ))}
+        {sessions.map(s => {
+          const unknownNote = formatUnknownCostNote(s.costUnknownEvents);
+          return (
+            <li key={s.sessionId} className={`session-rail__item${s.isLive ? ' is-live' : ''}`}>
+              <div className="session-rail__head">
+                {s.isLive ? <span className="session-rail__pulse" aria-hidden="true" /> : null}
+                <strong className="session-rail__project" title={s.projectName}>{s.projectName}</strong>
+                <span className="session-rail__provider">{s.providerId}</span>
+                <span className={`session-rail__status${s.isLive ? ' is-live' : ''}`}>
+                  {s.isLive ? '进行中' : formatRelative(s.msSinceLastEvent)}
+                </span>
+              </div>
+
+              {s.models.length > 0 ? (
+                <div className="session-rail__models" aria-label="主会话用过的模型">
+                  {s.models.map(m => <span key={m} className="session-rail__model-tag">{m}</span>)}
+                </div>
+              ) : null}
+
+              <div className="session-rail__stats">
+                <strong className="session-rail__tokens">总 {formatTokens(s.tokensTotal)} tokens</strong>
+                <span className="session-rail__stat">
+                  {formatUsdMicros(s.costUsdMicros)}
+                  {unknownNote ? (
+                    <span className="cost-unknown" title="部分事件价格未知，成本可能偏低">（{unknownNote}）</span>
+                  ) : null}
+                </span>
+                <span className="session-rail__stat">{formatDuration(Math.max(0, now - s.firstEventEpochMs))}</span>
+              </div>
+
+              {s.subagentCount > 0 ? (
+                <button
+                  type="button"
+                  className="session-rail__subagents"
+                  aria-label={`${s.subagentCount} 个子代理，点开看明细`}
+                  onClick={() => void openBreakdown(s)}
+                >
+                  {s.subagentCount} 个子代理
+                </button>
+              ) : null}
+            </li>
+          );
+        })}
       </ul>
 
       {open ? (
@@ -72,6 +79,7 @@ export function SessionRail({ sessions, now }: { sessions: ActivityRow[]; now: n
 }
 
 type SortKey = 'tokens' | 'cost' | 'time' | 'label';
+type SortDir = 'asc' | 'desc';
 
 const SORTS: Array<{ key: SortKey; label: string }> = [
   { key: 'tokens', label: 'Token' },
@@ -80,25 +88,42 @@ const SORTS: Array<{ key: SortKey; label: string }> = [
   { key: 'label', label: '名称' }
 ];
 
+/// 每个字段的「顺手」默认方向：量与时间是从大/新看起（降序），名称是字母序（升序）。
+const DEFAULT_DIR: Record<SortKey, SortDir> = { tokens: 'desc', cost: 'desc', time: 'desc', label: 'asc' };
+
 /// 子代理下钻弹窗：子代理动辄几十上百个，故用居中 modal + 滚动，并带名称筛选与排序。
+/// 排序区与筛选框分开、带「排序」标签和方向箭头，避免被误认成又一个筛选。
 function SubagentModal({
   projectName, rows, now, onClose
 }: { projectName: string; rows: SubagentRow[]; now: number; onClose: () => void }) {
   const [sortBy, setSortBy] = useState<SortKey>('tokens');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [filter, setFilter] = useState('');
+
+  const onSort = (key: SortKey) => {
+    if (key === sortBy) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortBy(key);
+      setSortDir(DEFAULT_DIR[key]);
+    }
+  };
 
   const shown = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     const kept = needle ? rows.filter(r => r.label.toLowerCase().includes(needle)) : rows;
+    const sign = sortDir === 'asc' ? 1 : -1;
     return [...kept].sort((a, b) => {
+      let v: number;
       switch (sortBy) {
-        case 'label': return a.label.localeCompare(b.label);
-        case 'time': return b.lastEventMs - a.lastEventMs;
-        case 'cost': return b.costUsdMicros - a.costUsdMicros;
-        default: return b.tokens - a.tokens;
+        case 'label': v = a.label.localeCompare(b.label); break;
+        case 'time': v = a.lastEventMs - b.lastEventMs; break;
+        case 'cost': v = a.costUsdMicros - b.costUsdMicros; break;
+        default: v = a.tokens - b.tokens;
       }
+      return sign * v;
     });
-  }, [rows, filter, sortBy]);
+  }, [rows, filter, sortBy, sortDir]);
 
   return (
     <div className="subagent-modal__overlay" role="dialog" aria-modal="true" aria-label="子代理明细" onClick={onClose}>
@@ -114,16 +139,18 @@ function SubagentModal({
             value={filter}
             onChange={e => setFilter(e.target.value)}
           />
-          <div className="metric-switch subagent-modal__sort" role="group" aria-label="排序">
+          <div className="subagent-modal__sort" role="group" aria-label="排序">
+            <span className="subagent-modal__sort-label">排序</span>
             {SORTS.map(s => (
               <button
                 key={s.key}
                 type="button"
-                className={sortBy === s.key ? 'active' : ''}
+                className={`subagent-modal__sort-btn${sortBy === s.key ? ' is-active' : ''}`}
                 aria-pressed={sortBy === s.key}
-                onClick={() => setSortBy(s.key)}
+                onClick={() => onSort(s.key)}
               >
                 {s.label}
+                {sortBy === s.key ? <span className="subagent-modal__sort-dir" aria-hidden="true">{sortDir === 'desc' ? '↓' : '↑'}</span> : null}
               </button>
             ))}
           </div>
