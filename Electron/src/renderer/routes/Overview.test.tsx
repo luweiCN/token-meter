@@ -58,7 +58,8 @@ const readyPayload: OverviewPayload = {
       costUnknownEvents: 0,
       msSinceLastEvent: 30_000,
       isLive: true,
-      subagentCount: 0
+      subagentCount: 0,
+      models: ['claude-fable-5']
     }
   ]
 };

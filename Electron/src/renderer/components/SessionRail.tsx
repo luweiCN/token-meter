@@ -4,9 +4,10 @@ import type { ActivityRow, SubagentRow } from '../api.js';
 import { formatDuration, formatRelative, formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
 
 /// 右侧会话列表（spec §7.2）：进行中的（5 分钟内消耗过 token）置顶并打脉冲点，
-/// 下方是最近结束的若干条。数据已由 repository 的 sessionRail 排好序 + 子代理归并
-/// （token/成本/isLive 是主会话含子代理的合计，subagentCount 含独立子会话与 Claude sidechain，
-/// 模型取最后一次事件用的）。
+/// 下方是最近结束的若干条。数据已由 repository 的 sessionRail 排好序 + 子代理归并。
+///
+/// 卡片刻意区分两个层级：token/成本是【含子代理的合计】，故标「总」；模型 tag 是【主会话
+/// 自己用过的所有模型】（不含子代理），两者放一起才不会被误读成「这个模型用了这么多」。
 ///
 /// 「进行中」不等于「正在运行」——没有可靠的非侵入判据（spec §7.2.1），这里只陈述
 /// 磁盘上的事实：这个会话（含其子代理）在 5 分钟内消耗过 token。
@@ -31,21 +32,23 @@ export function SessionRail({ sessions, now }: { sessions: ActivityRow[]; now: n
               <strong className="session-rail__project">{s.projectName}</strong>
               <span className="session-rail__provider">{s.providerId}</span>
             </div>
-            <div className="session-rail__meta">
-              <span>{s.primaryModel ?? '未知模型'}</span>
-              <span>{formatTokens(s.tokensTotal)} tokens</span>
+            <div className="session-rail__models" aria-label="主会话用过的模型">
+              {s.models.length > 0
+                ? s.models.map(m => <span key={m} className="session-rail__model-tag">{m}</span>)
+                : <span className="session-rail__model-tag is-muted">未知模型</span>}
             </div>
             <div className="session-rail__meta">
+              <span>总 {formatTokens(s.tokensTotal)} tokens</span>
               <span>{s.isLive ? '进行中' : formatRelative(s.msSinceLastEvent)}</span>
-              <span>时长 {formatDuration(Math.max(0, now - s.firstEventEpochMs))}</span>
             </div>
-            <div className="session-rail__cost">
-              <span>{formatUsdMicros(s.costUsdMicros)}</span>
-              {formatUnknownCostNote(s.costUnknownEvents) ? (
-                <span className="cost-unknown" title="部分事件价格未知，成本可能偏低">
-                  {formatUnknownCostNote(s.costUnknownEvents)}
-                </span>
-              ) : null}
+            <div className="session-rail__meta">
+              <span>
+                总 {formatUsdMicros(s.costUsdMicros)}
+                {formatUnknownCostNote(s.costUnknownEvents) ? (
+                  <span className="cost-unknown" title="部分事件价格未知，成本可能偏低"> · {formatUnknownCostNote(s.costUnknownEvents)}</span>
+                ) : null}
+              </span>
+              <span>时长 {formatDuration(Math.max(0, now - s.firstEventEpochMs))}</span>
             </div>
             {s.subagentCount > 0 ? (
               <button

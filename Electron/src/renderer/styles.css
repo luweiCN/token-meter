@@ -705,6 +705,26 @@ select {
   font-size: 12px;
 }
 
+.session-rail__models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0;
+}
+
+.session-rail__model-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.session-rail__model-tag.is-muted {
+  opacity: 0.6;
+}
+
 .session-rail__meta,
 .session-rail__cost {
   display: flex;

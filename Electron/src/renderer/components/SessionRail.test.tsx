@@ -8,7 +8,8 @@ import type { ActivityRow, SubagentRow } from '../api.js';
 const base: ActivityRow = {
   sessionId: 1, providerId: 'codex', projectName: 'proj', primaryModel: 'gpt-5.5',
   tokensTotal: 1800, firstEventEpochMs: 0, costUsdMicros: 3000, costUnknownEvents: 0,
-  msSinceLastEvent: 60_000, isLive: false, subagentCount: 2
+  msSinceLastEvent: 60_000, isLive: false, subagentCount: 2,
+  models: ['gpt-5.5', 'gpt-5.6-sol']
 };
 
 const breakdown: SubagentRow[] = [
@@ -23,6 +24,13 @@ beforeEach(() => {
 });
 
 describe('SessionRail sub-agent drill-down', () => {
+  it('renders main-session models as tags and labels the token total as 总', () => {
+    render(<SessionRail sessions={[base]} now={Date.now()} />);
+    expect(screen.getByText('gpt-5.5')).toBeTruthy();
+    expect(screen.getByText('gpt-5.6-sol')).toBeTruthy();
+    expect(screen.getByText(/^总 .+ tokens$/)).toBeTruthy();
+  });
+
   it('shows a sub-agent count badge when a session has sub-agents', () => {
     render(<SessionRail sessions={[base]} now={Date.now()} />);
     expect(screen.getByRole('button', { name: /2 个子代理/ })).toBeTruthy();

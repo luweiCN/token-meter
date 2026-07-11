@@ -28,6 +28,8 @@ export interface ActivityRow {
   providerId: string;
   projectName: string;
   primaryModel: string | null;
+  /// 主会话自己用过的所有模型（去重，排除子代理），供卡片以 tag 展示。
+  models: string[];
   tokensTotal: number;
   firstEventEpochMs: number;
   costUsdMicros: number;
@@ -48,7 +50,8 @@ export interface SubagentRow {
   lastEventMs: number;
 }
 
-type ActivityQueryRow = Omit<ActivityRow, 'msSinceLastEvent' | 'isLive'> & { lastEventEpochMs: number };
+type ActivityQueryRow = Omit<ActivityRow, 'msSinceLastEvent' | 'isLive' | 'models'>
+  & { lastEventEpochMs: number; models: string | null };
 
 const ACTIVITY_SELECT =
   `SELECT sr.session_id AS sessionId,
@@ -212,8 +215,9 @@ export class OverviewRepository {
       `SELECT sr.session_id AS sessionId,
               coalesce(s.provider_id, s.source_kind) AS providerId,
               coalesce(p.display_name, '未知项目') AS projectName,
-              (SELECT e2.model_canonical FROM usage_events e2 WHERE e2.session_id = sr.session_id
-                 ORDER BY e2.observed_epoch_ms DESC, e2.id DESC LIMIT 1) AS primaryModel,
+              sr.primary_model AS primaryModel,
+              (SELECT group_concat(DISTINCT e2.model_canonical) FROM usage_events e2
+                 WHERE e2.session_id = sr.session_id AND e2.is_sidechain = 0) AS models,
               sr.tokens_total + coalesce(sub.tokens, 0) AS tokensTotal,
               sr.first_event_epoch_ms AS firstEventEpochMs,
               coalesce(sr.cost_usd_micros, 0) + coalesce(sub.cost, 0) AS costUsdMicros,
@@ -252,9 +256,16 @@ export class OverviewRepository {
 
   private toActivityRow(r: ActivityQueryRow, now: number): ActivityRow {
     const msSinceLastEvent = now - r.lastEventEpochMs;
-    const { lastEventEpochMs, ...rest } = r;
-    // recentActivity 走 ACTIVITY_SELECT 不带 subagentCount → 兜 0；sessionRail 归并查询带真实值。
-    return { ...rest, subagentCount: r.subagentCount ?? 0, msSinceLastEvent, isLive: msSinceLastEvent < LIVE_WINDOW_MS };
+    const { lastEventEpochMs, models, ...rest } = r;
+    // recentActivity 走 ACTIVITY_SELECT 不带 subagentCount/models → 兜默认；sessionRail 归并查询带真实值。
+    // models 从 group_concat 的逗号串拆成数组（主会话自己用过的所有模型，排除子代理）。
+    return {
+      ...rest,
+      models: models ? models.split(',') : [],
+      subagentCount: r.subagentCount ?? 0,
+      msSinceLastEvent,
+      isLive: msSinceLastEvent < LIVE_WINDOW_MS
+    };
   }
 
   /// 主会话的子代理明细下钻（spec §6.3）。两种数据形态、对外统一结构：
