@@ -218,7 +218,7 @@ export class OverviewRepository {
               coalesce(sr.cost_usd_micros, 0) + coalesce(sub.cost, 0) AS costUsdMicros,
               sr.cost_unknown_events AS costUnknownEvents,
               max(sr.last_event_epoch_ms, coalesce(sub.last_event, 0)) AS lastEventEpochMs,
-              coalesce(sub.cnt, 0) AS subagentCount
+              coalesce(sub.cnt, 0) + coalesce(sc.cnt, 0) AS subagentCount
          FROM session_rollup sr
          JOIN agent_sessions s ON s.id = sr.session_id
     LEFT JOIN projects p ON p.id = s.project_id
@@ -233,6 +233,14 @@ export class OverviewRepository {
             WHERE cs.root_session_key IS NOT NULL AND cs.status != 'deleted'
          GROUP BY cs.source_kind, cs.root_session_key
          ) sub ON sub.sk = s.source_kind AND sub.rk = s.source_session_key
+    LEFT JOIN (
+           -- Claude 的子代理是父会话里的 sidechain 事件，按 source_file 分组数个数。
+           -- 只贡献 subagentCount，不加 token/cost：那些已在自己 session_rollup 里、含 sidechain。
+           SELECT e.session_id AS sid, count(DISTINCT e.source_file_id) AS cnt
+             FROM usage_events e
+            WHERE e.is_sidechain = 1
+         GROUP BY e.session_id
+         ) sc ON sc.sid = sr.session_id
         WHERE s.status != 'deleted' AND s.root_session_key IS NULL
      ORDER BY (max(sr.last_event_epoch_ms, coalesce(sub.last_event, 0)) > ?) DESC,
               max(sr.last_event_epoch_ms, coalesce(sub.last_event, 0)) DESC

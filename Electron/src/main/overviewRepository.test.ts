@@ -177,6 +177,20 @@ describe('sessionRail sub-agent merging', () => {
     expect(rail[0].subagentCount).toBe(0);
     expect(rail[0].tokensTotal).toBe(700);
   });
+
+  it('counts a Claude main session\'s sidechain source-files as subagentCount', () => {
+    // Claude 子代理不是独立子会话，而是父会话里的 sidechain 事件，按 source_file 分。
+    seedSession(1, 'claude', 'proj', 60_000, 1000);
+    seedSourceFile(10, 'general-purpose');
+    seedSourceFile(11, 'Explore');
+    seedSidechainEvent(100, 1, 10, '2026-07-10T11:00:00+08:00', 400);
+    seedSidechainEvent(101, 1, 10, '2026-07-10T11:05:00+08:00', 100);  // 同文件第二条
+    seedSidechainEvent(102, 1, 11, '2026-07-10T11:50:00+08:00', 200);
+
+    const rail = new OverviewRepository(db, () => NOW).sessionRail(10);
+    const s1 = rail.find(r => r.sessionId === 1)!;
+    expect(s1.subagentCount).toBe(2);  // 两个 sidechain 文件 = 两个子代理
+  });
 });
 
 describe('kpis todaySessions sub-agent handling', () => {
