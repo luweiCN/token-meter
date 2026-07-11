@@ -13,7 +13,8 @@ beforeEach(() => {
     CREATE TABLE agent_sessions (
       id INTEGER PRIMARY KEY, source_kind TEXT NOT NULL, source_session_key TEXT NOT NULL,
       scan_root_id INTEGER NOT NULL, project_id INTEGER, provider_id TEXT,
-      status TEXT NOT NULL DEFAULT 'active', source_revision TEXT NOT NULL DEFAULT 'r'
+      status TEXT NOT NULL DEFAULT 'active', source_revision TEXT NOT NULL DEFAULT 'r',
+      root_session_key TEXT, subagent_label TEXT
     );
     CREATE TABLE projects (id INTEGER PRIMARY KEY, canonical_path TEXT NOT NULL, display_name TEXT NOT NULL,
       project_key TEXT NOT NULL DEFAULT 'k', first_seen_at TEXT NOT NULL DEFAULT '', last_seen_at TEXT NOT NULL DEFAULT '');
@@ -77,12 +78,50 @@ function seedSession(id: number, provider: string, project: string, lastEventMsA
     .run(id, last - 60_000, last, 3, tokens, 1000, 'claude-fable-5');
 }
 
+/// 子会话：root_session_key 指向父会话的 source_session_key（`s<父id>`），同 source_kind。
+function seedSubSession(id: number, provider: string, rootSessionKey: string, label: string,
+                       lastEventMsAgo: number, tokens: number, cost = 1000) {
+  db.prepare(`INSERT INTO agent_sessions(id, source_kind, source_session_key, scan_root_id, provider_id, root_session_key, subagent_label)
+              VALUES (?,?,?,1,?,?,?)`).run(id, `${provider}_jsonl`, `s${id}`, provider, rootSessionKey, label);
+  const last = NOW - lastEventMsAgo;
+  db.prepare(`INSERT INTO session_rollup(session_id, first_event_epoch_ms, last_event_epoch_ms, events_count,
+              tokens_total, cost_usd_micros, primary_model) VALUES (?,?,?,?,?,?,?)`)
+    .run(id, last - 60_000, last, 2, tokens, cost, 'sub-model');
+}
+
 // localDateTime 无时区 → JS 按本地时区解析，SQLite 的 'localtime' 再转回同一本地日期。
 // 取正午等非边界时刻，避免午夜/DST 的日期归属歧义。
 function seedEvent(id: number, sessionId: number, localDateTime: string, model = 'm') {
   db.prepare(`INSERT INTO usage_events(id, session_id, observed_epoch_ms, model_canonical)
               VALUES (?,?,?,?)`).run(id, sessionId, Date.parse(localDateTime), model);
 }
+
+describe('sessionRail sub-agent merging', () => {
+  it('lists only main sessions, sums sub-agent tokens/cost, and folds their activity into isLive', () => {
+    // 父会话自己 10 分钟前（超出 5 分钟 live 窗口，自己不 live）
+    seedSession(1, 'codex', 'proj', 10 * 60_000, 1000);
+    // 两个子会话指向 s1：一个 30 分钟前，一个 1 分钟前（让主会话归并后变 live）
+    seedSubSession(2, 'codex', 's1', 'worker', 30 * 60_000, 500);
+    seedSubSession(3, 'codex', 's1', 'explorer', 1 * 60_000, 300);
+
+    const rail = new OverviewRepository(db, () => NOW).sessionRail(10);
+
+    expect(rail).toHaveLength(1);              // 只列主会话，子会话不单独出现
+    expect(rail[0].sessionId).toBe(1);
+    expect(rail[0].tokensTotal).toBe(1800);    // 1000 + 500 + 300
+    expect(rail[0].costUsdMicros).toBe(3000);  // 1000 + 1000 + 1000
+    expect(rail[0].subagentCount).toBe(2);
+    expect(rail[0].isLive).toBe(true);         // 父自己 10min 前不 live，但子 1min 前 → 归并后 live
+  });
+
+  it('a main session with no sub-agents keeps its own totals and subagentCount 0', () => {
+    seedSession(1, 'claude-code', 'proj', 60_000, 700);
+    const rail = new OverviewRepository(db, () => NOW).sessionRail(10);
+    expect(rail).toHaveLength(1);
+    expect(rail[0].subagentCount).toBe(0);
+    expect(rail[0].tokensTotal).toBe(700);
+  });
+});
 
 describe('recentActivity', () => {
   it('orders by last event descending and marks only fresh sessions as live', () => {

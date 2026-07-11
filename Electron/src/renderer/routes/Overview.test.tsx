@@ -57,7 +57,8 @@ const readyPayload: OverviewPayload = {
       costUsdMicros: 1000,
       costUnknownEvents: 0,
       msSinceLastEvent: 30_000,
-      isLive: true
+      isLive: true,
+      subagentCount: 0
     }
   ]
 };

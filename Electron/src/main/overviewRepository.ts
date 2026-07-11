@@ -34,6 +34,7 @@ export interface ActivityRow {
   costUnknownEvents: number;
   msSinceLastEvent: number;
   isLive: boolean;
+  subagentCount: number;
 }
 
 type ActivityQueryRow = Omit<ActivityRow, 'msSinceLastEvent' | 'isLive'> & { lastEventEpochMs: number };
@@ -189,11 +190,41 @@ export class OverviewRepository {
   /// 右栏会话列表（spec §7.2）：进行中的置顶高亮，各组内按最近事件倒序。
   /// 就是 recentActivity 加上时长（firstEventEpochMs）与成本，只是把 live 的钉在最前。
   /// 用同一个 `now` 算阈值与 isLive，边界不会因两次读表而漂移。
+  /// 右栏会话列表（spec §7.2）+ 子代理归并（spec §6）：只列主会话（root_session_key IS NULL），
+  /// 每条 token/cost = 自己 + 所有指向它的子会话之和，isLive 与排序用归并后的最近活动时间，并带子代理数量。
+  /// 子会话按 (source_kind, root_session_key) 聚合，匹配父的 (source_kind, source_session_key)。
+  /// Claude 子代理不是独立会话（root_session_key 全 NULL）→ 子会话集为空、退化成自己（其 rollup
+  /// 已含 sidechain 事件）；Claude 的 subagentCount 由 subagentBreakdown 走 source_file 分组另算。
   sessionRail(limit: number): ActivityRow[] {
     const now = this.now();
     const rows = this.db.prepare(
-      `${ACTIVITY_SELECT}
-     ORDER BY (sr.last_event_epoch_ms > ?) DESC, sr.last_event_epoch_ms DESC
+      `SELECT sr.session_id AS sessionId,
+              coalesce(s.provider_id, s.source_kind) AS providerId,
+              coalesce(p.display_name, '未知项目') AS projectName,
+              sr.primary_model AS primaryModel,
+              sr.tokens_total + coalesce(sub.tokens, 0) AS tokensTotal,
+              sr.first_event_epoch_ms AS firstEventEpochMs,
+              coalesce(sr.cost_usd_micros, 0) + coalesce(sub.cost, 0) AS costUsdMicros,
+              sr.cost_unknown_events AS costUnknownEvents,
+              max(sr.last_event_epoch_ms, coalesce(sub.last_event, 0)) AS lastEventEpochMs,
+              coalesce(sub.cnt, 0) AS subagentCount
+         FROM session_rollup sr
+         JOIN agent_sessions s ON s.id = sr.session_id
+    LEFT JOIN projects p ON p.id = s.project_id
+    LEFT JOIN (
+           SELECT cs.source_kind AS sk, cs.root_session_key AS rk,
+                  sum(csr.tokens_total) AS tokens,
+                  sum(csr.cost_usd_micros) AS cost,
+                  max(csr.last_event_epoch_ms) AS last_event,
+                  count(*) AS cnt
+             FROM agent_sessions cs
+             JOIN session_rollup csr ON csr.session_id = cs.id
+            WHERE cs.root_session_key IS NOT NULL AND cs.status != 'deleted'
+         GROUP BY cs.source_kind, cs.root_session_key
+         ) sub ON sub.sk = s.source_kind AND sub.rk = s.source_session_key
+        WHERE s.status != 'deleted' AND s.root_session_key IS NULL
+     ORDER BY (max(sr.last_event_epoch_ms, coalesce(sub.last_event, 0)) > ?) DESC,
+              max(sr.last_event_epoch_ms, coalesce(sub.last_event, 0)) DESC
         LIMIT ?`
     ).all(now - LIVE_WINDOW_MS, limit) as ActivityQueryRow[];
     return rows.map(r => this.toActivityRow(r, now));
@@ -202,7 +233,8 @@ export class OverviewRepository {
   private toActivityRow(r: ActivityQueryRow, now: number): ActivityRow {
     const msSinceLastEvent = now - r.lastEventEpochMs;
     const { lastEventEpochMs, ...rest } = r;
-    return { ...rest, msSinceLastEvent, isLive: msSinceLastEvent < LIVE_WINDOW_MS };
+    // recentActivity 走 ACTIVITY_SELECT 不带 subagentCount → 兜 0；sessionRail 归并查询带真实值。
+    return { ...rest, subagentCount: r.subagentCount ?? 0, msSinceLastEvent, isLive: msSinceLastEvent < LIVE_WINDOW_MS };
   }
 
   kpis(): OverviewKpis {
