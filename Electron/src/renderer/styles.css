@@ -722,6 +722,48 @@ select {
   animation: tm-pulse 1.6s ease-in-out infinite;
 }
 
+/* 子代理数量徽标：胶囊小按钮，hover/展开时染强调色。 */
+.session-rail__subagents {
+  margin-top: 8px;
+  width: fit-content;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.session-rail__subagents:hover,
+.session-rail__subagents.is-open {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* 下钻浮层：原地展开，列出每个子代理一行。 */
+.session-rail__breakdown {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-solid);
+}
+
+.session-rail__breakdown-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.session-rail__breakdown-label {
+  font-weight: 600;
+}
+
 /* 窄屏徽标按钮：默认隐藏，容器 < 960px 时出现并脉冲。 */
 .rail-badge {
   display: none;
