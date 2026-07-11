@@ -31,6 +31,34 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertNil(mainRoot, "主会话不应有 root")
     }
 
+    func testClaudeSubagentFileGetsLabelFromMetaSidecar() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sid = "shared-session"
+        let subdir = root.appendingPathComponent("\(sid)/subagents")
+        try FileManager.default.createDirectory(at: subdir, withIntermediateDirectories: true)
+        // 父会话文件（顶层）
+        try writeJSONL(claudeJSONL(sessionKey: sid, inputTokens: 10, outputTokens: 20),
+                       to: root.appendingPathComponent("\(sid).jsonl"))
+        // 子代理文件：行内 sessionId 仍是父（归属不变），加 isSidechain
+        try writeJSONL(
+            "{\"type\":\"assistant\",\"sessionId\":\"\(sid)\",\"isSidechain\":true,\"timestamp\":\"2026-07-08T01:05:00Z\",\"message\":{\"role\":\"assistant\",\"id\":\"sc1\",\"model\":\"claude-fable-5\",\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n",
+            to: subdir.appendingPathComponent("agent-abc123.jsonl"))
+        // 边车（含 agentType）
+        try Data(#"{"agentType":"Explore","toolUseId":"tu-1","spawnDepth":1}"#.utf8)
+            .write(to: subdir.appendingPathComponent("agent-abc123.meta.json"))
+        let database = try migratedDatabase(rootKind: .claudeJSONL, rootPath: root.path)
+
+        try await LocalAgentScanner(database: database).scanRoot(id: 1)
+
+        let label = try database.query(
+            "SELECT subagent_label FROM source_files WHERE relative_path = '\(sid)/subagents/agent-abc123.jsonl'"
+        ).first?.string("subagent_label")
+        XCTAssertEqual(label, "Explore")
+        // 归属不变：子代理事件仍归父会话、标 sidechain。
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events WHERE is_sidechain = 1"), 1)
+    }
+
     func testScansCodexJSONLOnceThenSkipsUnchangedFile() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

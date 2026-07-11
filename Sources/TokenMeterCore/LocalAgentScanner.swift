@@ -380,6 +380,11 @@ public final class LocalAgentScanner {
             try writer.write(session, scanRootId: root.id, sourceFileId: fileId, runId: runId,
                              rootSessionKeyOverride: ompAttribution.rootSessionKey,
                              subagentLabelOverride: ompAttribution.label)
+            // Claude 子代理不改解析归属（事件仍归父会话、标 is_sidechain），只把边车里的
+            // agentType 名字记到本文件的 source_files.subagent_label，供下钻展示。
+            if let label = claudeSubagentLabel(for: file, relativePath: relativePath, kind: root.kind) {
+                try setSourceFileSubagentLabel(fileId: fileId, label: label)
+            }
         } catch {
             _ = try? upsertSourceFile(
                 rootId: root.id,
@@ -950,6 +955,23 @@ public final class LocalAgentScanner {
             return String(filePath.dropFirst(prefix.count))
         }
         return file.lastPathComponent.isEmpty ? filePath : file.lastPathComponent
+    }
+
+    /// Claude 子代理文件（路径含 /subagents/）的同名 .meta.json 里读 agentType，作为子代理名字。
+    /// 非 Claude 子代理文件、或边车缺失/读不出 → nil（不阻断扫描）。
+    private func claudeSubagentLabel(for file: URL, relativePath: String, kind: SourceKind) -> String? {
+        guard kind == .claudeJSONL, relativePath.contains("/subagents/") else { return nil }
+        let sidecar = file.deletingPathExtension().appendingPathExtension("meta.json")
+        guard let data = try? Data(contentsOf: sidecar),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return JSONDictionary.string(object, "agentType")
+    }
+
+    private func setSourceFileSubagentLabel(fileId: Int64, label: String) throws {
+        try database.execute(
+            "UPDATE source_files SET subagent_label = ? WHERE id = ?",
+            [.text(label), .int(fileId)]
+        )
     }
 
     private func fileExists(at url: URL) -> Bool {
