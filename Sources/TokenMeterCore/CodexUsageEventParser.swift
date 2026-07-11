@@ -6,6 +6,8 @@ public final class CodexUsageEventParser: UsageEventParser {
     private var modelName: String?
     private var startedAt: Date?
     private var updatedAt: Date?
+    private var rootThreadId: String?
+    private var subagentLabel: String?
     private var events: [UsageEvent] = []
     private var eventSeq: Int
     private var cumulative: CumulativeTokenTotals?
@@ -21,6 +23,8 @@ public final class CodexUsageEventParser: UsageEventParser {
         modelName = state?.modelName
         startedAt = state?.startedAt
         updatedAt = state?.updatedAt
+        rootThreadId = state?.rootSessionKey
+        subagentLabel = state?.subagentLabel
     }
 
     public func consume(_ line: JSONLLine) {
@@ -36,6 +40,17 @@ public final class CodexUsageEventParser: UsageEventParser {
         case "session_meta":
             sessionKey = payload.flatMap { JSONDictionary.string($0, "id") } ?? sessionKey
             projectPath = payload.flatMap { JSONDictionary.string($0, "cwd") } ?? projectPath
+            if let payload {
+                let spawn = JSONDictionary.dictionary(payload, "source")
+                    .flatMap { JSONDictionary.dictionary($0, "subagent") }
+                    .flatMap { JSONDictionary.dictionary($0, "thread_spawn") }
+                rootThreadId = JSONDictionary.string(payload, "parent_thread_id")
+                    ?? spawn.flatMap { JSONDictionary.string($0, "parent_thread_id") }
+                    ?? rootThreadId
+                let role = JSONDictionary.string(payload, "agent_role") ?? spawn.flatMap { JSONDictionary.string($0, "agent_role") }
+                let nickname = JSONDictionary.string(payload, "agent_nickname") ?? spawn.flatMap { JSONDictionary.string($0, "agent_nickname") }
+                subagentLabel = [role, nickname].compactMap { $0 }.joined(separator: " · ").nilIfEmpty ?? subagentLabel
+            }
         case "turn_context":
             modelName = payload.flatMap { JSONDictionary.string($0, "model") } ?? modelName
             projectPath = payload.flatMap { JSONDictionary.string($0, "cwd") } ?? projectPath
@@ -93,7 +108,7 @@ public final class CodexUsageEventParser: UsageEventParser {
                     cacheWrite1hTokens: 0,
                     reportedCostUSDMicros: nil,
                     sourceOffset: line.offset,
-                    isSidechain: false
+                    isSidechain: rootThreadId != nil
                 )
             )
         default:
@@ -112,7 +127,9 @@ public final class CodexUsageEventParser: UsageEventParser {
             startedAt: startedAt,
             updatedAt: updatedAt,
             events: events,
-            rawMeta: ["source": "codex"]
+            rawMeta: ["source": "codex"],
+            rootSessionKey: rootThreadId,
+            subagentLabel: subagentLabel
         )
         return (
             session,
@@ -123,7 +140,9 @@ public final class CodexUsageEventParser: UsageEventParser {
                 projectPath: projectPath,
                 modelName: modelName,
                 startedAt: startedAt,
-                updatedAt: updatedAt
+                updatedAt: updatedAt,
+                rootSessionKey: rootThreadId,
+                subagentLabel: subagentLabel
             )
         )
     }
@@ -145,6 +164,10 @@ public final class CodexUsageEventParser: UsageEventParser {
     private func dateFromEpoch(_ value: Double) -> Date {
         value > 100_000_000_000 ? Date(timeIntervalSince1970: value / 1000) : Date(timeIntervalSince1970: value)
     }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }
 
 /// Codex `token_count` 事件里的原始四元组。

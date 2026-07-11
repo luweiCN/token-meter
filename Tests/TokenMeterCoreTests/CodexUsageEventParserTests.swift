@@ -159,6 +159,61 @@ final class CodexUsageEventParserTests: XCTestCase {
         XCTAssertEqual(event.sourceOffset, 1)
     }
 
+    func testFlagsSubagentSessionFromParentThreadId() throws {
+        let subMeta = #"{"type":"session_meta","payload":{"id":"child-1","cwd":"/repo","parent_thread_id":"parent-1","agent_role":"worker","agent_nickname":"swift-otter"}}"#
+        let lines = [
+            line(subMeta, offset: 0),
+            line(turnContext, offset: 1),
+            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5}}}}"#, offset: 2)
+        ]
+        let (session, _) = try CodexUsageEventParser.parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil)
+
+        XCTAssertEqual(session.rootSessionKey, "parent-1")
+        XCTAssertEqual(session.subagentLabel, "worker · swift-otter")
+        XCTAssertTrue(session.events.allSatisfy { $0.isSidechain }, "子代理会话的事件应全部标为 sidechain")
+    }
+
+    func testFlagsSubagentSessionFromNestedThreadSpawnShape() throws {
+        let subMeta = #"{"type":"session_meta","payload":{"id":"child-2","cwd":"/repo","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent-2","agent_role":"explorer","agent_nickname":"deep-fox"}}}}}"#
+        let lines = [
+            line(subMeta, offset: 0),
+            line(turnContext, offset: 1),
+            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5}}}}"#, offset: 2)
+        ]
+        let (session, _) = try CodexUsageEventParser.parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil)
+        XCTAssertEqual(session.rootSessionKey, "parent-2")
+        XCTAssertEqual(session.subagentLabel, "explorer · deep-fox")
+        XCTAssertTrue(session.events.allSatisfy { $0.isSidechain })
+    }
+
+    func testMainSessionHasNoRootAndNoSidechain() throws {
+        let lines = [
+            line(meta, offset: 0),
+            line(turnContext, offset: 1),
+            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5}}}}"#, offset: 2)
+        ]
+        let (session, _) = try CodexUsageEventParser.parse(lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil)
+
+        XCTAssertNil(session.rootSessionKey)
+        XCTAssertNil(session.subagentLabel)
+        XCTAssertTrue(session.events.allSatisfy { !$0.isSidechain })
+    }
+
+    func testSubagentFlagSurvivesResume() throws {
+        let firstMeta = #"{"type":"session_meta","payload":{"id":"child-1","parent_thread_id":"parent-1","agent_role":"explorer","agent_nickname":"n"}}"#
+        let (_, state) = try CodexUsageEventParser.parse(
+            lines: [line(firstMeta, offset: 0), line(turnContext, offset: 1)],
+            sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
+        )
+        let (session, _) = try CodexUsageEventParser.parse(
+            lines: [line(#"{"type":"event_msg","timestamp":"2026-07-08T02:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":3,"cached_input_tokens":0,"output_tokens":1}}}}"#, offset: 2)],
+            sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: state
+        )
+        XCTAssertEqual(session.rootSessionKey, "parent-1")
+        XCTAssertEqual(session.subagentLabel, "explorer · n")
+        XCTAssertTrue(session.events.allSatisfy { $0.isSidechain })
+    }
+
     func testThrowsWhenSessionKeyMissing() {
         let lines = [line(#"{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1}}}}"#, offset: 0)]
         XCTAssertThrowsError(

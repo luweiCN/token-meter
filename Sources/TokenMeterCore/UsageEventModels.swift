@@ -141,6 +141,8 @@ public struct ParserState: Equatable, Codable {
     public var cliVersion: String?
     public var startedAt: Date?
     public var updatedAt: Date?
+    public var rootSessionKey: String?
+    public var subagentLabel: String?
 
     /// 下次续读的起点：上一次 `readLines` 停下的字节位置（`JSONLReadResult.nextOffset`）。
     ///
@@ -160,6 +162,8 @@ public struct ParserState: Equatable, Codable {
         cliVersion: String? = nil,
         startedAt: Date? = nil,
         updatedAt: Date? = nil,
+        rootSessionKey: String? = nil,
+        subagentLabel: String? = nil,
         resumeOffset: Int64 = 0
     ) {
         self.lastEventSeq = lastEventSeq
@@ -170,6 +174,8 @@ public struct ParserState: Equatable, Codable {
         self.cliVersion = cliVersion
         self.startedAt = startedAt
         self.updatedAt = updatedAt
+        self.rootSessionKey = rootSessionKey
+        self.subagentLabel = subagentLabel
         self.resumeOffset = resumeOffset
     }
 }
