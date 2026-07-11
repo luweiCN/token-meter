@@ -42,13 +42,14 @@ describe('SessionRail sub-agent drill-down', () => {
     expect(window.tokenMeter.overview.subagentBreakdown).toHaveBeenCalledWith(1);
   });
 
-  it('closes the popover on a second click of the same badge', async () => {
+  it('opens a titled modal and closes it via the close button', async () => {
     render(<SessionRail sessions={[base]} now={Date.now()} />);
-    const badge = screen.getByRole('button', { name: /2 个子代理/ });
+    fireEvent.click(screen.getByRole('button', { name: /2 个子代理/ }));
 
-    fireEvent.click(badge);
     await waitFor(() => expect(screen.getByText('explorer')).toBeTruthy());
-    fireEvent.click(badge);
+    expect(screen.getByText(/proj · 2 个子代理/)).toBeTruthy();  // modal 标题：会话名 + 数量
+
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }));
     await waitFor(() => expect(screen.queryByText('explorer')).toBeNull());
   });
 });

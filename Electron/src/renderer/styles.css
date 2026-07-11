@@ -735,33 +735,100 @@ select {
   cursor: pointer;
 }
 
-.session-rail__subagents:hover,
-.session-rail__subagents.is-open {
+.session-rail__subagents:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-/* 下钻浮层：原地展开，列出每个子代理一行。 */
-.session-rail__breakdown {
-  margin-top: 8px;
-  display: grid;
-  gap: 6px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-solid);
-}
-
-.session-rail__breakdown-row {
+/* 子代理下钻 modal：居中弹窗 + 遮罩 + 内部滚动（子代理动辄几十上百个）。 */
+.subagent-modal__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
   display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-muted);
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.5);
+  animation: tm-chart-in 0.15s ease-out;
 }
 
-.session-rail__breakdown-label {
+.subagent-modal {
+  width: min(560px, 100%);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface-solid);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.subagent-modal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.subagent-modal__title {
+  margin: 0;
+  font-size: 15px;
+}
+
+.subagent-modal__close {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.subagent-modal__close:hover {
+  color: var(--accent);
+}
+
+.subagent-modal__list {
+  overflow-y: auto;
+  padding: 8px 6px 12px;
+}
+
+.subagent-modal__row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+  border-radius: 8px;
+}
+
+.subagent-modal__row:hover {
+  background: var(--surface);
+}
+
+.subagent-modal__idx {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.subagent-modal__label {
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-modal__tokens,
+.subagent-modal__cost {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 /* 窄屏徽标按钮：默认隐藏，容器 < 960px 时出现并脉冲。 */
@@ -1012,6 +1079,9 @@ select {
     transition: none;
   }
   .year-heatmap__card {
+    animation: none;
+  }
+  .subagent-modal__overlay {
     animation: none;
   }
 }
