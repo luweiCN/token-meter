@@ -262,9 +262,13 @@ export class OverviewRepository {
 
     // 会话数必须 count(distinct)，绝不能 sum(daily_rollup.sessions_count)：
     // 同一会话当天用了两个模型会占两行（spec §4.2）。
+    // 只数主会话：子代理会话（root_session_key 非空）归到主会话，不单独计入今日会话数，
+    // 否则 OMP 一天几百个子代理会把这个数字灌爆。
     const dayStart = Date.parse(`${today}T00:00:00`);
     const todaySessions = (this.db.prepare(
-      `SELECT count(*) AS n FROM session_rollup WHERE last_event_epoch_ms >= ?`
+      `SELECT count(*) AS n FROM session_rollup sr
+         JOIN agent_sessions s ON s.id = sr.session_id
+        WHERE sr.last_event_epoch_ms >= ? AND s.root_session_key IS NULL AND s.status != 'deleted'`
     ).get(dayStart) as { n: number }).n;
 
     return {

@@ -123,6 +123,16 @@ describe('sessionRail sub-agent merging', () => {
   });
 });
 
+describe('kpis todaySessions sub-agent handling', () => {
+  it('counts only main sessions, excluding sub-agent sessions', () => {
+    seedSession(1, 'codex', 'proj', 60_000, 1000);        // 父，1 分钟前（今天）
+    seedSubSession(2, 'codex', 's1', 'worker', 120_000, 500);  // 子，指向 s1，今天
+
+    const k = new OverviewRepository(db, () => NOW).kpis();
+    expect(k.todaySessions).toBe(1);  // 只数父，子代理不灌水
+  });
+});
+
 describe('recentActivity', () => {
   it('orders by last event descending and marks only fresh sessions as live', () => {
     seedSession(1, 'claude-code', 'token-meter', 12_000, 500);      // 12 秒前
