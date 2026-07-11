@@ -7,7 +7,8 @@ public enum TokenMeterDatabaseSchema {
     /// 的老 v1 形状（没有 usage_events）。若 derivedVersion 也取 1，migrate 会把老 v1 库误判成
     /// 「已是最新」而跳过重建，永远建不出 usage_events。取 4（大于历史最大值 3）保证任何遗留库
     /// （user_version ∈ 0/1/2/3）都与之不等，从而在下次启动时触发一次重建。
-    public static let derivedVersion: Int64 = 4
+    /// 5：agent_sessions 加 root_session_key/subagent_label、source_files 加 subagent_label（子代理归并）
+    public static let derivedVersion: Int64 = 5
 
     /// 用户配置。永不删除。这三张表存的是无法从会话文件重建的东西：
     /// - settings：过滤器 / 菜单栏偏好 / 自动刷新间隔
@@ -76,6 +77,7 @@ public enum TokenMeterDatabaseSchema {
       dev INTEGER,
       content_fingerprint TEXT,
       parser_state TEXT,
+      subagent_label TEXT,
       first_seen_run_id INTEGER REFERENCES scan_runs(id) ON DELETE SET NULL,
       last_seen_run_id INTEGER REFERENCES scan_runs(id) ON DELETE SET NULL,
       last_parsed_run_id INTEGER REFERENCES scan_runs(id) ON DELETE SET NULL,
@@ -120,6 +122,8 @@ public enum TokenMeterDatabaseSchema {
       last_indexed_run_id INTEGER REFERENCES scan_runs(id) ON DELETE SET NULL,
       deleted_at TEXT,
       raw_meta_json TEXT,
+      root_session_key TEXT,
+      subagent_label TEXT,
       UNIQUE(source_kind, source_session_key)
     );
 

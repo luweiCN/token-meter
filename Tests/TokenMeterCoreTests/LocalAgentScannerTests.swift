@@ -1310,6 +1310,19 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"), baselineTotal)
         XCTAssertGreaterThan(try scalarInt(database, "SELECT count(*) AS value FROM daily_rollup"), 0)
     }
+
+    func testDerivedSchemaHasSubagentAttributionColumns() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try migratedDatabase(rootKind: .ompJSONL, rootPath: directory.path)
+
+        let sessionCols = try database.query("PRAGMA table_info(agent_sessions)").compactMap { $0.string("name") }
+        XCTAssertTrue(sessionCols.contains("root_session_key"), "agent_sessions 缺 root_session_key")
+        XCTAssertTrue(sessionCols.contains("subagent_label"), "agent_sessions 缺 subagent_label")
+
+        let fileCols = try database.query("PRAGMA table_info(source_files)").compactMap { $0.string("name") }
+        XCTAssertTrue(fileCols.contains("subagent_label"), "source_files 缺 subagent_label")
+    }
 }
 
 // MARK: - Fixtures
