@@ -9,9 +9,11 @@ import json
 import re
 import sys
 
-# 注意：LiteLLM 已把智谱的 provider slug 从 zhipuai 改成 zai。
-# 写成 zhipuai 会让 glm-4.6 等模型一条定价都拿不到，成本静默变成 unknown。
-KEEP_PROVIDERS = {"anthropic", "openai", "vertex_ai-anthropic_models", "bedrock", "zai", "deepseek", "gemini"}
+# 刻意不做 provider 白名单：曾经的 KEEP_PROVIDERS 让新供应商的模型静默变成
+# unknown（deepseek/gemini 都中过招），provider slug 改名也会翻车（zhipuai→zai
+# 曾让 glm 全系丢价）。全量保留的代价只是快照变大（约 2000 条 / 350KB），而
+# 匹配面由 PROVIDER_PREFIXES 控制：前缀不在剥离列表里的第三方托管键
+# （cloudflare/、fireworks_ai/ 等）归一后保持原样，不会冒充官方价。
 M = 1_000_000
 
 # 必须与 Swift 的 ModelNameNormalizer.providerPrefixes 逐项对齐，顺序也一样
@@ -34,8 +36,6 @@ def should_keep(name: str, spec: object) -> bool:
     if name == "sample_spec" or not isinstance(spec, dict):
         return False
     if spec.get("mode") != "chat":
-        return False
-    if spec.get("litellm_provider") not in KEEP_PROVIDERS:
         return False
     # 没有基础价格的条目无从计价；跳过它们，让成本落到 unknown 而不是 0
     return bool(spec.get("input_cost_per_token")) and bool(spec.get("output_cost_per_token"))

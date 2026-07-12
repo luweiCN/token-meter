@@ -70,8 +70,12 @@ class ShouldKeepTests(unittest.TestCase):
         spec.update(overrides)
         return spec
 
-    def test_keeps_chat_model_from_allowed_provider(self):
+    def test_keeps_chat_model_with_prices(self):
         self.assertTrue(should_keep("claude-x", self.base()))
+
+    def test_keeps_any_provider(self):
+        # 刻意没有 provider 白名单：新供应商不该静默丢价
+        self.assertTrue(should_keep("m", self.base(litellm_provider="cohere")))
 
     def test_skips_sample_spec(self):
         self.assertFalse(should_keep("sample_spec", self.base()))
@@ -79,17 +83,9 @@ class ShouldKeepTests(unittest.TestCase):
     def test_skips_non_chat_mode(self):
         self.assertFalse(should_keep("m", self.base(mode="embedding")))
 
-    def test_skips_disallowed_provider(self):
-        self.assertFalse(should_keep("m", self.base(litellm_provider="cohere")))
-
     def test_skips_entry_without_base_prices(self):
         self.assertFalse(should_keep("m", self.base(input_cost_per_token=None)))
         self.assertFalse(should_keep("m", self.base(output_cost_per_token=0)))
-
-    def test_keeps_zai_provider(self):
-        # zhipuai 这个 slug 已经不存在了
-        self.assertTrue(should_keep("zai/glm-4.6", self.base(litellm_provider="zai")))
-        self.assertFalse(should_keep("x/glm", self.base(litellm_provider="zhipuai")))
 
 
 class ConvertModelTests(unittest.TestCase):

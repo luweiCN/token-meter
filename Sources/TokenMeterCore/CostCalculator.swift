@@ -12,7 +12,7 @@ public struct CostCalculator {
     public init(snapshot: PricingSnapshot) {
         var index: [String: ModelPricing] = [:]
         // LiteLLM 的 key 是原始名，归一化后会撞名：一个规范名常对应多个原始 key。
-        // 实测快照有 15 组，主因是 provider 前缀（claude-opus-4-8 与
+        // 实测快照有 54 组，主因是 provider 前缀（claude-opus-4-8 与
         // vertex_ai/claude-opus-4-8），其次才是日期后缀。取字典序最小的那个。
         //
         // sorted 不可省略：Swift 字典的迭代顺序取决于每进程随机的哈希种子，
