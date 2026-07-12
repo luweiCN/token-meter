@@ -28,7 +28,24 @@ final class ModelNameNormalizerTests: XCTestCase {
         XCTAssertEqual(ModelNameNormalizer.canonical("opencode-go/deepseek-v4-flash"), "deepseek-v4-flash")
         XCTAssertEqual(ModelNameNormalizer.canonical("ocg/deepseek-v4-flash"), "deepseek-v4-flash")
         XCTAssertEqual(ModelNameNormalizer.canonical("glm/glm-5.1"), "glm-5.1")
-        XCTAssertEqual(ModelNameNormalizer.canonical("antigravity/gemini-3.5-flash-high"), "gemini-3.5-flash-high")
+        XCTAssertEqual(ModelNameNormalizer.canonical("google-antigravity/gemini-3.5-flash"), "gemini-3.5-flash")
+        XCTAssertEqual(ModelNameNormalizer.canonical("zhipu-coding-plan/glm-5.2"), "glm-5.2")
+        XCTAssertEqual(ModelNameNormalizer.canonical("deepseek/deepseek-v4-flash"), "deepseek-v4-flash")
+        XCTAssertEqual(ModelNameNormalizer.canonical("gemini/gemini-3.5-flash"), "gemini-3.5-flash")
+    }
+
+    func testStripsStackedGatewayPrefixes() {
+        // OMP 里配置的模型名是「网关/渠道/模型」两层前缀
+        XCTAssertEqual(ModelNameNormalizer.canonical("omniroute/cx/gpt-5.5"), "gpt-5.5")
+        XCTAssertEqual(ModelNameNormalizer.canonical("9router/glm/glm-5.2"), "glm-5.2")
+        XCTAssertEqual(ModelNameNormalizer.canonical("omniroute/opencode-go/deepseek-v4-flash"), "deepseek-v4-flash")
+    }
+
+    func testStripsEffortSuffixes() {
+        XCTAssertEqual(ModelNameNormalizer.canonical("gpt-5.5-xhigh"), "gpt-5.5")
+        XCTAssertEqual(ModelNameNormalizer.canonical("antigravity/gemini-3.5-flash-high"), "gemini-3.5-flash")
+        // 前缀叠加 + 档位后缀同时出现
+        XCTAssertEqual(ModelNameNormalizer.canonical("omniroute/cx/gpt-5.5-xhigh"), "gpt-5.5")
     }
 
     func testGlmCnPrefixIsNotShadowedByGlmPrefix() {

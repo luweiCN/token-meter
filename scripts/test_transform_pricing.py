@@ -129,6 +129,9 @@ class CanonicalTests(unittest.TestCase):
         self.assertEqual(canonical("zai/glm-4.6"), "glm-4.6")
         self.assertEqual(canonical("glm-4.6"), "glm-4.6")          # 非八位数字后缀不剥离
         self.assertEqual(canonical("GPT-5.5"), "gpt-5.5")
+        self.assertEqual(canonical("omniroute/cx/gpt-5.5"), "gpt-5.5")   # 叠加前缀循环剥离
+        self.assertEqual(canonical("gpt-5.5-xhigh"), "gpt-5.5")          # 网关档位别名归一到基础模型
+        self.assertEqual(canonical("mistral-medium"), "mistral-medium")  # medium 是尺寸不是档位，不剥
 
 
 class DivergentCollisionTests(unittest.TestCase):

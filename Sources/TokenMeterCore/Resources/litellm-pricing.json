@@ -1211,6 +1211,90 @@
       "inputPerMTok": 1.5,
       "outputPerMTok": 2.0
     },
+    "deepseek-chat": {
+      "cacheReadPerMTok": 0.028,
+      "cacheWrite1hPerMTok": 0.56,
+      "cacheWrite5mPerMTok": 0.35,
+      "inputPerMTok": 0.28,
+      "outputPerMTok": 0.42
+    },
+    "deepseek-reasoner": {
+      "cacheReadPerMTok": 0.028,
+      "cacheWrite1hPerMTok": 0.56,
+      "cacheWrite5mPerMTok": 0.35,
+      "inputPerMTok": 0.28,
+      "outputPerMTok": 0.42
+    },
+    "deepseek-v4-flash": {
+      "cacheReadPerMTok": 0.0028,
+      "cacheWrite1hPerMTok": 0.28,
+      "cacheWrite5mPerMTok": 0.0,
+      "inputPerMTok": 0.14,
+      "outputPerMTok": 0.28
+    },
+    "deepseek-v4-pro": {
+      "cacheReadPerMTok": 0.003625,
+      "cacheWrite1hPerMTok": 0.87,
+      "cacheWrite5mPerMTok": 0.0,
+      "inputPerMTok": 0.435,
+      "outputPerMTok": 0.87
+    },
+    "deepseek/deepseek-chat": {
+      "cacheReadPerMTok": 0.028,
+      "cacheWrite1hPerMTok": 0.56,
+      "cacheWrite5mPerMTok": 0.0,
+      "inputPerMTok": 0.28,
+      "outputPerMTok": 0.42
+    },
+    "deepseek/deepseek-coder": {
+      "cacheReadPerMTok": 0.014,
+      "cacheWrite1hPerMTok": 0.28,
+      "cacheWrite5mPerMTok": 0.175,
+      "inputPerMTok": 0.14,
+      "outputPerMTok": 0.28
+    },
+    "deepseek/deepseek-r1": {
+      "cacheReadPerMTok": 0.055,
+      "cacheWrite1hPerMTok": 1.1,
+      "cacheWrite5mPerMTok": 0.6875,
+      "inputPerMTok": 0.55,
+      "outputPerMTok": 2.19
+    },
+    "deepseek/deepseek-reasoner": {
+      "cacheReadPerMTok": 0.028,
+      "cacheWrite1hPerMTok": 0.56,
+      "cacheWrite5mPerMTok": 0.35,
+      "inputPerMTok": 0.28,
+      "outputPerMTok": 0.42
+    },
+    "deepseek/deepseek-v3": {
+      "cacheReadPerMTok": 0.07,
+      "cacheWrite1hPerMTok": 0.54,
+      "cacheWrite5mPerMTok": 0.0,
+      "inputPerMTok": 0.27,
+      "outputPerMTok": 1.1
+    },
+    "deepseek/deepseek-v3.2": {
+      "cacheReadPerMTok": 0.028,
+      "cacheWrite1hPerMTok": 0.56,
+      "cacheWrite5mPerMTok": 0.35,
+      "inputPerMTok": 0.28,
+      "outputPerMTok": 0.4
+    },
+    "deepseek/deepseek-v4-flash": {
+      "cacheReadPerMTok": 0.0028,
+      "cacheWrite1hPerMTok": 0.28,
+      "cacheWrite5mPerMTok": 0.0,
+      "inputPerMTok": 0.14,
+      "outputPerMTok": 0.28
+    },
+    "deepseek/deepseek-v4-pro": {
+      "cacheReadPerMTok": 0.003625,
+      "cacheWrite1hPerMTok": 0.87,
+      "cacheWrite5mPerMTok": 0.0,
+      "inputPerMTok": 0.435,
+      "outputPerMTok": 0.87
+    },
     "eu.anthropic.claude-3-5-haiku-20241022-v1:0": {
       "cacheReadPerMTok": 0.025,
       "cacheWrite1hPerMTok": 0.5,
@@ -1357,6 +1441,265 @@
       "cacheWrite5mPerMTok": 5.0,
       "inputPerMTok": 4.0,
       "outputPerMTok": 16.0
+    },
+    "gemini-2.5-flash-native-audio-latest": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
+    },
+    "gemini-2.5-flash-native-audio-preview-09-2025": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
+    },
+    "gemini-2.5-flash-native-audio-preview-12-2025": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
+    },
+    "gemini-3.1-flash-live-preview": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 1.5,
+      "cacheWrite5mPerMTok": 0.9375,
+      "inputPerMTok": 0.75,
+      "outputPerMTok": 4.5
+    },
+    "gemini-exp-1206": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
+    },
+    "gemini-flash-latest": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
+    },
+    "gemini-flash-lite-latest": {
+      "cacheReadPerMTok": 0.01,
+      "cacheWrite1hPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 0.125,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.4
+    },
+    "gemini-pro-latest": {
+      "cacheReadPerMTok": 0.125,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 10.0
+    },
+    "gemini/gemini-2.0-flash": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 0.125,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.4
+    },
+    "gemini/gemini-2.0-flash-001": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 0.125,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.4
+    },
+    "gemini/gemini-2.0-flash-lite": {
+      "cacheReadPerMTok": 0.01875,
+      "cacheWrite1hPerMTok": 0.15,
+      "cacheWrite5mPerMTok": 0.09375,
+      "inputPerMTok": 0.075,
+      "outputPerMTok": 0.3
+    },
+    "gemini/gemini-2.0-flash-lite-001": {
+      "cacheReadPerMTok": 0.01875,
+      "cacheWrite1hPerMTok": 0.15,
+      "cacheWrite5mPerMTok": 0.09375,
+      "inputPerMTok": 0.075,
+      "outputPerMTok": 0.3
+    },
+    "gemini/gemini-2.5-computer-use-preview-10-2025": {
+      "cacheReadPerMTok": 0.125,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 10.0
+    },
+    "gemini/gemini-2.5-flash": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
+    },
+    "gemini/gemini-2.5-flash-lite": {
+      "cacheReadPerMTok": 0.01,
+      "cacheWrite1hPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 0.125,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.4
+    },
+    "gemini/gemini-2.5-flash-lite-preview-06-17": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 0.125,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.4
+    },
+    "gemini/gemini-2.5-flash-lite-preview-09-2025": {
+      "cacheReadPerMTok": 0.01,
+      "cacheWrite1hPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 0.125,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.4
+    },
+    "gemini/gemini-2.5-flash-native-audio-latest": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
+    },
+    "gemini/gemini-2.5-flash-native-audio-preview-09-2025": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
+    },
+    "gemini/gemini-2.5-flash-native-audio-preview-12-2025": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
+    },
+    "gemini/gemini-2.5-flash-preview-09-2025": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
+    },
+    "gemini/gemini-2.5-pro": {
+      "cacheReadPerMTok": 0.125,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 10.0
+    },
+    "gemini/gemini-2.5-pro-preview-tts": {
+      "cacheReadPerMTok": 0.125,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 10.0
+    },
+    "gemini/gemini-3-flash-preview": {
+      "cacheReadPerMTok": 0.05,
+      "cacheWrite1hPerMTok": 1.0,
+      "cacheWrite5mPerMTok": 0.625,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 3.0
+    },
+    "gemini/gemini-3-pro-preview": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 12.0
+    },
+    "gemini/gemini-3.1-flash-lite": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.5,
+      "cacheWrite5mPerMTok": 0.3125,
+      "inputPerMTok": 0.25,
+      "outputPerMTok": 1.5
+    },
+    "gemini/gemini-3.1-flash-lite-preview": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.5,
+      "cacheWrite5mPerMTok": 0.3125,
+      "inputPerMTok": 0.25,
+      "outputPerMTok": 1.5
+    },
+    "gemini/gemini-3.1-flash-live-preview": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 1.5,
+      "cacheWrite5mPerMTok": 0.9375,
+      "inputPerMTok": 0.75,
+      "outputPerMTok": 4.5
+    },
+    "gemini/gemini-3.1-pro-preview": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 12.0
+    },
+    "gemini/gemini-3.1-pro-preview-customtools": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 12.0
+    },
+    "gemini/gemini-3.5-flash": {
+      "cacheReadPerMTok": 0.15,
+      "cacheWrite1hPerMTok": 3.0,
+      "cacheWrite5mPerMTok": 1.875,
+      "inputPerMTok": 1.5,
+      "outputPerMTok": 9.0
+    },
+    "gemini/gemini-flash-latest": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
+    },
+    "gemini/gemini-flash-lite-latest": {
+      "cacheReadPerMTok": 0.025,
+      "cacheWrite1hPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 0.125,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.4
+    },
+    "gemini/gemini-gemma-2-27b-it": {
+      "cacheReadPerMTok": 0.035,
+      "cacheWrite1hPerMTok": 0.7,
+      "cacheWrite5mPerMTok": 0.4375,
+      "inputPerMTok": 0.35,
+      "outputPerMTok": 1.05
+    },
+    "gemini/gemini-gemma-2-9b-it": {
+      "cacheReadPerMTok": 0.035,
+      "cacheWrite1hPerMTok": 0.7,
+      "cacheWrite5mPerMTok": 0.4375,
+      "inputPerMTok": 0.35,
+      "outputPerMTok": 1.05
+    },
+    "gemini/gemini-pro-latest": {
+      "cacheReadPerMTok": 0.125,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 10.0
+    },
+    "gemini/gemini-robotics-er-1.5-preview": {
+      "cacheReadPerMTok": 0,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
     },
     "gpt-3.5-turbo": {
       "cacheReadPerMTok": 0.05,
@@ -2514,6 +2857,6 @@
       "outputPerMTok": 4.4
     }
   },
-  "snapshotVersion": "cb3c10a0fcd7",
+  "snapshotVersion": "16ae0b04654b",
   "source": "litellm"
 }

@@ -11,14 +11,23 @@ import sys
 
 # 注意：LiteLLM 已把智谱的 provider slug 从 zhipuai 改成 zai。
 # 写成 zhipuai 会让 glm-4.6 等模型一条定价都拿不到，成本静默变成 unknown。
-KEEP_PROVIDERS = {"anthropic", "openai", "vertex_ai-anthropic_models", "bedrock", "zai"}
+KEEP_PROVIDERS = {"anthropic", "openai", "vertex_ai-anthropic_models", "bedrock", "zai", "deepseek", "gemini"}
 M = 1_000_000
 
 # 必须与 Swift 的 ModelNameNormalizer.providerPrefixes 逐项对齐，顺序也一样
-# （顺序决定 break 时剥掉的是哪个前缀）。两边是各自独立的实现，没有共享真相源，
+# （顺序决定每轮剥掉的是哪个前缀）。两边是各自独立的实现，没有共享真相源，
 # 只改一边就会静默漂移。test_transform_pricing.py 会从 Swift 源码里把这个列表
 # 抠出来对账。
-PROVIDER_PREFIXES = ("vertex_ai/", "bedrock/", "anthropic/", "openai/", "openai-codex/", "zai/")
+PROVIDER_PREFIXES = (
+    "vertex_ai/", "bedrock/", "anthropic/", "openai/", "openai-codex/", "zai/",
+    "deepseek/", "gemini/",
+    "omniroute/", "9router/", "cx/", "opencode-go/", "ocg/",
+    "glm-cn/", "glm/", "antigravity/", "google-antigravity/", "zhipu-coding-plan/",
+)
+
+# 与 Swift 的 ModelNameNormalizer.effortSuffixes 对齐：OmniRoute 网关层的档位别名，
+# 计价按基础模型。-medium/-low 刻意不收（mistral-medium 的 medium 是尺寸不是档位）。
+EFFORT_SUFFIXES = ("-xhigh", "-high")
 
 
 def should_keep(name: str, spec: object) -> bool:
@@ -59,11 +68,21 @@ def convert_model(spec: dict) -> dict:
 def canonical(name: str) -> str:
     """必须与 Swift 的 ModelNameNormalizer.canonical 保持一致。"""
     name = name.lower()
-    for prefix in PROVIDER_PREFIXES:
-        if name.startswith(prefix):
-            name = name[len(prefix):]
+    # 循环剥离：网关前缀会叠加（omniroute/cx/gpt-5.5）
+    stripped = True
+    while stripped:
+        stripped = False
+        for prefix in PROVIDER_PREFIXES:
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+                stripped = True
+                break
+    name = re.sub(r"-[0-9]{8}$", "", name)
+    for suffix in EFFORT_SUFFIXES:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
             break
-    return re.sub(r"-[0-9]{8}$", "", name) or "unknown"
+    return name or "unknown"
 
 
 def divergent_collisions(models: dict) -> list:
