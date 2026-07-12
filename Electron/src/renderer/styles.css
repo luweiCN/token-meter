@@ -856,18 +856,12 @@ select {
   background: var(--surface);
 }
 
-/* 排序区：带「排序」标签 + 无框按钮 + 方向箭头，跟左边的筛选框区分开、语义清楚。 */
+/* 排序区：无框按钮 + 方向箭头，靠激活态高亮跟左边的筛选框区分开。 */
 .subagent-modal__sort {
   display: flex;
   align-items: center;
   gap: 3px;
   flex-shrink: 0;
-}
-
-.subagent-modal__sort-label {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-right: 3px;
 }
 
 .subagent-modal__sort-btn {

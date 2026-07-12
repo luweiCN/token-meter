@@ -92,7 +92,7 @@ const SORTS: Array<{ key: SortKey; label: string }> = [
 const DEFAULT_DIR: Record<SortKey, SortDir> = { tokens: 'desc', cost: 'desc', time: 'desc', label: 'asc' };
 
 /// 子代理下钻弹窗：子代理动辄几十上百个，故用居中 modal + 滚动，并带名称筛选与排序。
-/// 排序区与筛选框分开、带「排序」标签和方向箭头，避免被误认成又一个筛选。
+/// 排序区与筛选框在视觉上分开，靠激活态高亮和方向箭头表明当前排序键与方向，避免被误认成又一个筛选。
 function SubagentModal({
   projectName, rows, now, onClose
 }: { projectName: string; rows: SubagentRow[]; now: number; onClose: () => void }) {
@@ -140,7 +140,6 @@ function SubagentModal({
             onChange={e => setFilter(e.target.value)}
           />
           <div className="subagent-modal__sort" role="group" aria-label="排序">
-            <span className="subagent-modal__sort-label">排序</span>
             {SORTS.map(s => (
               <button
                 key={s.key}
