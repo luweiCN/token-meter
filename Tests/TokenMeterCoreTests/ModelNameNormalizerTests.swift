@@ -23,6 +23,20 @@ final class ModelNameNormalizerTests: XCTestCase {
         XCTAssertEqual(ModelNameNormalizer.canonical("zai/glm-4.6"), "glm-4.6")
     }
 
+    func testStripsOmniRouteGatewayPrefixes() {
+        XCTAssertEqual(ModelNameNormalizer.canonical("cx/gpt-5.5"), "gpt-5.5")
+        XCTAssertEqual(ModelNameNormalizer.canonical("opencode-go/deepseek-v4-flash"), "deepseek-v4-flash")
+        XCTAssertEqual(ModelNameNormalizer.canonical("ocg/deepseek-v4-flash"), "deepseek-v4-flash")
+        XCTAssertEqual(ModelNameNormalizer.canonical("glm/glm-5.1"), "glm-5.1")
+        XCTAssertEqual(ModelNameNormalizer.canonical("antigravity/gemini-3.5-flash-high"), "gemini-3.5-flash-high")
+    }
+
+    func testGlmCnPrefixIsNotShadowedByGlmPrefix() {
+        // glm-cn/ 与 glm/ 是两个渠道；hasPrefix("glm/") 对 "glm-cn/…" 不成立，
+        // 这里锁住该边界，防止有人把列表改写成更宽的匹配。
+        XCTAssertEqual(ModelNameNormalizer.canonical("glm-cn/glm-5.2"), "glm-5.2")
+    }
+
     func testLowercases() {
         XCTAssertEqual(ModelNameNormalizer.canonical("GPT-5.5"), "gpt-5.5")
     }
