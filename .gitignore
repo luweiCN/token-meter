@@ -13,3 +13,5 @@ config/token-meter.local.json
 
 __pycache__/
 *.pyc
+
+node_modules/

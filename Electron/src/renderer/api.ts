@@ -4,6 +4,8 @@ export type { OverviewPayload, OverviewReady, OverviewEmpty } from '../main/over
 export type {
   OverviewKpis,
   TrendBucket,
+  AgentTrendRow,
+  AgentTrendSeries,
   HeatmapDay,
   ModelRank,
   ActivityRow,

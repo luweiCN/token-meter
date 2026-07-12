@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import type Database from 'better-sqlite3';
 import { isAllowed, type Granularity } from './granularity.js';
-import { localBucketKeys } from '../shared/calendar.js';
+import { localBucketKeys, pad2 } from '../shared/calendar.js';
 
 /// 概览页的三种数据状态。空的两种必须分开表达（spec「升级后的第一次打开」）：
 /// 显示 0 tokens 会让刚升级的用户以为软件坏了，而真相是「还没扫过」。
@@ -15,13 +15,14 @@ const defaultCorpusExists = (rootPath: string): boolean => {
   }
 };
 
-/// 5 分钟内消耗过 token 的会话打实心脉冲点。
+/// 2 分钟内消耗过 token 的会话打实心脉冲点（OpenDesign 稿：「运行中判定：
+/// 2 分钟内有新事件写入日志」）。
 ///
 /// 这【不是】「正在运行」。没有可靠的非侵入方法回答那个问题（spec §7.2.1）：
 /// 本机 14 个并发 agent 进程里，进程存在、CPU、子进程数三个信号全无区分度；
 /// 网络连接数只对 claude 有效，持有 session 文件只对 codex 有效，且两者都是
 /// 实现细节，agent 改版即静默失效。这里只陈述磁盘上的事实。
-const LIVE_WINDOW_MS = 5 * 60_000;
+const LIVE_WINDOW_MS = 2 * 60_000;
 
 export interface ActivityRow {
   sessionId: number;
@@ -85,6 +86,25 @@ export interface TrendBucket {
   output: number;
 }
 
+/// 按 agent（provider）分组的趋势行（OpenDesign 稿：趋势图按 Claude Code /
+/// Codex / OMP / OpenCode 堆叠，Token/花费/会话三指标由前端本地切换）。
+export interface AgentTrendRow {
+  bucket: string;
+  providerId: string;
+  tokens: number;
+  costUsdMicros: number;
+  sessions: number;
+}
+
+export interface AgentTrendSeries {
+  granularity: Granularity;
+  from: string;
+  to: string;
+  /// 完整桶轴（含无数据的空桶），rows 是稀疏的，前端按 buckets 铺 x 轴。
+  buckets: string[];
+  rows: AgentTrendRow[];
+}
+
 export interface HeatmapDay {
   date: string;
   tokens: number;
@@ -104,10 +124,14 @@ export interface ModelRank {
 /// 热力图走一年（371 天，与 YearHeatmap 的默认格数一致）。
 const TREND_DAYS = 30;
 const HEATMAP_DAYS = 371;
-// 右栏只做「最新动态」，不做「全部会话」——那是「会话」页要做的事。固定取
-// 8 条：sessionRail 已经按 isLive 置顶、组内按最近事件倒序排好，所以这 8 条
-// 就是「最近有动静的 8 个会话」，不需要滚动、也不需要按屏幕高度猜数量。
-const SESSION_RAIL_LIMIT = 8;
+
+/// agent 趋势的三档粒度各配固定范围（桶数分别为 30/12/12，全在可读上限内），
+/// 三档一次性随 payload 返回，前端切粒度零 IPC。
+const AGENT_TREND_DAYS: Record<'day' | 'week' | 'month', number> = { day: 30, week: 84, month: 365 };
+// 实时会话区只做「最新动态」，不做「全部会话」——那是「会话」页要做的事。
+// 固定取 10 条（OpenDesign 稿：最新 10 个）：sessionRail 已经按 isLive 置顶、
+// 组内按最近事件倒序排好，不需要滚动、也不需要按屏幕高度猜数量。
+const SESSION_RAIL_LIMIT = 10;
 
 export interface OverviewReady {
   dataState: 'ready';
@@ -115,6 +139,7 @@ export interface OverviewReady {
   kpis: OverviewKpis;
   trend: TrendBucket[];
   trendRange: { from: string; to: string; granularity: Granularity };
+  agentTrend: { day: AgentTrendSeries; week: AgentTrendSeries; month: AgentTrendSeries };
   heatmap: HeatmapDay[];
   heatmapLastDay: string;
   heatmapDays: number;
@@ -161,6 +186,11 @@ export class OverviewRepository {
       kpis: this.kpis(),
       trend: this.trend(trendFrom, to, 'day'),
       trendRange: { from: trendFrom, to, granularity: 'day' },
+      agentTrend: {
+        day: this.agentTrend(this.localDate(-(AGENT_TREND_DAYS.day - 1)), to, 'day'),
+        week: this.agentTrend(this.localDate(-(AGENT_TREND_DAYS.week - 1)), to, 'week'),
+        month: this.agentTrend(this.localDate(-(AGENT_TREND_DAYS.month - 1)), to, 'month')
+      },
       heatmap: this.heatmap(heatmapFrom, to),
       heatmapLastDay: to,
       heatmapDays: HEATMAP_DAYS,
@@ -362,6 +392,72 @@ export class OverviewRepository {
     return fillGaps(rows, from, to, g);
   }
 
+  /// 按 agent 分组的趋势。tokens/花费从 daily_rollup 聚合；会话数必须回
+  /// usage_events 数 distinct——rollup 的 sessions_count 按模型分行，求和会重复
+  /// （同 kpis 的教训）。distinct 键取「归并后的主会话」：子代理会话通过
+  /// coalesce(root_session_key, source_session_key) 折回主会话，口径与 sessionRail 一致。
+  agentTrend(from: string, to: string, g: 'day' | 'week' | 'month'): AgentTrendSeries {
+    if (!isAllowed(from, to, g)) {
+      throw new Error(`granularity ${g} is not allowed for ${from}..${to}`);
+    }
+
+    // week 以周一为起点、month 取 YYYY-MM，跟 trendByDate 的桶键完全一致，
+    // 由 SQLite 完成——不在 TypeScript 里重算日期。
+    const rollupBucket =
+      g === 'week' ? `date(usage_date, 'weekday 0', '-6 days')`
+      : g === 'month' ? `strftime('%Y-%m', usage_date)`
+      : `usage_date`;
+    const eventDay = `date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime')`;
+    const eventBucket =
+      g === 'week' ? `date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime', 'weekday 0', '-6 days')`
+      : g === 'month' ? `strftime('%Y-%m', e.observed_epoch_ms / 1000, 'unixepoch', 'localtime')`
+      : eventDay;
+
+    const usage = this.db.prepare(
+      `SELECT ${rollupBucket} AS bucket,
+              provider_id AS providerId,
+              coalesce(sum(tokens_input + tokens_output + tokens_cache_read
+                           + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
+              coalesce(sum(cost_usd_micros), 0) AS costUsdMicros
+         FROM daily_rollup
+        WHERE usage_date BETWEEN ? AND ?
+     GROUP BY bucket, providerId`
+    ).all(from, to) as Array<Omit<AgentTrendRow, 'sessions'>>;
+
+    const sessions = this.db.prepare(
+      `SELECT ${eventBucket} AS bucket,
+              s.provider_id AS providerId,
+              count(DISTINCT s.source_kind || ':' || coalesce(s.root_session_key, s.source_session_key)) AS sessions
+         FROM usage_events e
+         JOIN agent_sessions s ON s.id = e.session_id
+        WHERE ${eventDay} BETWEEN ? AND ?
+     GROUP BY bucket, providerId`
+    ).all(from, to) as Array<{ bucket: string; providerId: string; sessions: number }>;
+
+    const byKey = new Map<string, AgentTrendRow>();
+    for (const u of usage) {
+      byKey.set(`${u.bucket}|${u.providerId}`, { ...u, sessions: 0 });
+    }
+    for (const s of sessions) {
+      const key = `${s.bucket}|${s.providerId}`;
+      const row = byKey.get(key);
+      if (row) {
+        row.sessions = s.sessions;
+      } else {
+        byKey.set(key, { bucket: s.bucket, providerId: s.providerId, tokens: 0, costUsdMicros: 0, sessions: s.sessions });
+      }
+    }
+
+    return {
+      granularity: g,
+      from,
+      to,
+      buckets: agentTrendBuckets(from, to, g),
+      rows: [...byKey.values()].sort((a, b) =>
+        a.bucket === b.bucket ? a.providerId.localeCompare(b.providerId) : a.bucket.localeCompare(b.bucket))
+    };
+  }
+
   /// 小时粒度只在 ≤ 2 天的范围里开放，最多 48 根柱子、几百条明细。
   /// daily_rollup 没有小时维度，硬做物化表得不偿失（spec §4.2）。
   private trendByHour(from: string, to: string): TrendBucket[] {
@@ -449,6 +545,43 @@ const ZERO = { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 };
 
 /// 空桶必须补齐：缺一天不是「那天不存在」，是「那天用量为零」，X 轴不能有洞。
 /// 逐桶推进走共享的 localBucketKeys（本地日历，DST 安全），不在这里重算日期。
+/// agentTrend 的完整桶轴。day 复用共享的 localBucketKeys（DST 安全）；
+/// week 从 from 所在周一起每 7 天一桶（本地日历步进，与 SQL 的
+/// 'weekday 0','-6 days' 同锚）；month 是纯 YYYY-MM 字符串数学，无时区参与。
+function agentTrendBuckets(from: string, to: string, g: 'day' | 'week' | 'month'): string[] {
+  if (g === 'day') return [...localBucketKeys(from, to, 'day')];
+
+  if (g === 'week') {
+    const [fy, fm, fd] = from.split('-').map(Number);
+    const cursor = new Date(fy, fm - 1, fd);
+    // getDay(): 0=周日 → 回退 6 天；1=周一 → 回退 0 天。
+    cursor.setDate(cursor.getDate() - ((cursor.getDay() + 6) % 7));
+    const out: string[] = [];
+    for (;;) {
+      const key = `${cursor.getFullYear()}-${pad2(cursor.getMonth() + 1)}-${pad2(cursor.getDate())}`;
+      if (key > to) break;
+      out.push(key);
+      cursor.setDate(cursor.getDate() + 7);
+    }
+    return out;
+  }
+
+  const out: string[] = [];
+  let [y, m] = from.slice(0, 7).split('-').map(Number);
+  const end = to.slice(0, 7);
+  for (;;) {
+    const key = `${y}-${pad2(m)}`;
+    out.push(key);
+    if (key >= end) break;
+    m += 1;
+    if (m > 12) {
+      m = 1;
+      y += 1;
+    }
+  }
+  return out;
+}
+
 function fillGaps(rows: TrendBucket[], from: string, to: string, g: Granularity): TrendBucket[] {
   if (g === 'week' || g === 'month') return rows;   // 周/月的桶键不是连续日期，交给 SQL 的结果原样返回
   const byBucket = new Map(rows.map(r => [r.bucket, r]));

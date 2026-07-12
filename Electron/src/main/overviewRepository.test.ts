@@ -229,9 +229,9 @@ describe('recentActivity', () => {
     expect(rows[0].msSinceLastEvent).toBe(12_000);
   });
 
-  it('treats exactly 5 minutes as not live', () => {
-    // 边界必须钉死，否则「5 分钟内」会在实现里漂成 <= 或 <
-    seedSession(1, 'claude-code', 'p', 5 * 60_000, 1);
+  it('treats exactly 2 minutes as not live', () => {
+    // 边界必须钉死，否则「2 分钟内」会在实现里漂成 <= 或 <
+    seedSession(1, 'claude-code', 'p', 2 * 60_000, 1);
     expect(new OverviewRepository(db, () => NOW).recentActivity(5)[0].isLive).toBe(false);
   });
 
@@ -439,7 +439,7 @@ describe('buildOverview', () => {
 describe('sessionRail', () => {
   it('pins live sessions to the top, each group ordered by most recent, carrying duration and cost', () => {
     seedSession(1, 'claude-code', 'a', 30_000, 100);      // live, 30s 前
-    seedSession(2, 'codex', 'b', 2 * 60_000, 100);        // live, 2min 前
+    seedSession(2, 'codex', 'b', 60_000, 100);            // live, 1min 前
     seedSession(3, 'claude-code', 'c', 20 * 60_000, 100); // 已结束, 20min 前
     seedSession(4, 'codex', 'd', 40 * 60_000, 100);       // 已结束, 40min 前
 
@@ -452,5 +452,64 @@ describe('sessionRail', () => {
     expect(rows[0].firstEventEpochMs).toBe(NOW - 30_000 - 60_000);
     expect(rows[0].costUsdMicros).toBe(1000);
     expect(rows[0].costUnknownEvents).toBe(0);   // 成本可能部分未知，右栏也要能表达
+  });
+});
+
+describe('agentTrend', () => {
+  function seedDaily(date: string, provider: string, tokens: number, costMicros: number) {
+    db.prepare(`INSERT INTO daily_rollup(usage_date, provider_id, source_kind, model_canonical,
+                tokens_input, cost_usd_micros) VALUES (?,?,?,?,?,?)`)
+      .run(date, provider, `${provider}_jsonl`, 'm', tokens, costMicros);
+  }
+
+  it('aggregates tokens and cost per provider per bucket from daily_rollup', () => {
+    seedDaily('2026-07-09', 'claude-code', 100, 5000);
+    seedDaily('2026-07-09', 'codex', 40, 2000);
+    seedDaily('2026-07-10', 'claude-code', 60, 3000);
+
+    const series = new OverviewRepository(db, () => NOW).agentTrend('2026-07-01', '2026-07-10', 'day');
+
+    expect(series.rows).toEqual([
+      { bucket: '2026-07-09', providerId: 'claude-code', tokens: 100, costUsdMicros: 5000, sessions: 0 },
+      { bucket: '2026-07-09', providerId: 'codex', tokens: 40, costUsdMicros: 2000, sessions: 0 },
+      { bucket: '2026-07-10', providerId: 'claude-code', tokens: 60, costUsdMicros: 3000, sessions: 0 }
+    ]);
+    // 完整桶轴：10 天，含无数据的空桶
+    expect(series.buckets).toHaveLength(10);
+    expect(series.buckets[0]).toBe('2026-07-01');
+    expect(series.buckets[9]).toBe('2026-07-10');
+  });
+
+  it('counts distinct merged main sessions, folding sub-agent sessions into their root', () => {
+    seedSession(1, 'codex', 'proj', 60_000, 1000);
+    seedSubSession(2, 'codex', 's1', 'worker', 60_000, 500);
+    seedEvent(101, 1, '2026-07-10T09:00:00');
+    seedEvent(102, 1, '2026-07-10T10:00:00');
+    seedEvent(103, 2, '2026-07-10T11:00:00');   // 子会话事件折回主会话，不另计
+
+    const series = new OverviewRepository(db, () => NOW).agentTrend('2026-07-01', '2026-07-10', 'day');
+
+    const day = series.rows.find(r => r.bucket === '2026-07-10' && r.providerId === 'codex');
+    expect(day?.sessions).toBe(1);
+  });
+
+  it('buckets weeks on Monday and months on YYYY-MM with full axes', () => {
+    const repo = new OverviewRepository(db, () => NOW);
+
+    // 2026-04-18（周六）起 84 天：首桶是其所在周一 2026-04-13
+    const week = repo.agentTrend('2026-04-18', '2026-07-10', 'week');
+    expect(week.buckets[0]).toBe('2026-04-13');
+    expect(week.buckets.every(b => new Date(`${b}T00:00:00`).getDay() === 1)).toBe(true);
+
+    const month = repo.agentTrend('2025-07-11', '2026-07-10', 'month');
+    expect(month.buckets[0]).toBe('2025-07');
+    expect(month.buckets[month.buckets.length - 1]).toBe('2026-07');
+    expect(month.buckets).toHaveLength(13);
+  });
+
+  it('returns empty rows with a full bucket axis when nothing was indexed', () => {
+    const series = new OverviewRepository(db, () => NOW).agentTrend('2026-07-01', '2026-07-10', 'day');
+    expect(series.rows).toEqual([]);
+    expect(series.buckets).toHaveLength(10);
   });
 });
