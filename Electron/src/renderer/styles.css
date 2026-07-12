@@ -8,35 +8,52 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  /* Derived from the user's ghostty "lu-coolnight" palette. */
+  /* coolnight（OpenDesign 设计稿 token，深色原生）。旧 token 名保留，
+     值与设计稿同源对齐；新组件直接用设计稿命名（--fg/--surface2/--s1…）。 */
   --bg: #00111e;                          /* page (palette background) */
-  --sidebar-bg: rgba(8, 22, 36, 0.72);
-  --surface: #0a1826;                     /* card / panel (a step up from bg) */
-  --surface-solid: #0e2033;               /* opaque controls (select, badge) */
-  --surface-hover: #13293d;               /* hover chips, active nav */
-  --track: #0e2236;                       /* progress/bar track */
-  --scrim: rgba(0, 6, 12, 0.62);          /* modal backdrop */
+  --sidebar-bg: #02182a;
+  --surface: #02182a;                     /* card / panel (a step up from bg) */
+  --surface2: #032138;                    /* hover / inset controls */
+  --surface-solid: #032138;               /* opaque controls (select, badge) */
+  --surface-hover: #032138;               /* hover chips, active nav */
+  --track: #032138;                       /* progress/bar track */
+  --scrim: rgba(0, 6, 12, 0.5);           /* modal / drawer backdrop */
 
   --text: #cbe0f0;                        /* foreground */
+  --fg: #cbe0f0;
   --text-bright: #e6f1fb;                 /* headings */
-  --text-secondary: #b8c4dd;              /* nav, quieter labels */
-  --text-muted: #8ea0c4;                  /* captions, footnotes (palette 7-ish) */
+  --text-secondary: #a9b1d6;              /* nav, quieter labels */
+  --fg2: #a9b1d6;
+  --text-muted: #5d84a6;                  /* captions, footnotes */
+  --muted: #5d84a6;
 
-  --border: #1c3d5a;                      /* dividers (between bg and palette 0) */
-  --border-strong: #2d5b82;               /* palette 8 — emphasised edges */
+  --border: #033259;                      /* dividers */
+  --border-strong: #0a4a7a;               /* emphasised edges */
 
-  --accent: #0fc5ed;                      /* palette 4 (blue) — brand / actions */
+  --accent: #0fc5ed;                      /* brand / actions */
   --accent-strong: #35d3f4;               /* hover */
   --accent-text: #011423;                 /* text on the bright accent */
+  --on-accent: #011423;
   --accent-quiet: #5cc4e6;                /* eyebrow / quiet accent text */
   --focus: #0fc5ed;
 
-  --danger: #ff5c5c;                      /* palette 1 lifted for dark-bg legibility */
-  --warning: #ffe073;                     /* palette 3 — "价格未知" tags */
-  --success: #47ff9c;                     /* cursor mint — live pulse / success */
+  --danger: #e52e2e;
+  --warning: #ffe073;                     /* "价格未知" tags */
+  --warn: #ffe073;
+  --success: #44ffb1;                     /* live pulse / success */
+  --ok: #44ffb1;
+  --tint-ok: rgba(68, 255, 177, 0.09);
+  --tint-warn: rgba(255, 224, 115, 0.1);
+  --tint-danger: rgba(229, 46, 46, 0.12);
 
-  --shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  --shadow: 0 18px 48px rgba(0, 4, 10, 0.55);
   --bar-fill: linear-gradient(90deg, #0fc5ed, #24eaf7);
+
+  /* Agent 系列色（设计稿 s1-s4）：Claude Code / Codex / OMP / OpenCode。 */
+  --s1: #0fc5ed;
+  --s2: #a277ff;
+  --s3: #44ffb1;
+  --s4: #ffe073;
 
   /* Chart segment fills (StackedBarChart reads these via --seg-*). Assigned to
      keep adjacent stack segments far apart in hue and to give the dominant
@@ -49,60 +66,78 @@
   --chart-grid: #16324b;
   --chart-axis: #8ea0c4;
 
-  /* Heatmap ramp: OKLCH, monotonic lightness + chroma, hue anchored to the
-     palette green. Empty (heat-0) is a neutral dark blue, like GitHub's gray. */
-  --heat-0: oklch(26% 0.02 235);
-  --heat-1: oklch(42% 0.09 172);
-  --heat-2: oklch(56% 0.13 168);
-  --heat-3: oklch(70% 0.16 162);
-  --heat-4: oklch(84% 0.19 158);
+  /* Heatmap ramp（设计稿 h0-h4，青色阶，锚定品牌色相）。 */
+  --heat-0: #04263c;
+  --heat-1: #085a78;
+  --heat-2: #0a86ab;
+  --heat-3: #0fc5ed;
+  --heat-4: #7ce4fa;
+
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-d: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
 }
 
 :root[data-theme="light"] {
-  /* The original OKLCH design, preserved unchanged as the secondary theme. */
+  /* 设计稿的浅色派生（coolnight light）。 */
   color-scheme: light;
 
-  --bg: oklch(97% 0.006 255);
-  --sidebar-bg: oklch(95% 0.01 255 / 0.86);
-  --surface: oklch(99% 0.004 255 / 0.82);
-  --surface-solid: oklch(99% 0.004 255);
-  --surface-hover: oklch(90% 0.015 255);
-  --track: oklch(91% 0.012 255);
-  --scrim: oklch(20% 0.02 255 / 0.4);
+  --bg: #f2f7fb;
+  --sidebar-bg: #ffffff;
+  --surface: #ffffff;
+  --surface2: #e9f1f7;
+  --surface-solid: #ffffff;
+  --surface-hover: #e9f1f7;
+  --track: #e9f1f7;
+  --scrim: rgba(10, 37, 64, 0.35);
 
-  --text: oklch(24% 0.012 255);
-  --text-bright: oklch(22% 0.02 255);
-  --text-secondary: oklch(36% 0.016 255);
-  --text-muted: oklch(52% 0.012 255);
+  --text: #0a2540;
+  --fg: #0a2540;
+  --text-bright: #071b30;
+  --text-secondary: #3d5a78;
+  --fg2: #3d5a78;
+  --text-muted: #4a6b8a;
+  --muted: #4a6b8a;
 
-  --border: oklch(88% 0.01 255);
-  --border-strong: oklch(82% 0.012 255);
+  --border: #d8e6f0;
+  --border-strong: #b9d2e3;
 
-  --accent: oklch(30% 0.045 255);
-  --accent-strong: oklch(34% 0.05 255);
-  --accent-text: oklch(98% 0.004 255);
-  --accent-quiet: oklch(47% 0.08 250);
-  --focus: oklch(62% 0.13 250);
+  --accent: #0895bd;
+  --accent-strong: #0aa8d4;
+  --accent-text: #ffffff;
+  --on-accent: #ffffff;
+  --accent-quiet: #0b6e93;
+  --focus: #0895bd;
 
-  --danger: oklch(42% 0.16 30);
-  --warning: oklch(52% 0.11 60);
-  --success: oklch(64% 0.17 150);
+  --danger: #c92a2a;
+  --warning: #9a7500;
+  --warn: #9a7500;
+  --success: #0f9d6e;
+  --ok: #0f9d6e;
+  --tint-ok: rgba(15, 157, 110, 0.1);
+  --tint-warn: rgba(154, 117, 0, 0.12);
+  --tint-danger: rgba(201, 42, 42, 0.1);
 
-  --shadow: 0 18px 48px oklch(35% 0.03 255 / 0.08);
-  --bar-fill: linear-gradient(90deg, oklch(56% 0.18 260), oklch(70% 0.16 205));
+  --shadow: 0 18px 48px rgba(10, 37, 64, 0.14);
+  --bar-fill: linear-gradient(90deg, #0895bd, #2b96bd);
 
-  --seg-input: oklch(66% 0.14 250);
-  --seg-cache-write: oklch(78% 0.13 80);
-  --seg-cache-read: oklch(62% 0.15 300);
-  --seg-output: oklch(70% 0.13 160);
-  --chart-grid: oklch(90% 0.008 255);
-  --chart-axis: oklch(55% 0.012 255);
+  --s1: #0895bd;
+  --s2: #7a4fe0;
+  --s3: #0f9d6e;
+  --s4: #9a7500;
 
-  --heat-0: oklch(92% 0.008 255);
-  --heat-1: oklch(84% 0.07 150);
-  --heat-2: oklch(74% 0.12 150);
-  --heat-3: oklch(64% 0.15 150);
-  --heat-4: oklch(52% 0.16 150);
+  --seg-input: #0895bd;
+  --seg-cache-write: #0f9d6e;
+  --seg-cache-read: #7a4fe0;
+  --seg-output: #2b96bd;
+  --chart-grid: #e0ebf3;
+  --chart-axis: #4a6b8a;
+
+  --heat-0: #e4eef5;
+  --heat-1: #b5dcea;
+  --heat-2: #6cbcd9;
+  --heat-3: #2b96bd;
+  --heat-4: #0b6e93;
 }
 
 :root {
@@ -154,11 +189,11 @@ select {
   font: inherit;
 }
 
-.app-shell {
-  min-height: 100vh;
-  display: grid;
-  grid-template-columns: 248px 1fr;
-  /* 纯色，不做渐变——之前的角落径向光晕 + 对角线性渐变在深色背景下不好看。 */
+/* ── App shell（OpenDesign 稿：侧栏 210px + 滚动主区）────────────────── */
+.app {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
   background: var(--bg);
   /* 概览页的响应式走容器查询，查询本层的宽度（≈窗口宽），不装 JS resize 监听——
      窗口 resize 时的 re-render 是常驻内存与 CPU 的主要来源之一（spec §7.5）。 */
@@ -167,63 +202,164 @@ select {
 }
 
 .sidebar {
+  width: 210px;
+  flex: none;
   border-right: 1px solid var(--border);
-  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  padding: 0 10px 12px;
   background: var(--sidebar-bg);
   /* 不加 backdrop-filter: blur()。实测（Phase 2A Task 10）它让 GPU 进程常驻多占 ~135MB
-     物理内存（IOSurface 38MB→147MB）——而侧栏背后只有一层静态渐变，模糊几乎不可见。
-     常驻工具应用不该为一个看不出来的效果付这个代价。 */
+     物理内存（IOSurface 38MB→147MB）。常驻工具应用不该为一个看不出来的效果付这个代价。 */
 }
 
-.brand-block {
+/* hiddenInset 标题栏：顶部留出系统红绿灯的高度，整条可拖动窗口。 */
+.sidebar-drag {
+  height: 38px;
+  flex: none;
+  -webkit-app-region: drag;
+}
+
+.brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  padding: 0 6px 16px;
 }
 
-.brand-mark {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  color: var(--accent-text);
-  background: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+.brand svg {
+  flex: none;
 }
 
-.sidebar nav {
-  display: grid;
-  gap: 10px;
-  margin-top: 32px;
+.brand b {
+  font-family: var(--font-d);
+  font-size: 15px;
+  letter-spacing: -0.02em;
+  color: var(--text-bright);
 }
 
-.sidebar button {
-  text-align: left;
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
   border: 0;
-  border-radius: 10px;
-  padding: 10px 12px;
-  color: var(--text-secondary);
+  border-radius: 6px;
+  color: var(--fg2);
   background: transparent;
+  text-align: left;
+  font-size: 13px;
   cursor: pointer;
 }
 
-.sidebar button.active,
-.sidebar button:hover {
-  color: var(--text-bright);
-  background: var(--surface-hover);
+.nav button svg {
+  flex: none;
+  opacity: 0.8;
 }
 
-.sidebar button:focus-visible,
+.nav button:hover {
+  background: var(--surface2);
+}
+
+.nav button.on {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.nav button.on svg {
+  opacity: 1;
+}
+
+.nav button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.nav button:disabled:hover {
+  background: transparent;
+}
+
+.nav button:focus-visible,
 select:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 
+.side-foot {
+  margin-top: auto;
+  padding: 10px 6px 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.side-foot .scan {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.theme-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: var(--fg2);
+  background: none;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.theme-btn:hover {
+  background: var(--surface2);
+}
+
+.main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px 26px 40px;
+}
+
+.view {
+  max-width: 1240px;
+}
+
+.vhead {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.vhead h1 {
+  font-family: var(--font-d);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-bright);
+  margin: 0;
+  line-height: 1.3;
+}
+
+.vhead .sub {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.vhead .spacer {
+  flex: 1;
+}
+
 .content {
-  padding: 40px 48px;
   max-width: 1120px;
 }
 
@@ -453,22 +589,55 @@ select {
 }
 
 @media (max-width: 760px) {
-  .app-shell {
-    grid-template-columns: 1fr;
+  .app {
+    flex-direction: column;
   }
 
   .sidebar {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    padding: 8px 12px;
+    gap: 4px;
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
 
-  .sidebar nav,
+  .sidebar-drag {
+    display: none;
+  }
+
+  .brand {
+    padding: 0 10px 0 0;
+  }
+
+  .nav {
+    flex-direction: row;
+    flex: 1;
+    overflow-x: auto;
+  }
+
+  .nav button {
+    white-space: nowrap;
+    padding: 6px 10px;
+  }
+
+  .side-foot {
+    margin: 0;
+    padding: 0;
+    border: none;
+  }
+
+  .side-foot .scan {
+    display: none;
+  }
+
   .placeholder-grid {
     grid-template-columns: 1fr 1fr;
   }
 
-  .content {
-    padding: 28px 22px;
+  .main {
+    padding: 16px 14px 32px;
   }
 }
 
@@ -1187,5 +1356,538 @@ select {
   }
   .subagent-modal__overlay {
     animation: none;
+  }
+}
+
+/* ══ OpenDesign 稿组件层（总览页 + 通用）══════════════════════════════
+   类名与设计稿一一对应（card/stat/seg/pill/lcard/heat…），便于对照校准。
+   表格样式收窄到 .card 内，避免波及旧页面的既有表格。 */
+
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.card h2 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 0 0 2px;
+}
+
+.card .desc {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.chead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.chead .spacer {
+  flex: 1;
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.seg button {
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--fg2);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.seg button + button {
+  border-left: 1px solid var(--border);
+}
+
+.seg button.on {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.pill.ok { background: var(--tint-ok); color: var(--ok); }
+.pill.warn { background: var(--tint-warn); color: var(--warn); }
+.pill.danger { background: var(--tint-danger); color: var(--danger); }
+.pill.run { background: var(--surface2); color: var(--accent); }
+
+.unk {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.unk::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+  margin-right: 5px;
+  vertical-align: 1px;
+}
+
+.card table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.card th {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: left;
+  padding: 0 10px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.card th.r,
+.card td.r {
+  text-align: right;
+}
+
+.card td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  vertical-align: middle;
+}
+
+.card tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.card tbody tr:hover td {
+  background: var(--surface2);
+}
+
+.bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface2);
+  overflow: hidden;
+  min-width: 60px;
+}
+
+.bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.mbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mbar .bar {
+  flex: 1;
+}
+
+.btn {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--fg2);
+  background: none;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: var(--surface2);
+  color: var(--fg);
+}
+
+.btn.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+/* ── 总览：指标 ── */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.stat .lb {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.stat .v {
+  font-family: var(--font-d);
+  font-size: 27px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--text-bright);
+}
+
+.stat .sb {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+/* ── 总览：实时会话卡 ── */
+.live-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  gap: 10px;
+}
+
+.lcard {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.15s;
+}
+
+.lcard:hover {
+  border-color: var(--accent);
+}
+
+.lc-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.lc-top .proj {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lc-top .last {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.lcard .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--muted);
+}
+
+.lcard[data-state="running"] .dot {
+  background: var(--ok);
+  animation: tm-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes tm-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(68, 255, 177, 0.45); }
+  55% { box-shadow: 0 0 0 5px rgba(68, 255, 177, 0); }
+}
+
+.lc-model {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--fg2);
+  background: var(--surface2);
+  border-radius: 4px;
+  padding: 1px 6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lc-nums {
+  display: flex;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--fg2);
+}
+
+.lc-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--border);
+  padding-top: 7px;
+  margin-top: auto;
+}
+
+.lc-foot .state {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.lcard[data-state="running"] .state {
+  color: var(--ok);
+}
+
+.agbtn {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--accent);
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+}
+
+.agbtn:hover {
+  background: var(--surface2);
+}
+
+.live-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.live-tag::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: tm-pulse 1.6s ease-in-out infinite;
+}
+
+/* ── 总览：趋势图轴/图例 ── */
+.chart-wrap {
+  position: relative;
+}
+
+.chart-wrap svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.yticks {
+  position: absolute;
+  right: 0;
+  top: 2%;
+  bottom: 9%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  font: 10px var(--mono);
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.xlabels {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 56px 0 8px;
+  font: 10px var(--mono);
+  color: var(--muted);
+}
+
+.legend {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.legend .it {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--fg2);
+}
+
+.legend .it i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.legend .it .num {
+  color: var(--fg);
+}
+
+.i1 { background: var(--s1); }
+.i2 { background: var(--s2); }
+.i3 { background: var(--s3); }
+.i4 { background: var(--s4); }
+
+.note {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 10px;
+}
+
+/* ── 总览：全年活跃度 ── */
+.heatbox {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.months {
+  position: relative;
+  height: 14px;
+  font: 10px var(--mono);
+  color: var(--muted);
+  min-width: 648px;
+}
+
+.months span {
+  position: absolute;
+  top: 0;
+}
+
+.heat {
+  display: grid;
+  grid-template-rows: repeat(7, 9px);
+  grid-auto-flow: column;
+  grid-auto-columns: 9px;
+  gap: 3px;
+  min-width: 648px;
+}
+
+.heat i {
+  border-radius: 2px;
+  background: var(--heat-0);
+}
+
+.heat i[data-l="1"] { background: var(--heat-1); }
+.heat i[data-l="2"] { background: var(--heat-2); }
+.heat i[data-l="3"] { background: var(--heat-3); }
+.heat i[data-l="4"] { background: var(--heat-4); }
+
+.heat i:hover {
+  outline: 1px solid var(--fg);
+  outline-offset: 1px;
+}
+
+.heat-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.hscale {
+  display: flex;
+  gap: 3px;
+}
+
+.hscale i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--heat-0);
+}
+
+.hscale i[data-l="1"] { background: var(--heat-1); }
+.hscale i[data-l="2"] { background: var(--heat-2); }
+.hscale i[data-l="3"] { background: var(--heat-3); }
+.hscale i[data-l="4"] { background: var(--heat-4); }
+
+/* ── 模型标签（模型排行 / 会话卡通用）── */
+.mname {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--fg2);
+  background: var(--surface2);
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+@media (max-width: 1024px) {
+  .stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .stats {
+    gap: 10px;
+  }
+
+  .stat .v {
+    font-size: 22px;
+  }
+
+  .vhead h1 {
+    font-size: 17px;
   }
 }

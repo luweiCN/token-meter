@@ -63,8 +63,18 @@ export function AppShell() {
     };
   }, [refreshIndexStatus]);
 
+  const lastScanEpochMs =
+    indexStatusState.kind === 'loaded'
+      ? indexStatusState.status.roots.reduce<number | null>((latest, root) => {
+          if (root.lastScanFinishedAt === null) return latest;
+          const ms = Date.parse(root.lastScanFinishedAt);
+          if (Number.isNaN(ms)) return latest;
+          return latest === null || ms > latest ? ms : latest;
+        }, null)
+      : null;
+
   return (
-    <Layout route={route} onRoute={setRoute}>
+    <Layout route={route} onRoute={setRoute} lastScanEpochMs={lastScanEpochMs}>
       {route === 'dashboard' && <Overview />}
       {route === 'sessions' && <Sessions />}
       {route === 'index' && <IndexStatus indexState={indexStatusState} onRefresh={refreshIndexStatus} />}

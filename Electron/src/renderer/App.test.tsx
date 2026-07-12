@@ -272,10 +272,13 @@ describe('AppShell renderer routes', () => {
     render(<AppShell />);
 
     const nav = screen.getByRole('navigation');
-    expect(within(nav).getByRole('button', { name: '概览' }).getAttribute('aria-current')).toBe('page');
+    expect(within(nav).getByRole('button', { name: '总览' }).getAttribute('aria-current')).toBe('page');
     expect(within(nav).getByRole('button', { name: '会话' }).getAttribute('aria-current')).toBeNull();
     expect(within(nav).getByRole('button', { name: '索引状态' }).getAttribute('aria-current')).toBeNull();
     expect(within(nav).getByRole('button', { name: '设置' }).getAttribute('aria-current')).toBeNull();
+    // 「项目」「查询」的页面稿未接入：先渲染禁用态占位，不产生路由。
+    expect((within(nav).getByRole('button', { name: '项目' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(nav).getByRole('button', { name: '查询' }) as HTMLButtonElement).disabled).toBe(true);
     expect(document.querySelectorAll('a:not([href])')).toHaveLength(0);
     expectNoEnglishScaffold();
   });

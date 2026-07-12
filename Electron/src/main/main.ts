@@ -17,6 +17,8 @@ export function createWindow(): BrowserWindow {
     height: 760,
     // 概览页在约 720px 以下无处可去（右栏已收进浮层、主区已单列），设下限止损（spec §7.5）。
     minWidth: 720,
+    // OpenDesign 稿：红绿灯融进侧栏顶部（.sidebar-drag 留出拖拽区）。
+    titleBarStyle: 'hiddenInset',
     webPreferences: {
       preload: path.join(__dirname, '../preload.js'),
       nodeIntegration: false,
