@@ -8,7 +8,8 @@ public enum TokenMeterDatabaseSchema {
     /// 「已是最新」而跳过重建，永远建不出 usage_events。取 4（大于历史最大值 3）保证任何遗留库
     /// （user_version ∈ 0/1/2/3）都与之不等，从而在下次启动时触发一次重建。
     /// 5：agent_sessions 加 root_session_key/subagent_label、source_files 加 subagent_label（子代理归并）
-    public static let derivedVersion: Int64 = 5
+    /// 6：价格快照更新（新收 gpt-5.6 系列等），重建以重算既有 unknown 事件的成本
+    public static let derivedVersion: Int64 = 6
 
     /// 用户配置。永不删除。这三张表存的是无法从会话文件重建的东西：
     /// - settings：过滤器 / 菜单栏偏好 / 自动刷新间隔

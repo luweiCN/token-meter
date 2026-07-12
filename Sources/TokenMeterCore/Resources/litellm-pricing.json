@@ -1799,6 +1799,34 @@
       "inputPerMTok": 5.0,
       "outputPerMTok": 30.0
     },
+    "gpt-5.6": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 30.0
+    },
+    "gpt-5.6-luna": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 6.0
+    },
+    "gpt-5.6-sol": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 30.0
+    },
+    "gpt-5.6-terra": {
+      "cacheReadPerMTok": 0.25,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 15.0
+    },
     "gpt-audio": {
       "cacheReadPerMTok": 0.25,
       "cacheWrite1hPerMTok": 5.0,
@@ -1861,6 +1889,20 @@
       "cacheWrite5mPerMTok": 5.0,
       "inputPerMTok": 4.0,
       "outputPerMTok": 16.0
+    },
+    "gpt-realtime-2.1": {
+      "cacheReadPerMTok": 0.4,
+      "cacheWrite1hPerMTok": 8.0,
+      "cacheWrite5mPerMTok": 5.0,
+      "inputPerMTok": 4.0,
+      "outputPerMTok": 24.0
+    },
+    "gpt-realtime-2.1-mini": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.4
     },
     "gpt-realtime-2025-08-28": {
       "cacheReadPerMTok": 0.4,
@@ -2472,6 +2514,6 @@
       "outputPerMTok": 4.4
     }
   },
-  "snapshotVersion": "15fa4dcef699",
+  "snapshotVersion": "cb3c10a0fcd7",
   "source": "litellm"
 }
