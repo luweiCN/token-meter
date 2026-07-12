@@ -1,0 +1,13 @@
+{
+  "_comment": "litellm 上游缺失或滞后的模型在这里手动登记官方牌价。update-pricing.sh 会把它合并进快照（override 无条件优先）。上游后来收录同名模型时脚本会告警，届时应删掉对应条目改用上游价。note 字段仅作出处记录，不进快照。",
+  "models": {
+    "glm-5.2": {
+      "inputPerMTok": 1.4,
+      "outputPerMTok": 4.4,
+      "cacheReadPerMTok": 0.26,
+      "cacheWrite5mPerMTok": 0.0,
+      "cacheWrite1hPerMTok": 0.0,
+      "note": "z.ai 官方牌价（docs.z.ai/guides/overview/pricing，2026-07-13 查证）：input $1.4 / cached $0.26 / output $4.4，与 glm-5.1 同价；缓存写入存储限时免费，故 5m/1h 写入价为 0"
+    }
+  }
+}

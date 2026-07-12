@@ -11,7 +11,7 @@ mkdir -p "$(dirname "$OUT")"
 # 就会在磁盘上留下一个空快照，而 loadBundled() 只在运行时才会发现。
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
-curl -fsSL "$URL" | python3 scripts/transform_pricing.py > "$TMP"
+curl -fsSL "$URL" | python3 scripts/transform_pricing.py scripts/pricing-overrides.json > "$TMP"
 mv "$TMP" "$OUT"
 
 count=$(python3 -c "import json;print(len(json.load(open('$OUT'))['models']))")

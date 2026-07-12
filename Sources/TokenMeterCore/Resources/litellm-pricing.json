@@ -7021,6 +7021,13 @@
       "inputPerMTok": 0.75,
       "outputPerMTok": 4.5
     },
+    "glm-5.2": {
+      "cacheReadPerMTok": 0.26,
+      "cacheWrite1hPerMTok": 0.0,
+      "cacheWrite5mPerMTok": 0.0,
+      "inputPerMTok": 1.4,
+      "outputPerMTok": 4.4
+    },
     "global.amazon.nova-2-lite-v1:0": {
       "cacheReadPerMTok": 0.075,
       "cacheWrite1hPerMTok": 0.6,
@@ -14694,6 +14701,6 @@
       "outputPerMTok": 4.4
     }
   },
-  "snapshotVersion": "312c3508cf78",
+  "snapshotVersion": "e1fd2f3e5c04",
   "source": "litellm"
 }

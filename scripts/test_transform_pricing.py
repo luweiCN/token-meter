@@ -12,6 +12,7 @@ import unittest
 
 from transform_pricing import (
     PROVIDER_PREFIXES,
+    apply_overrides,
     canonical,
     convert_model,
     divergent_collisions,
@@ -128,6 +129,34 @@ class CanonicalTests(unittest.TestCase):
         self.assertEqual(canonical("omniroute/cx/gpt-5.5"), "gpt-5.5")   # 叠加前缀循环剥离
         self.assertEqual(canonical("gpt-5.5-xhigh"), "gpt-5.5")          # 网关档位别名归一到基础模型
         self.assertEqual(canonical("mistral-medium"), "mistral-medium")  # medium 是尺寸不是档位，不剥
+
+
+class OverrideTests(unittest.TestCase):
+    PRICE = {
+        "inputPerMTok": 1.4,
+        "outputPerMTok": 4.4,
+        "cacheReadPerMTok": 0.26,
+        "cacheWrite5mPerMTok": 0.0,
+        "cacheWrite1hPerMTok": 0.0,
+    }
+
+    def test_fills_model_missing_upstream(self):
+        models = apply_overrides({}, {"glm-5.2": {**self.PRICE, "note": "出处备忘"}})
+        self.assertEqual(models["glm-5.2"], self.PRICE)  # note 不进快照
+
+    def test_override_wins_and_warns_when_upstream_has_it(self):
+        upstream = {"zai/glm-5.2": {**self.PRICE, "inputPerMTok": 9.9}}
+        import contextlib, io
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            models = apply_overrides(upstream, {"glm-5.2": dict(self.PRICE)})
+        # override 与上游归一后同名：override 键胜出（字典序也保证 glm-5.2 < zai/glm-5.2）
+        self.assertEqual(models["glm-5.2"], self.PRICE)
+        self.assertIn("考虑删除这条 override", stderr.getvalue())
+
+    def test_dies_on_missing_price_field(self):
+        with self.assertRaises(SystemExit):
+            apply_overrides({}, {"glm-5.2": {"inputPerMTok": 1.4}})
 
 
 class DivergentCollisionTests(unittest.TestCase):

@@ -85,6 +85,30 @@ def canonical(name: str) -> str:
     return name or "unknown"
 
 
+PRICE_FIELDS = ("inputPerMTok", "outputPerMTok", "cacheReadPerMTok", "cacheWrite5mPerMTok", "cacheWrite1hPerMTok")
+
+
+def apply_overrides(models: dict, overrides: dict) -> dict:
+    """手动登记价合并进快照，override 无条件优先。
+
+    litellm 缺谁补谁（glm-5.2 发布数月上游仍未收录）。上游后来收录时这里
+    会告警，提醒删掉过时的 override 改用上游价。note 等说明字段不进快照。
+    """
+    for name, spec in overrides.items():
+        missing = [f for f in PRICE_FIELDS if f not in spec]
+        if missing:
+            sys.exit(f"error: override {name} 缺价格字段 {missing}")
+        upstream = [k for k in models if canonical(k) == canonical(name)]
+        if upstream:
+            print(
+                f"warning: 上游已收录与 override {name} 同名的模型 {upstream}，"
+                "考虑删除这条 override 改用上游价",
+                file=sys.stderr,
+            )
+        models[name] = {f: spec[f] for f in PRICE_FIELDS}
+    return models
+
+
 def divergent_collisions(models: dict) -> list:
     """归一后撞名、但价格不一致的组。
 
@@ -105,6 +129,11 @@ def divergent_collisions(models: dict) -> list:
 def main() -> None:
     raw = json.load(sys.stdin)
     models = {name: convert_model(spec) for name, spec in raw.items() if should_keep(name, spec)}
+
+    # argv[1]: 手动登记价文件（scripts/pricing-overrides.json），在撞名审计前合并
+    if len(sys.argv) > 1:
+        with open(sys.argv[1]) as f:
+            apply_overrides(models, json.load(f)["models"])
 
     for name, keys in divergent_collisions(models):
         print(f"warning: {name} 撞名且价格不一致，将按 {keys[0]} 计价", file=sys.stderr)
