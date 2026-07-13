@@ -453,12 +453,16 @@ private final class ThinScroller: NSScroller {
     /// 并重绘——用自身宽度判定展开态，随之加宽 knob、加深颜色、显出轨道。
     private var isExpanded: Bool { bounds.width >= 14 }
 
+    /// knob 与轨道一律【右缘锚定】：展开时 scroller 区域向左加宽，若按中点
+    /// 定位，knob 会随中点左移——右边距恒定才是「原地变宽」的观感。
+    private let trailingInset: CGFloat = 3
+
     override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
         guard isExpanded else { return }   // 常态无槽；悬停展开时垫一条淡轨道作高亮
         NSColor.tertiaryLabelColor.withAlphaComponent(0.12).setFill()
         let width: CGFloat = 9
         let track = NSRect(
-            x: slotRect.midX - width / 2,
+            x: bounds.width - trailingInset - width,
             y: slotRect.minY + 2,
             width: width,
             height: slotRect.height - 4
@@ -470,7 +474,7 @@ private final class ThinScroller: NSScroller {
         let knob = rect(for: .knob)
         let width: CGFloat = isExpanded ? 7 : 4
         let inset = NSRect(
-            x: knob.midX - width / 2,
+            x: bounds.width - trailingInset - width - (isExpanded ? 1 : 0),
             y: knob.origin.y + 2,
             width: width,
             height: max(24, knob.height - 4)
