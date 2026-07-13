@@ -2,33 +2,75 @@ import AppKit
 import SwiftUI
 import TokenMeterCore
 
-/// coolnight（OpenDesign 稿）的弹窗色板。弹窗是深色品牌面板，不随系统外观切换——
-/// 设计稿只定义了深色形态。
-enum Coolnight {
-    static let bg = Color(red: 0x00 / 255.0, green: 0x11 / 255.0, blue: 0x1E / 255.0)
-    static let surface = Color(red: 0x02 / 255.0, green: 0x18 / 255.0, blue: 0x2A / 255.0)
-    static let surface2 = Color(red: 0x03 / 255.0, green: 0x21 / 255.0, blue: 0x38 / 255.0)
-    static let fg = Color(red: 0xCB / 255.0, green: 0xE0 / 255.0, blue: 0xF0 / 255.0)
-    static let fg2 = Color(red: 0xA9 / 255.0, green: 0xB1 / 255.0, blue: 0xD6 / 255.0)
-    static let muted = Color(red: 0x5D / 255.0, green: 0x84 / 255.0, blue: 0xA6 / 255.0)
-    static let border = Color(red: 0x03 / 255.0, green: 0x32 / 255.0, blue: 0x59 / 255.0)
-    static let accent = Color(red: 0x0F / 255.0, green: 0xC5 / 255.0, blue: 0xED / 255.0)
-    static let ok = Color(red: 0x44 / 255.0, green: 0xFF / 255.0, blue: 0xB1 / 255.0)
-    static let warn = Color(red: 0xFF / 255.0, green: 0xE0 / 255.0, blue: 0x73 / 255.0)
-    static let danger = Color(red: 0xE5 / 255.0, green: 0x2E / 255.0, blue: 0x2E / 255.0)
+// MARK: - 主题（OpenDesign 稿 coolnight，深色原生 / 浅色派生，随弹窗右上角按钮切换）
+
+struct MBTheme: Equatable {
+    let bg: Color
+    let surface: Color
+    let surface2: Color
+    let fg: Color
+    let fg2: Color
+    let muted: Color
+    let border: Color
+    let accent: Color
+    let onAccent: Color
+    let ok: Color
+    let warn: Color
+    let danger: Color
+    let tintWarn: Color
+    let tintDanger: Color
+
+    static let dark = MBTheme(
+        bg: Color(hex: 0x00111E), surface: Color(hex: 0x02182A), surface2: Color(hex: 0x032138),
+        fg: Color(hex: 0xCBE0F0), fg2: Color(hex: 0xA9B1D6), muted: Color(hex: 0x5D84A6),
+        border: Color(hex: 0x033259), accent: Color(hex: 0x0FC5ED), onAccent: Color(hex: 0x011423),
+        ok: Color(hex: 0x44FFB1), warn: Color(hex: 0xFFE073), danger: Color(hex: 0xE52E2E),
+        tintWarn: Color(hex: 0xFFE073).opacity(0.1), tintDanger: Color(hex: 0xE52E2E).opacity(0.12)
+    )
+
+    static let light = MBTheme(
+        bg: Color(hex: 0xF2F7FB), surface: Color(hex: 0xFFFFFF), surface2: Color(hex: 0xE9F1F7),
+        fg: Color(hex: 0x0A2540), fg2: Color(hex: 0x3D5A78), muted: Color(hex: 0x4A6B8A),
+        border: Color(hex: 0xD8E6F0), accent: Color(hex: 0x0895BD), onAccent: Color(hex: 0xFFFFFF),
+        ok: Color(hex: 0x0F9D6E), warn: Color(hex: 0x9A7500), danger: Color(hex: 0xC92A2A),
+        tintWarn: Color(hex: 0x9A7500).opacity(0.12), tintDanger: Color(hex: 0xC92A2A).opacity(0.1)
+    )
 
     /// agent 系列色 s1-s4（与主窗口图例一致）。名单外的 provider 用 muted。
-    static func seriesColor(_ providerId: String) -> Color {
+    func seriesColor(_ providerId: String) -> Color {
         switch providerId {
         case "claude-code": return accent
-        case "codex": return Color(red: 0xA2 / 255.0, green: 0x77 / 255.0, blue: 0xFF / 255.0)
+        case "codex": return self == .light ? Color(hex: 0x7A4FE0) : Color(hex: 0xA277FF)
         case "omp": return ok
         case "opencode": return warn
         default: return muted
         }
     }
+}
 
-    static func providerLabel(_ providerId: String) -> String {
+extension Color {
+    init(hex: UInt32) {
+        self.init(
+            red: Double((hex >> 16) & 0xFF) / 255.0,
+            green: Double((hex >> 8) & 0xFF) / 255.0,
+            blue: Double(hex & 0xFF) / 255.0
+        )
+    }
+}
+
+private struct MBThemeKey: EnvironmentKey {
+    static let defaultValue = MBTheme.dark
+}
+
+extension EnvironmentValues {
+    var mbTheme: MBTheme {
+        get { self[MBThemeKey.self] }
+        set { self[MBThemeKey.self] = newValue }
+    }
+}
+
+enum MenuBarProviderName {
+    static func label(_ providerId: String) -> String {
         switch providerId {
         case "claude-code": return "Claude Code"
         case "codex": return "Codex CLI"
@@ -53,27 +95,26 @@ enum MenuBarNumberFormat {
     }
 }
 
+// MARK: - 弹窗主体（.panel：head / today / srcline / 按服务商 / 订阅额度 / unk / foot）
+
 struct PopoverView: View {
     @ObservedObject var store: ProviderStore
-    @State private var activeTooltipID: String?
     @State private var measuredContentHeight: CGFloat = 0
+    @AppStorage("menubarTheme") private var themeName = "dark"
     let initialPanelHeight: CGFloat
     let maxPanelHeight: CGFloat
     let onPreferredHeightChange: (CGFloat) -> Void
     var onOpenMainInterface: () -> Void = {}
 
-    /// 头部（日期行 + 大数字）+ 底部操作行的固定高度。
-    private let chromeHeight: CGFloat = 158
+    /// 固定不随内容滚动的高度：head + today + srcline ≈ 118，foot ≈ 42。
+    private let chromeHeight: CGFloat = 160
+
+    private var theme: MBTheme { themeName == "light" ? .light : .dark }
 
     private var panelHeight: CGFloat {
-        guard !store.providerSnapshots.isEmpty || !store.todaySummary.perProvider.isEmpty else {
-            return min(maxPanelHeight, 280)
-        }
-
         guard measuredContentHeight > 20 else {
             return min(maxPanelHeight, initialPanelHeight)
         }
-
         return min(maxPanelHeight, chromeHeight + measuredContentHeight)
     }
 
@@ -82,8 +123,9 @@ struct PopoverView: View {
             panelContent(currentHeight: proxy.size.height > 20 ? proxy.size.height : panelHeight)
         }
         .frame(width: 378)
-        .background(Coolnight.bg)
-        .environment(\.colorScheme, .dark)
+        .background(theme.bg)
+        .environment(\.mbTheme, theme)
+        .environment(\.colorScheme, themeName == "light" ? .light : .dark)
         .onAppear {
             store.reloadTodaySummary()
             onPreferredHeightChange(panelHeight)
@@ -98,101 +140,116 @@ struct PopoverView: View {
 
     private func panelContent(currentHeight: CGFloat) -> some View {
         VStack(spacing: 0) {
-            header
+            PanelHead(store: store, themeName: $themeName)
+            TodayBlock(summary: store.todaySummary)
+            SourceLine(text: sourceLineText)
 
-            if store.providerSnapshots.isEmpty && store.todaySummary.perProvider.isEmpty {
-                emptyState
-            } else {
-                ThinScrollView { height in
-                    if abs(measuredContentHeight - height) > 0.5 {
-                        measuredContentHeight = height
-                    }
-                } content: {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if !store.todaySummary.perProvider.isEmpty {
-                            TodayByProviderSection(summary: store.todaySummary)
-                        }
+            ThinScrollView { height in
+                if abs(measuredContentHeight - height) > 0.5 {
+                    measuredContentHeight = height
+                }
+            } content: {
+                VStack(alignment: .leading, spacing: 0) {
+                    PanelDivider()
 
-                        if !store.providerSnapshots.isEmpty {
-                            SectionTitle(text: "订阅额度")
-                            ForEach(store.providerSnapshots, id: \.providerId) { snapshot in
-                                ProviderCardView(
-                                    snapshot: snapshot,
-                                    activeTooltipID: $activeTooltipID
-                                )
+                    if !store.todaySummary.perProvider.isEmpty {
+                        SectionBlock(title: "今日 · 按服务商") {
+                            VStack(spacing: 0) {
+                                ForEach(store.todaySummary.perProvider, id: \.providerId) { row in
+                                    ProviderRow(row: row)
+                                }
                             }
                         }
+                        PanelDivider()
+                    }
 
-                        if store.todaySummary.unknownEvents > 0 {
-                            UnknownCostFootnote(count: store.todaySummary.unknownEvents)
+                    if !store.providerSnapshots.isEmpty {
+                        SectionBlock(title: "订阅额度") {
+                            VStack(spacing: 8) {
+                                ForEach(store.providerSnapshots, id: \.providerId) { snapshot in
+                                    QuotaGroupView(snapshot: snapshot) {
+                                        Task { await store.refresh() }
+                                    }
+                                }
+                            }
                         }
                     }
-                    .padding(12)
-                }
-                .frame(height: scrollViewportHeight(for: currentHeight))
-            }
 
-            footer
+                    if store.todaySummary.unknownEvents > 0 {
+                        UnknownNote(count: store.todaySummary.unknownEvents)
+                    }
+                }
+            }
+            .frame(height: max(1, currentHeight - chromeHeight))
+
+            PanelDivider()
+            FootBar(
+                isScanPaused: $store.isScanPaused,
+                onOpenMainInterface: onOpenMainInterface
+            )
         }
         .frame(width: 378, height: currentHeight)
     }
 
-    private func scrollViewportHeight(for currentHeight: CGFloat) -> CGFloat {
-        max(1, currentHeight - chromeHeight)
+    private var sourceLineText: String {
+        guard let updatedAt = store.localIndexUpdatedAt else { return store.localIndexStatusText }
+        let minutes = max(0, Int(Date().timeIntervalSince(updatedAt) / 60))
+        let ago = minutes == 0 ? "刚刚" : "\(minutes) 分钟前"
+        return "\(store.localIndexStatusText) · \(ago)"
     }
+}
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                BrandMark()
-                Text("TokenMeter")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Coolnight.fg)
-                    .lineLimit(1)
+// MARK: - .head：logo + TokenMeter + 日期 + 主题按钮
 
-                Spacer()
+private struct PanelHead: View {
+    @ObservedObject var store: ProviderStore
+    @Binding var themeName: String
+    @Environment(\.mbTheme) private var theme
 
-                NotificationPermissionControl(store: store)
+    var body: some View {
+        HStack(spacing: 9) {
+            BrandMark()
 
-                if store.isRefreshing {
-                    ProgressView()
-                        .controlSize(.small)
+            Text("TokenMeter")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(theme.fg)
+
+            NotificationPermissionControl(store: store)
+
+            if store.isRefreshing {
+                ProgressView()
+                    .controlSize(.small)
+            }
+
+            Spacer()
+
+            Text(dateText)
+                .font(.system(size: 11))
+                .foregroundStyle(theme.muted)
+
+            Button {
+                themeName = themeName == "light" ? "dark" : "light"
+            } label: {
+                Group {
+                    if themeName == "light" {
+                        // 太阳
+                        Image(systemName: "sun.max")
+                            .font(.system(size: 11, weight: .medium))
+                    } else {
+                        // 月亮（稿中路径的等价形状）
+                        Image(systemName: "moon")
+                            .font(.system(size: 11, weight: .medium))
+                    }
                 }
-
-                Text(dateText)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Coolnight.muted)
-                    .monospacedDigit()
+                .foregroundStyle(theme.fg2)
+                .frame(width: 24, height: 24)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.border, lineWidth: 1))
+                .contentShape(Rectangle())
             }
-
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(MenuBarNumberFormat.tokens(store.todaySummary.tokens))
-                    .font(.system(size: 30, weight: .bold))
-                    .foregroundStyle(Coolnight.fg)
-                    .monospacedDigit()
-                Text("tokens")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Coolnight.muted)
-            }
-
-            Text("今日 \(MenuBarNumberFormat.usd(store.todaySummary.costUsdMicros)) · \(store.todaySummary.sessions) 个会话")
-                .font(.system(size: 11.5))
-                .foregroundStyle(Coolnight.fg2)
-                .monospacedDigit()
-
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(Coolnight.ok)
-                    .frame(width: 6, height: 6)
-                Text(indexStatusLine)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Coolnight.muted)
-                    .lineLimit(1)
-            }
+            .buttonStyle(.plain)
+            .help("切换外观")
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
+        .padding(EdgeInsets(top: 14, leading: 16, bottom: 10, trailing: 16))
     }
 
     private var dateText: String {
@@ -201,152 +258,733 @@ struct PopoverView: View {
         formatter.dateFormat = "M月d日 EEE"
         return formatter.string(from: Date())
     }
-
-    private var indexStatusLine: String {
-        guard let updatedAt = store.localIndexUpdatedAt else { return store.localIndexStatusText }
-        let minutes = max(0, Int(Date().timeIntervalSince(updatedAt) / 60))
-        let ago = minutes == 0 ? "刚刚" : "\(minutes) 分钟前"
-        return "\(store.localIndexStatusText) · \(ago)"
-    }
-
-    private var footer: some View {
-        VStack(spacing: 0) {
-            Rectangle()
-                .fill(Coolnight.border)
-                .frame(height: 1)
-            HStack(spacing: 14) {
-                Button(action: onOpenMainInterface) {
-                    HStack(spacing: 5) {
-                        Text("打开 TokenMeter")
-                            .font(.system(size: 11.5, weight: .medium))
-                        Text("⌘O")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Coolnight.muted)
-                    }
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Coolnight.fg2)
-                .keyboardShortcut("o", modifiers: .command)
-
-                Spacer()
-
-                Button("刷新") {
-                    Task { await store.refresh() }
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(Coolnight.fg2)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-        }
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "chart.bar.xaxis")
-                .font(.system(size: 28))
-                .foregroundStyle(Coolnight.muted)
-
-            Text("暂无用量数据")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Coolnight.muted)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
 }
 
-/// 品牌小标（设计稿左上角的圆角方框折线 logo）。
+/// 品牌小标（稿左上角 18×18 圆角方框折线）。
 private struct BrandMark: View {
+    @Environment(\.mbTheme) private var theme
+
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .stroke(Coolnight.accent, lineWidth: 1.6)
-                .frame(width: 20, height: 20)
+            RoundedRectangle(cornerRadius: 4.5, style: .continuous)
+                .stroke(theme.accent, lineWidth: 1.6)
+                .frame(width: 17, height: 17)
             Path { p in
-                p.move(to: CGPoint(x: 4.5, y: 12.5))
-                p.addLine(to: CGPoint(x: 7.5, y: 7.5))
-                p.addLine(to: CGPoint(x: 10, y: 11))
-                p.addLine(to: CGPoint(x: 12.5, y: 5.5))
-                p.addLine(to: CGPoint(x: 14.5, y: 12.5))
+                p.move(to: CGPoint(x: 3.7, y: 10.3))
+                p.addLine(to: CGPoint(x: 6.2, y: 6.2))
+                p.addLine(to: CGPoint(x: 8.3, y: 9.1))
+                p.addLine(to: CGPoint(x: 10.3, y: 4.6))
+                p.addLine(to: CGPoint(x: 11.9, y: 10.3))
             }
-            .stroke(Coolnight.accent, style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
-            .frame(width: 19, height: 18)
+            .stroke(theme.accent, style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            .frame(width: 15, height: 14)
         }
+        .frame(width: 18, height: 18)
     }
 }
 
-private struct SectionTitle: View {
-    let text: String
+// MARK: - .today：32px 大数字 + 今日金额/会话
 
-    var body: some View {
-        Text(text)
-            .font(.system(size: 10.5, weight: .medium))
-            .foregroundStyle(Coolnight.muted)
-            .padding(.top, 2)
-    }
-}
-
-/// 「今日 · 按服务商」分组（OpenDesign 稿）：色点 + 名称 + tokens + 金额 + 会话数。
-private struct TodayByProviderSection: View {
+private struct TodayBlock: View {
     let summary: MenuBarTodaySummary
+    @Environment(\.mbTheme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SectionTitle(text: "今日 · 按服务商")
-                .padding(.bottom, 6)
-
-            VStack(spacing: 0) {
-                ForEach(Array(summary.perProvider.enumerated()), id: \.element.providerId) { index, row in
-                    HStack(spacing: 8) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(Coolnight.seriesColor(row.providerId))
-                            .frame(width: 8, height: 8)
-                        Text(Coolnight.providerLabel(row.providerId))
-                            .font(.system(size: 12))
-                            .foregroundStyle(Coolnight.fg)
-                            .lineLimit(1)
-                        Spacer()
-                        Text(MenuBarNumberFormat.tokens(row.tokens))
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(Coolnight.fg)
-                            .monospacedDigit()
-                        Text(MenuBarNumberFormat.usd(row.costUsdMicros))
-                            .font(.system(size: 11))
-                            .foregroundStyle(Coolnight.muted)
-                            .monospacedDigit()
-                        Text("· \(row.sessions)")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Coolnight.muted)
-                            .monospacedDigit()
-                    }
-                    .padding(.vertical, 6)
-
-                    if index < summary.perProvider.count - 1 {
-                        Rectangle()
-                            .fill(Coolnight.border.opacity(0.6))
-                            .frame(height: 1)
-                    }
-                }
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(MenuBarNumberFormat.tokens(summary.tokens))
+                    .font(.system(size: 32, weight: .bold))
+                    .foregroundStyle(theme.fg)
+                    .monospacedDigit()
+                Text("tokens")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(theme.fg2)
             }
+
+            (Text("今日 ")
+                + Text(MenuBarNumberFormat.usd(summary.costUsdMicros)).foregroundColor(theme.fg2)
+                + Text(" · ")
+                + Text("\(summary.sessions)").foregroundColor(theme.fg2)
+                + Text(" 个会话"))
+                .font(.system(size: 11.5))
+                .foregroundStyle(theme.muted)
+                .monospacedDigit()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
     }
 }
 
-/// 底注：今日 N 条事件价格未知，未计入金额（黄点，与主窗口的 .unk 同语义）。
-private struct UnknownCostFootnote: View {
-    let count: Int
+/// .srcline：绿点 + 数据源更新状态。
+private struct SourceLine: View {
+    let text: String
+    @Environment(\.mbTheme) private var theme
 
     var body: some View {
         HStack(spacing: 6) {
+            Circle().fill(theme.ok).frame(width: 6, height: 6)
+            Text(text)
+                .font(.system(size: 10.5))
+                .foregroundStyle(theme.muted)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
+    }
+}
+
+private struct PanelDivider: View {
+    @Environment(\.mbTheme) private var theme
+
+    var body: some View {
+        Rectangle().fill(theme.border).frame(height: 1)
+    }
+}
+
+/// .sec：区块容器 + uppercase 小标题。
+private struct SectionBlock<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+    @Environment(\.mbTheme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased())
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(theme.muted)
+                .kerning(0.5)
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(EdgeInsets(top: 10, leading: 16, bottom: 12, trailing: 16))
+    }
+}
+
+// MARK: - .prow：今日按服务商行
+
+private struct ProviderRow: View {
+    let row: MenuBarTodaySummary.ProviderToday
+    @Environment(\.mbTheme) private var theme
+
+    var body: some View {
+        HStack(spacing: 9) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(theme.seriesColor(row.providerId))
+                .frame(width: 8, height: 8)
+
+            Text(MenuBarProviderName.label(row.providerId))
+                .font(.system(size: 12.5))
+                .foregroundStyle(theme.fg)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            Text(MenuBarNumberFormat.tokens(row.tokens))
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(theme.fg)
+                .monospacedDigit()
+
+            Text("\(MenuBarNumberFormat.usd(row.costUsdMicros)) · \(row.sessions) 会话")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(theme.muted)
+                .monospacedDigit()
+                .frame(minWidth: 96, alignment: .trailing)
+        }
+        .padding(.vertical, 5)
+    }
+}
+
+// MARK: - 订阅额度：.qgroup 折叠组
+
+/// snapshot → 稿上元素的显示模型。
+struct QuotaDisplayModel {
+    struct Ring {
+        let label: String
+        let percent: Double
+        let resetText: String?
+        let isWarn: Bool
+    }
+
+    struct Bar {
+        let label: String
+        let percent: Double?
+        let note: String?
+        let isWarn: Bool
+    }
+
+    let badge: String
+    let name: String
+    let isWarn: Bool
+    let staleMinutes: Int?
+    let summaryText: String
+    let alertMessage: String?
+    let alertTime: String?
+    let rings: [Ring]
+    let bars: [Bar]
+    let resetCredits: ResetCreditSummary?
+
+    init(snapshot: ProviderUsageSnapshot, now: Date = Date()) {
+        name = snapshot.displayName
+        badge = Self.badgeText(snapshot.displayName)
+
+        let metrics = snapshot.groups.flatMap(\.items)
+        let warnStatuses: [UsageStatus] = [.warning, .error]
+        isWarn = snapshot.status == .warning || snapshot.status == .error
+            || metrics.contains { warnStatuses.contains($0.status) || ($0.usedPercent ?? 0) >= 99.5 }
+
+        let staleSeconds = now.timeIntervalSince(snapshot.fetchedAt)
+        staleMinutes = staleSeconds >= 600 ? Int(staleSeconds / 60) : nil
+
+        // 环：前两个带百分比的指标（各 provider 的 5h/7d 主窗口）；其余进水平条。
+        let percentMetrics = metrics.filter { $0.usedPercent != nil }
+        let ringMetrics = Array(percentMetrics.prefix(2))
+        rings = ringMetrics.map { m in
+            Ring(
+                label: Self.shortWindowLabel(m),
+                percent: min(100, m.usedPercent ?? 0),
+                resetText: m.resetText,
+                isWarn: warnStatuses.contains(m.status) || (m.usedPercent ?? 0) >= 99.5
+            )
+        }
+        bars = percentMetrics.dropFirst(2).map { m in
+            Bar(
+                label: m.label,
+                percent: min(100, m.usedPercent ?? 0),
+                note: m.detail ?? m.resetText,
+                isWarn: warnStatuses.contains(m.status) || (m.usedPercent ?? 0) >= 99.5
+            )
+        }
+
+        summaryText = ringMetrics
+            .map { "\(Self.shortWindowLabel($0)) \(Int((min(100, $0.usedPercent ?? 0)).rounded()))%" }
+            .joined(separator: " · ")
+
+        if isWarn, let message = snapshot.message, !message.isEmpty {
+            alertMessage = message
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm"
+            alertTime = formatter.string(from: snapshot.fetchedAt)
+        } else {
+            alertMessage = nil
+            alertTime = nil
+        }
+
+        resetCredits = snapshot.resetCredits
+    }
+
+    /// 「智谱 GLM」→「智」；「Claude Code」→「Cl」（稿：badge 双字符/单汉字）。
+    static func badgeText(_ name: String) -> String {
+        guard let first = name.first else { return "?" }
+        if first.isASCII {
+            let letters = name.filter { $0.isLetter && $0.isASCII }
+            return String(letters.prefix(2)).capitalized
+        }
+        return String(first)
+    }
+
+    /// 窗口标签压缩为稿上的「5h / 7d」形态；识别不了就用原 label。
+    static func shortWindowLabel(_ metric: UsageMetric) -> String {
+        if let minutes = metric.windowDurationMinutes {
+            if minutes % (24 * 60) == 0 { return "\(minutes / (24 * 60))d" }
+            if minutes % 60 == 0 { return "\(minutes / 60)h" }
+            return "\(minutes)m"
+        }
+        return metric.label
+    }
+}
+
+private struct QuotaGroupView: View {
+    let snapshot: ProviderUsageSnapshot
+    let onRetry: () -> Void
+    @Environment(\.mbTheme) private var theme
+    @State private var expanded: Bool
+    private let model: QuotaDisplayModel
+
+    init(snapshot: ProviderUsageSnapshot, onRetry: @escaping () -> Void) {
+        self.snapshot = snapshot
+        self.onRetry = onRetry
+        let model = QuotaDisplayModel(snapshot: snapshot)
+        self.model = model
+        // 稿：有警示的组默认展开，其余折叠。
+        _expanded = State(initialValue: model.isWarn)
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            summaryRow
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    PanelDivider()
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let minutes = model.staleMinutes {
+                            StaleCard(minutes: minutes, onRetry: onRetry)
+                        }
+
+                        if let message = model.alertMessage {
+                            AlertCard(message: message, time: model.alertTime)
+                        }
+
+                        if !model.rings.isEmpty {
+                            HStack(spacing: 8) {
+                                ForEach(model.rings.indices, id: \.self) { i in
+                                    QRingCard(ring: model.rings[i])
+                                }
+                            }
+                        }
+
+                        ForEach(model.bars.indices, id: \.self) { i in
+                            BarRowCard(bar: model.bars[i])
+                        }
+
+                        if let credits = model.resetCredits, !credits.credits.isEmpty {
+                            ResetCardsGroup(summary: credits)
+                        }
+                    }
+                    .padding(EdgeInsets(top: 10, leading: 12, bottom: 12, trailing: 12))
+                    .opacity(model.staleMinutes != nil ? 0.9 : 1)
+                }
+            }
+        }
+        .background(theme.bg)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(theme.border, lineWidth: 1)
+        )
+    }
+
+    private var summaryRow: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.18)) { expanded.toggle() }
+        } label: {
+            HStack(spacing: 8) {
+                Text(model.badge)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(theme.accent)
+                    .frame(width: 22, height: 22)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.surface2))
+
+                Text(model.name)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(theme.fg)
+                    .lineLimit(1)
+
+                if let minutes = model.staleMinutes {
+                    Text("\(minutes)m 未更新")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(theme.danger)
+                        .padding(EdgeInsets(top: 1, leading: 7, bottom: 1, trailing: 7))
+                        .background(Capsule().fill(theme.tintDanger))
+                }
+
+                if model.isWarn {
+                    WarnTriangle()
+                        .frame(width: 14, height: 14)
+                }
+
+                Spacer(minLength: 8)
+
+                if !expanded {
+                    Text(model.summaryText)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(theme.muted)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(theme.muted)
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+            }
+            .padding(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// 稿 .gwarn：警告三角。
+private struct WarnTriangle: View {
+    @Environment(\.mbTheme) private var theme
+
+    var body: some View {
+        ZStack {
+            Path { p in
+                p.move(to: CGPoint(x: 7, y: 1.5))
+                p.addLine(to: CGPoint(x: 13, y: 12))
+                p.addLine(to: CGPoint(x: 1, y: 12))
+                p.closeSubpath()
+            }
+            .stroke(theme.warn, style: StrokeStyle(lineWidth: 1.4, lineJoin: .round))
+
+            Path { p in
+                p.move(to: CGPoint(x: 7, y: 6))
+                p.addLine(to: CGPoint(x: 7, y: 8.6))
+            }
+            .stroke(theme.warn, style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
+
             Circle()
-                .fill(Coolnight.warn)
-                .frame(width: 6, height: 6)
+                .fill(theme.warn)
+                .frame(width: 1.4, height: 1.4)
+                .offset(y: 3.4)
+        }
+        .frame(width: 14, height: 14)
+    }
+}
+
+// MARK: - .alert / .stale 卡
+
+private struct AlertCard: View {
+    let message: String
+    let time: String?
+    @Environment(\.mbTheme) private var theme
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            WarnTriangle()
+                .frame(width: 13, height: 13)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("额度提醒")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.warn)
+                Text(message)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(theme.fg2)
+                    .lineSpacing(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+
+            if let time {
+                Text(time)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(theme.muted)
+            }
+        }
+        .padding(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
+        .background(RoundedRectangle(cornerRadius: 8).fill(theme.tintWarn))
+    }
+}
+
+private struct StaleCard: View {
+    let minutes: Int
+    let onRetry: () -> Void
+    @Environment(\.mbTheme) private var theme
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "exclamationmark.circle")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.danger)
+
+            (Text("额度刷新失败").foregroundColor(theme.danger).fontWeight(.semibold)
+                + Text(" · 以下为 \(minutes) 分钟前的数据"))
+                .font(.system(size: 11.5))
+                .foregroundStyle(theme.fg2)
+
+            Spacer(minLength: 0)
+
+            Button("重试", action: onRetry)
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(theme.fg)
+                .padding(EdgeInsets(top: 3, leading: 11, bottom: 3, trailing: 11))
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(theme.surface)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.border, lineWidth: 1))
+                )
+        }
+        .padding(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+        .background(RoundedRectangle(cornerRadius: 8).fill(theme.tintDanger))
+    }
+}
+
+// MARK: - 环形主额度（.qring：44×44，r19 stroke4，-90° 起笔）
+
+private struct QRingCard: View {
+    let ring: QuotaDisplayModel.Ring
+    @Environment(\.mbTheme) private var theme
+
+    var body: some View {
+        HStack(spacing: 9) {
+            ZStack {
+                Circle()
+                    .stroke(theme.surface2, lineWidth: 4)
+                Circle()
+                    .trim(from: 0, to: CGFloat(min(100, max(0, ring.percent))) / 100)
+                    .stroke(
+                        ring.isWarn ? theme.warn : theme.accent,
+                        style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                Text("\(Int(ring.percent.rounded()))%")
+                    .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                    .foregroundStyle(ring.isWarn ? theme.warn : theme.fg)
+                    .monospacedDigit()
+            }
+            .frame(width: 44, height: 44)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(ring.label)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(theme.fg)
+                if let reset = ring.resetText {
+                    Text(reset)
+                        .font(.system(size: 10))
+                        .foregroundStyle(theme.muted)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.surface)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.border, lineWidth: 1))
+        )
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - 水平条子额度（.brow）
+
+private struct BarRowCard: View {
+    let bar: QuotaDisplayModel.Bar
+    @Environment(\.mbTheme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(bar.label)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(theme.fg)
+                    .lineLimit(1)
+                if let percent = bar.percent {
+                    Text("\(Int(percent.rounded()))%")
+                        .font(.system(size: 11.5, weight: .bold, design: .monospaced))
+                        .foregroundStyle(bar.isWarn ? theme.warn : theme.fg)
+                        .monospacedDigit()
+                }
+                Spacer(minLength: 8)
+                if let note = bar.note {
+                    Text(note)
+                        .font(.system(size: 10))
+                        .foregroundStyle(theme.muted)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
+            }
+
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(theme.surface2)
+                    Capsule()
+                        .fill(bar.isWarn ? theme.warn : theme.accent)
+                        .frame(width: proxy.size.width * CGFloat(min(100, max(0, bar.percent ?? 0))) / 100)
+                }
+            }
+            .frame(height: 4)
+        }
+        .padding(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.surface)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.border, lineWidth: 1))
+        )
+    }
+}
+
+// MARK: - 重置卡组（.rcgroup：虚线框，可展开）
+
+private struct ResetCardsGroup: View {
+    let summary: ResetCreditSummary
+    @Environment(\.mbTheme) private var theme
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Button {
+                withAnimation(.easeOut(duration: 0.18)) { expanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+
+                    (Text("重置卡 ") + Text("\(summary.availableCount) 张").fontWeight(.semibold))
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(theme.fg)
+
+                    Spacer(minLength: 8)
+
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(theme.muted)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                }
+                .padding(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                VStack(spacing: 8) {
+                    ForEach(summary.credits.indices, id: \.self) { i in
+                        ResetCardRow(index: i + 1, credit: summary.credits[i])
+                    }
+                }
+                .padding(EdgeInsets(top: 0, leading: 10, bottom: 10, trailing: 10))
+            }
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(theme.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+        )
+    }
+}
+
+private struct ResetCardRow: View {
+    let index: Int
+    let credit: ResetCredit
+    @Environment(\.mbTheme) private var theme
+
+    /// 剩余寿命占比（发放→过期）。缺日期就不画进度。
+    private var lifeInfo: (daysLeft: Int, fraction: Double)? {
+        guard let expiresAt = credit.expiresAt else { return nil }
+        let now = Date()
+        let secondsLeft = expiresAt.timeIntervalSince(now)
+        let daysLeft = max(0, Int(ceil(secondsLeft / 86_400)))
+        guard let issuedAt = credit.issuedAt, expiresAt > issuedAt else {
+            return (daysLeft, secondsLeft > 0 ? 1 : 0)
+        }
+        let total = expiresAt.timeIntervalSince(issuedAt)
+        return (daysLeft, min(1, max(0, secondsLeft / total)))
+    }
+
+    private func shortDate(_ date: Date?) -> String {
+        guard let date else { return "—" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M/d"
+        return formatter.string(from: date)
+    }
+
+    var body: some View {
+        let info = lifeInfo
+        let isWarn = (info?.daysLeft ?? .max) <= 3
+
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("#\(index)")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(theme.muted)
+                Text("\(shortDate(credit.issuedAt)) 发放 · \(shortDate(credit.expiresAt)) 过期")
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.fg2)
+                Spacer(minLength: 8)
+                if let info {
+                    Text("剩 \(info.daysLeft) 天")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(isWarn ? theme.warn : theme.fg)
+                        .monospacedDigit()
+                }
+            }
+
+            if let info {
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(theme.surface2)
+                        Capsule()
+                            .fill(isWarn ? theme.warn : theme.accent)
+                            .frame(width: proxy.size.width * CGFloat(info.fraction))
+                    }
+                }
+                .frame(height: 4)
+            }
+        }
+        .padding(.top, 4)
+    }
+}
+
+// MARK: - .unk 底注 与 .foot 操作行
+
+private struct UnknownNote: View {
+    let count: Int
+    @Environment(\.mbTheme) private var theme
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Circle().fill(theme.warn).frame(width: 6, height: 6)
             Text("今日 \(count) 条事件价格未知，未计入金额")
                 .font(.system(size: 10.5))
-                .foregroundStyle(Coolnight.muted)
+                .foregroundStyle(theme.muted)
         }
-        .padding(.top, 2)
+        .padding(EdgeInsets(top: 0, leading: 16, bottom: 10, trailing: 16))
+    }
+}
+
+private struct FootBar: View {
+    @Binding var isScanPaused: Bool
+    let onOpenMainInterface: () -> Void
+    @Environment(\.mbTheme) private var theme
+
+    var body: some View {
+        HStack(spacing: 2) {
+            FootButton(action: onOpenMainInterface) {
+                HStack(spacing: 5) {
+                    Text("打开 TokenMeter")
+                    Text("⌘O")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(theme.muted)
+                        .padding(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(theme.border, lineWidth: 1))
+                }
+            }
+            .keyboardShortcut("o", modifiers: .command)
+
+            FootButton {
+                isScanPaused.toggle()
+            } label: {
+                Text(isScanPaused ? "恢复扫描" : "暂停扫描")
+                    .foregroundStyle(isScanPaused ? theme.warn : theme.fg2)
+            }
+
+            Spacer()
+
+            FootButton(action: onOpenMainInterface) {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 11))
+            }
+            .help("设置")
+        }
+        .padding(EdgeInsets(top: 9, leading: 10, bottom: 9, trailing: 10))
+    }
+}
+
+private struct FootButton<Label: View>: View {
+    let action: () -> Void
+    @ViewBuilder var label: Label
+    @Environment(\.mbTheme) private var theme
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            label
+                .font(.system(size: 12))
+                .foregroundStyle(theme.fg2)
+                .padding(EdgeInsets(top: 5, leading: 10, bottom: 5, trailing: 10))
+                .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? theme.surface2 : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 
@@ -820,1148 +1458,3 @@ private final class ThinScrollContainerView: NSView {
     }
 }
 
-private struct ProviderCardView: View {
-    let snapshot: ProviderUsageSnapshot
-    @Binding var activeTooltipID: String?
-    @State private var showsResetCredits = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 8) {
-                ProviderIconView(providerId: snapshot.providerId)
-
-                Text(snapshot.displayName)
-                    .font(.system(size: 14, weight: .semibold))
-                    .lineLimit(1)
-
-                if snapshot.status != .ok {
-                    StatusIconButton(
-                        status: snapshot.status,
-                        message: snapshot.message,
-                        tooltipID: "status:\(snapshot.providerId)",
-                        activeTooltipID: $activeTooltipID
-                    )
-                }
-
-                Spacer()
-
-                Text(timeText(snapshot.fetchedAt))
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
-            }
-
-            if !snapshot.groups.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    PrimaryUsageGroupView(
-                        group: primaryGroup,
-                        providerTitle: snapshot.displayName,
-                        hidesSingleGroupTitle: snapshot.groups.count == 1
-                    )
-
-                    if !secondaryGroups.isEmpty {
-                        SecondaryUsageGroupsView(
-                            groups: secondaryGroups,
-                            providerTitle: snapshot.displayName
-                        )
-                    }
-                }
-            } else {
-                UnavailableLine()
-            }
-
-            if let resetCredits = snapshot.resetCredits {
-                ResetCreditsDisclosureView(
-                    providerId: snapshot.providerId,
-                    summary: resetCredits,
-                    isExpanded: $showsResetCredits,
-                    activeTooltipID: $activeTooltipID
-                )
-            }
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(cardBackground)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(moduleBorderColor(strength: .strong), lineWidth: 1)
-        )
-    }
-
-    private var primaryGroup: UsageGroup {
-        let firstGroup = snapshot.groups[0]
-        return UsageGroup(
-            id: firstGroup.id,
-            title: firstGroup.title,
-            subtitle: firstGroup.subtitle,
-            items: Array(firstGroup.items.prefix(2))
-        )
-    }
-
-    private var secondaryGroups: [UsageGroup] {
-        let firstGroup = snapshot.groups[0]
-        let overflowItems = Array(firstGroup.items.dropFirst(2))
-        var groups: [UsageGroup] = []
-
-        if !overflowItems.isEmpty {
-            groups.append(
-                UsageGroup(
-                    id: "\(firstGroup.id)-additional",
-                    title: overflowItems.count == 1 ? overflowItems[0].label : "附加额度",
-                    subtitle: nil,
-                    items: overflowItems
-                )
-            )
-        }
-
-        groups.append(contentsOf: snapshot.groups.dropFirst())
-        return groups
-    }
-
-    private var cardBackground: some ShapeStyle {
-        Color(nsColor: .controlBackgroundColor)
-    }
-}
-
-private struct ResetCreditsDisclosureView: View {
-    let providerId: String
-    let summary: ResetCreditSummary
-    @Binding var isExpanded: Bool
-    @Binding var activeTooltipID: String?
-
-    private var items: [ResetCreditDisplayItem] {
-        ResetCreditDisplay.items(for: summary)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Button {
-                isExpanded.toggle()
-                activeTooltipID = nil
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "arrow.counterclockwise.circle.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.blue)
-
-                    Text("重置卡")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-
-                    Text("\(items.count) 张")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.primary)
-                        .monospacedDigit()
-
-                    Spacer(minLength: 8)
-
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .focusable(false)
-
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 6) {
-                    if items.isEmpty {
-                        Text("暂无未过期重置卡")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        ForEach(items, id: \.index) { item in
-                            ResetCreditRowView(
-                                providerId: providerId,
-                                item: item,
-                                activeTooltipID: $activeTooltipID
-                            )
-                        }
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .fill(Color(nsColor: .windowBackgroundColor).opacity(isDarkAppearance ? 0.40 : 0.68))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .stroke(moduleBorderColor(strength: .medium), lineWidth: 1)
-                )
-            }
-        }
-    }
-}
-
-private struct ResetCreditRowView: View {
-    let providerId: String
-    let item: ResetCreditDisplayItem
-    @Binding var activeTooltipID: String?
-
-    private var tooltipID: String {
-        "reset-credit:\(providerId):\(item.index)"
-    }
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-            Text("#\(item.index)")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-                .frame(width: 24, alignment: .leading)
-
-            ResetCreditProgressView(item: item)
-                .frame(height: 7)
-
-            Text(item.remainingText)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(resetCreditColor(item.tone))
-                .monospacedDigit()
-                .frame(width: 48, alignment: .trailing)
-                .lineLimit(1)
-
-            TooltipIconButton(
-                systemImage: "info.circle",
-                tintColor: Color(nsColor: .tertiaryLabelColor),
-                backgroundColor: nil,
-                message: resetCreditDetailText(item.credit),
-                width: 168,
-                placement: .leading,
-                distance: 4,
-                tooltipID: tooltipID,
-                activeTooltipID: $activeTooltipID
-            )
-            .frame(width: 16, height: 16)
-        }
-        .padding(.vertical, 2)
-        .zIndex(activeTooltipID == tooltipID ? 100 : 0)
-    }
-}
-
-private struct TooltipIconButton: View {
-    let systemImage: String
-    let tintColor: Color
-    let backgroundColor: Color?
-    let message: String
-    let width: CGFloat
-    var placement: TooltipPlacement = .top
-    var distance: CGFloat = 6
-    let tooltipID: String
-    @Binding var activeTooltipID: String?
-
-    var body: some View {
-        Button {
-            guard !message.isEmpty else {
-                return
-            }
-            activeTooltipID = activeTooltipID == tooltipID ? nil : tooltipID
-        } label: {
-            Image(systemName: systemImage)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(tintColor)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(backgroundColor ?? Color.clear)
-                .clipShape(Circle())
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .zIndex(activeTooltipID == tooltipID ? 100 : 0)
-        .background(
-            TooltipPanelAnchorView(
-                id: tooltipID,
-                message: message,
-                width: width,
-                placement: placement,
-                distance: distance,
-                isPresented: activeTooltipID == tooltipID
-            )
-        )
-    }
-}
-
-private enum TooltipPlacement {
-    case top
-    case leading
-}
-
-private struct TooltipPanelAnchorView: NSViewRepresentable {
-    let id: String
-    let message: String
-    let width: CGFloat
-    let placement: TooltipPlacement
-    let distance: CGFloat
-    let isPresented: Bool
-
-    func makeNSView(context: Context) -> TooltipAnchorNSView {
-        TooltipAnchorNSView()
-    }
-
-    func updateNSView(_ nsView: TooltipAnchorNSView, context: Context) {
-        nsView.configuration = TooltipPanelConfiguration(
-            id: id,
-            message: message,
-            width: width,
-            placement: placement,
-            distance: distance,
-            isPresented: isPresented
-        )
-        nsView.schedulePanelUpdate()
-    }
-}
-
-private struct TooltipPanelConfiguration: Equatable {
-    let id: String
-    let message: String
-    let width: CGFloat
-    let placement: TooltipPlacement
-    let distance: CGFloat
-    let isPresented: Bool
-}
-
-private final class TooltipAnchorNSView: NSView {
-    var configuration: TooltipPanelConfiguration?
-    private var isUpdateScheduled = false
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        schedulePanelUpdate()
-    }
-
-    override func layout() {
-        super.layout()
-        schedulePanelUpdate()
-    }
-
-    func schedulePanelUpdate() {
-        guard !isUpdateScheduled else {
-            return
-        }
-
-        isUpdateScheduled = true
-        DispatchQueue.main.async { [weak self] in
-            self?.isUpdateScheduled = false
-            self?.updatePanel()
-        }
-    }
-
-    private func updatePanel() {
-        guard let configuration else {
-            TooltipPanelPresenter.shared.hide()
-            return
-        }
-
-        guard configuration.isPresented,
-              !configuration.message.isEmpty,
-              let window else {
-            TooltipPanelPresenter.shared.hide(id: configuration.id)
-            return
-        }
-
-        TooltipPanelPresenter.shared.show(
-            configuration: configuration,
-            anchorRect: convert(bounds, to: nil),
-            parentWindow: window
-        )
-    }
-}
-
-private final class TooltipPanelPresenter {
-    static let shared = TooltipPanelPresenter()
-
-    private var panel: NSPanel?
-    private var currentID: String?
-    private weak var parentWindow: NSWindow?
-
-    func show(configuration: TooltipPanelConfiguration, anchorRect: CGRect, parentWindow: NSWindow) {
-        let panel = panel ?? makePanel()
-        self.panel = panel
-        currentID = configuration.id
-        attach(panel, to: parentWindow)
-
-        let content = TooltipPanelContent(
-            message: configuration.message,
-            width: configuration.width,
-            placement: configuration.placement,
-            arrowPosition: 0
-        )
-        let hostingView = NSHostingView(rootView: content)
-        panel.contentView = hostingView
-        hostingView.layoutSubtreeIfNeeded()
-
-        let fittingSize = hostingView.fittingSize
-        let panelSize = NSSize(
-            width: max(configuration.width, fittingSize.width),
-            height: max(1, fittingSize.height)
-        )
-        let anchorScreenRect = parentWindow.convertToScreen(anchorRect)
-        let frame = frame(
-            for: panelSize,
-            anchorScreenRect: anchorScreenRect,
-            parentWindowFrame: parentWindow.frame,
-            placement: configuration.placement,
-            distance: configuration.distance
-        )
-        let arrowPosition = arrowPosition(
-            for: configuration.placement,
-            frame: frame,
-            anchorScreenRect: anchorScreenRect
-        )
-
-        hostingView.rootView = TooltipPanelContent(
-            message: configuration.message,
-            width: configuration.width,
-            placement: configuration.placement,
-            arrowPosition: arrowPosition
-        )
-        panel.setFrame(frame, display: true)
-        if !(parentWindow.childWindows?.contains(panel) ?? false) {
-            parentWindow.addChildWindow(panel, ordered: .above)
-        }
-        panel.orderFront(nil)
-    }
-
-    func hide(id: String? = nil) {
-        guard id == nil || id == currentID else {
-            return
-        }
-
-        if let panel,
-           let parentWindow {
-            parentWindow.removeChildWindow(panel)
-        }
-        panel?.orderOut(nil)
-        currentID = nil
-        parentWindow = nil
-    }
-
-    private func attach(_ panel: NSPanel, to parentWindow: NSWindow) {
-        if self.parentWindow !== parentWindow {
-            if let previousParent = self.parentWindow {
-                previousParent.removeChildWindow(panel)
-            }
-            self.parentWindow = parentWindow
-        }
-
-        panel.level = NSWindow.Level(rawValue: parentWindow.level.rawValue + 1)
-    }
-
-    private func makePanel() -> NSPanel {
-        let panel = NSPanel(
-            contentRect: .zero,
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
-        panel.hasShadow = false
-        panel.hidesOnDeactivate = false
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        return panel
-    }
-
-    private func frame(
-        for size: NSSize,
-        anchorScreenRect: CGRect,
-        parentWindowFrame: CGRect,
-        placement: TooltipPlacement,
-        distance: CGFloat
-    ) -> CGRect {
-        let margin: CGFloat = 12
-        let minX = parentWindowFrame.minX + margin
-        let maxX = parentWindowFrame.maxX - margin
-        let minY = parentWindowFrame.minY + margin
-        let maxY = parentWindowFrame.maxY - margin
-
-        switch placement {
-        case .top:
-            var x = anchorScreenRect.midX - size.width / 2
-            x = min(max(x, minX), maxX - size.width)
-            var y = anchorScreenRect.maxY + distance
-            y = min(max(y, minY), maxY - size.height)
-            return CGRect(origin: CGPoint(x: x, y: y), size: size)
-        case .leading:
-            var x = anchorScreenRect.minX - distance - size.width
-            x = min(max(x, minX), maxX - size.width)
-            var y = anchorScreenRect.midY - size.height / 2
-            y = min(max(y, minY), maxY - size.height)
-            return CGRect(origin: CGPoint(x: x, y: y), size: size)
-        }
-    }
-
-    private func arrowPosition(
-        for placement: TooltipPlacement,
-        frame: CGRect,
-        anchorScreenRect: CGRect
-    ) -> CGFloat {
-        let arrowWidth: CGFloat = 6
-        let radius: CGFloat = 6
-        let limit = radius + arrowWidth
-
-        switch placement {
-        case .top:
-            return min(max(anchorScreenRect.midX - frame.minX, limit), frame.width - limit)
-        case .leading:
-            return min(max(frame.maxY - anchorScreenRect.midY, limit), frame.height - limit)
-        }
-    }
-}
-
-private struct TooltipPanelContent: View {
-    let message: String
-    let width: CGFloat
-    let placement: TooltipPlacement
-    let arrowPosition: CGFloat
-
-    var body: some View {
-        Text(message)
-            .font(.system(size: 12))
-            .foregroundStyle(tooltipTextColor())
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(width: max(40, width - 20), alignment: .leading)
-            .padding(.leading, 10)
-            .padding(.trailing, placement == .leading ? 17 : 10)
-            .padding(.top, 8)
-            .padding(.bottom, placement == .top ? 15 : 8)
-            .background(
-                TooltipBubbleShape(placement: placement, arrowPosition: arrowPosition)
-                    .fill(tooltipBackgroundColor())
-            )
-            .overlay(
-                TooltipBubbleShape(placement: placement, arrowPosition: arrowPosition)
-                    .stroke(tooltipBorderColor(), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 4)
-    }
-}
-
-private struct TooltipBubbleShape: Shape {
-    let placement: TooltipPlacement
-    let arrowPosition: CGFloat
-
-    private let radius: CGFloat = 6
-    private let arrowWidth: CGFloat = 6
-    private let arrowHeight: CGFloat = 7
-
-    func path(in rect: CGRect) -> Path {
-        switch placement {
-        case .top:
-            return topPath(in: rect)
-        case .leading:
-            return leadingPath(in: rect)
-        }
-    }
-
-    private func topPath(in rect: CGRect) -> Path {
-        let body = rect.insetBy(dx: 0, dy: 0).insetBy(dx: 0, dy: 0)
-        let bodyMaxY = body.maxY - arrowHeight
-        let arrowX = min(max(arrowPosition, radius + arrowWidth), rect.width - radius - arrowWidth)
-        var path = Path()
-        path.move(to: CGPoint(x: radius, y: body.minY))
-        path.addLine(to: CGPoint(x: body.maxX - radius, y: body.minY))
-        path.addQuadCurve(to: CGPoint(x: body.maxX, y: body.minY + radius), control: CGPoint(x: body.maxX, y: body.minY))
-        path.addLine(to: CGPoint(x: body.maxX, y: bodyMaxY - radius))
-        path.addQuadCurve(to: CGPoint(x: body.maxX - radius, y: bodyMaxY), control: CGPoint(x: body.maxX, y: bodyMaxY))
-        path.addLine(to: CGPoint(x: arrowX + arrowWidth, y: bodyMaxY))
-        path.addLine(to: CGPoint(x: arrowX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: arrowX - arrowWidth, y: bodyMaxY))
-        path.addLine(to: CGPoint(x: radius, y: bodyMaxY))
-        path.addQuadCurve(to: CGPoint(x: body.minX, y: bodyMaxY - radius), control: CGPoint(x: body.minX, y: bodyMaxY))
-        path.addLine(to: CGPoint(x: body.minX, y: body.minY + radius))
-        path.addQuadCurve(to: CGPoint(x: radius, y: body.minY), control: CGPoint(x: body.minX, y: body.minY))
-        path.closeSubpath()
-        return path
-    }
-
-    private func leadingPath(in rect: CGRect) -> Path {
-        let bodyMaxX = rect.maxX - arrowHeight
-        let arrowY = min(max(arrowPosition, radius + arrowWidth), rect.height - radius - arrowWidth)
-        var path = Path()
-        path.move(to: CGPoint(x: radius, y: rect.minY))
-        path.addLine(to: CGPoint(x: bodyMaxX - radius, y: rect.minY))
-        path.addQuadCurve(to: CGPoint(x: bodyMaxX, y: rect.minY + radius), control: CGPoint(x: bodyMaxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: bodyMaxX, y: arrowY - arrowWidth))
-        path.addLine(to: CGPoint(x: rect.maxX, y: arrowY))
-        path.addLine(to: CGPoint(x: bodyMaxX, y: arrowY + arrowWidth))
-        path.addLine(to: CGPoint(x: bodyMaxX, y: rect.maxY - radius))
-        path.addQuadCurve(to: CGPoint(x: bodyMaxX - radius, y: rect.maxY), control: CGPoint(x: bodyMaxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: radius, y: rect.maxY))
-        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - radius), control: CGPoint(x: rect.minX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
-        path.addQuadCurve(to: CGPoint(x: radius, y: rect.minY), control: CGPoint(x: rect.minX, y: rect.minY))
-        path.closeSubpath()
-        return path
-    }
-}
-
-private struct ResetCreditProgressView: View {
-    let item: ResetCreditDisplayItem
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            let progress = max(0, min(1, item.progress))
-            let fillWidth = max(5, width * progress)
-
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color(nsColor: .separatorColor).opacity(0.24))
-
-                Capsule()
-                    .fill(resetCreditColor(item.tone).opacity(0.88))
-                    .frame(width: fillWidth)
-            }
-        }
-    }
-}
-
-private struct PrimaryUsageGroupView: View {
-    let group: UsageGroup
-    let providerTitle: String
-    let hidesSingleGroupTitle: Bool
-
-    private var shouldShowTitle: Bool {
-        return !hidesSingleGroupTitle && group.title != providerTitle
-    }
-
-    var body: some View {
-        if !group.items.isEmpty {
-            VStack(alignment: .leading, spacing: shouldShowTitle ? 8 : 7) {
-                if shouldShowTitle {
-                    HStack(spacing: 6) {
-                        Text(group.title)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-
-                        if let subtitle = group.subtitle {
-                            Text(subtitle)
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-
-                        Spacer()
-                    }
-                }
-
-                HStack(spacing: 10) {
-                    ForEach(group.items, id: \.id) { metric in
-                        PrimaryMetricRingCard(metric: metric)
-                    }
-                }
-            }
-        }
-    }
-}
-
-private struct PrimaryMetricRingCard: View {
-    let metric: UsageMetric
-
-    var body: some View {
-        HStack(spacing: 9) {
-            MetricRingView(metric: metric)
-                .frame(width: 50, height: 50)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(metric.label)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                if let detailText {
-                    Text(detailText)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, minHeight: 66, alignment: .leading)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor).opacity(isDarkAppearance ? 0.36 : 0.64))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(moduleBorderColor(strength: .medium), lineWidth: 1)
-        )
-    }
-
-    private var detailText: String? {
-        if let detail = metric.detail, !detail.isEmpty {
-            return detail
-        }
-
-        return metric.resetText
-    }
-}
-
-private struct MetricRingView: View {
-    let metric: UsageMetric
-
-    private var value: Double {
-        max(0, min(1, (metric.remainingPercent ?? 0) / 100))
-    }
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(Color(nsColor: .separatorColor).opacity(isDarkAppearance ? 0.44 : 0.28), lineWidth: 7)
-
-            Circle()
-                .trim(from: 0, to: value)
-                .stroke(
-                    metricColor(metric),
-                    style: StrokeStyle(lineWidth: 7, lineCap: .round)
-                )
-                .rotationEffect(.degrees(-90))
-
-            Text(shortPercentText)
-                .font(.system(size: ringTextFontSize, weight: .bold))
-                .foregroundStyle(metricColor(metric))
-                .monospacedDigit()
-                .frame(width: 38)
-                .minimumScaleFactor(0.7)
-                .allowsTightening(true)
-                .lineLimit(1)
-        }
-    }
-
-    private var ringTextFontSize: CGFloat {
-        shortPercentText.count >= 4 ? 12 : 13
-    }
-
-    private var shortPercentText: String {
-        guard let remaining = metric.remainingPercent else {
-            return "--"
-        }
-
-        return "\(Int(remaining.rounded()))%"
-    }
-}
-
-private struct SecondaryUsageGroupsView: View {
-    let groups: [UsageGroup]
-    let providerTitle: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            ForEach(groups, id: \.id) { group in
-                UsageGroupView(
-                    group: group,
-                    providerTitle: providerTitle,
-                    hidesSingleGroupTitle: false,
-                    isSecondary: true
-                )
-            }
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color(nsColor: .windowBackgroundColor).opacity(isDarkAppearance ? 0.40 : 0.68))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(moduleBorderColor(strength: .medium), lineWidth: 1)
-        )
-    }
-}
-
-private struct ProviderIconView: View {
-    let providerId: String
-
-    private var image: NSImage? {
-        providerIconImage(for: providerId)
-    }
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(iconColor.opacity(0.14))
-
-            if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .renderingMode(.template)
-                    .foregroundColor(iconColor)
-                    .scaledToFit()
-                    .frame(width: 15, height: 15)
-            } else {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(iconColor)
-            }
-        }
-        .frame(width: 26, height: 26)
-        .accessibilityHidden(true)
-    }
-
-    private var iconColor: Color {
-        providerAccentColor(providerId)
-    }
-}
-
-private struct UsageGroupView: View {
-    let group: UsageGroup
-    let providerTitle: String
-    let hidesSingleGroupTitle: Bool
-    var isSecondary = false
-
-    private var shouldShowTitle: Bool {
-        if isSecondary,
-           group.items.count == 1,
-           group.title == group.items[0].label {
-            return false
-        }
-
-        return !hidesSingleGroupTitle && group.title != providerTitle
-    }
-
-    var body: some View {
-        if !group.items.isEmpty {
-            VStack(alignment: .leading, spacing: shouldShowTitle ? 7 : 6) {
-                if shouldShowTitle {
-                    HStack(spacing: 6) {
-                        Text(group.title)
-                            .font(.system(size: isSecondary ? 11 : 12, weight: isSecondary ? .regular : .medium))
-                            .foregroundStyle(isSecondary ? .secondary : .primary)
-                            .lineLimit(1)
-
-                        if let subtitle = group.subtitle {
-                            Text(subtitle)
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-
-                        Spacer()
-                    }
-                }
-
-                VStack(spacing: 6) {
-                    ForEach(group.items, id: \.id) { metric in
-                        MetricRowView(metric: metric)
-                    }
-                }
-            }
-        }
-    }
-}
-
-private struct MetricRowView: View {
-    let metric: UsageMetric
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text(metric.label)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28, alignment: .leading)
-                    .lineLimit(1)
-
-                Text(percentText)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(metricColor(metric))
-                    .monospacedDigit()
-                    .frame(width: 42, alignment: .leading)
-
-                Spacer(minLength: 8)
-
-                if let detailText {
-                    Text(detailText)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                }
-            }
-
-            HStack(spacing: 8) {
-                Color.clear
-                    .frame(width: 28)
-
-                QuotaMeterView(metric: metric)
-                    .frame(height: 7)
-            }
-        }
-        .padding(.vertical, 1)
-    }
-
-    private var percentText: String {
-        guard let remaining = metric.remainingPercent else {
-            return "--"
-        }
-
-        return "\(UsageFormatter.numberText(remaining))%"
-    }
-
-    private var detailText: String? {
-        if let detail = metric.detail, !detail.isEmpty {
-            return detail
-        }
-
-        return metric.resetText
-    }
-}
-
-private struct QuotaMeterView: View {
-    let metric: UsageMetric
-
-    private var value: Double {
-        (metric.remainingPercent ?? 0) / 100
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            let fillWidth = max(6, width * max(0, min(1, value)))
-
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color(nsColor: .separatorColor).opacity(0.28))
-
-                Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                metricColor(metric).opacity(0.72),
-                                metricColor(metric)
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .frame(width: fillWidth)
-            }
-        }
-    }
-}
-
-private struct StatusIconButton: View {
-    let status: UsageStatus
-    let message: String?
-    let tooltipID: String
-    @Binding var activeTooltipID: String?
-
-    var body: some View {
-        TooltipIconButton(
-            systemImage: statusIconName(status),
-            tintColor: statusColor(status),
-            backgroundColor: statusColor(status).opacity(0.12),
-            message: status == .ok ? "" : statusMessage,
-            width: 196,
-            placement: .top,
-            tooltipID: tooltipID,
-            activeTooltipID: $activeTooltipID
-        )
-        .frame(width: 18, height: 18)
-        .accessibilityLabel(statusText(status))
-    }
-
-    private var statusMessage: String {
-        message ?? ""
-    }
-}
-
-private struct UnavailableLine: View {
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "tray")
-                .foregroundStyle(.secondary)
-
-            Text("暂无可用缓存")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-
-            Spacer()
-        }
-        .padding(.top, 2)
-    }
-}
-
-private func tooltipBackgroundColor() -> Color {
-    Color(nsColor: tooltipBackgroundNSColor())
-}
-
-private func tooltipBackgroundNSColor() -> NSColor {
-    isDarkAppearance ? NSColor(calibratedWhite: 0.14, alpha: 1) : NSColor(calibratedWhite: 0.98, alpha: 1)
-}
-
-private func tooltipTextColor() -> Color {
-    Color(nsColor: isDarkAppearance ? NSColor(calibratedWhite: 0.94, alpha: 1) : NSColor(calibratedWhite: 0.12, alpha: 1))
-}
-
-private func tooltipBorderColor() -> Color {
-    Color(nsColor: isDarkAppearance ? NSColor(calibratedWhite: 0.28, alpha: 1) : NSColor(calibratedWhite: 0.78, alpha: 1))
-}
-
-private enum ModuleBorderStrength {
-    case medium
-    case strong
-}
-
-private func moduleBorderColor(strength: ModuleBorderStrength) -> Color {
-    let alpha: CGFloat
-    switch (isDarkAppearance, strength) {
-    case (true, .medium):
-        alpha = 0.72
-    case (true, .strong):
-        alpha = 0.86
-    case (false, .medium):
-        alpha = 0.46
-    case (false, .strong):
-        alpha = 0.58
-    }
-
-    return Color(nsColor: .separatorColor).opacity(alpha)
-}
-
-private var isDarkAppearance: Bool {
-    NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-}
-
-private func metricColor(_ metric: UsageMetric?) -> Color {
-    switch UsageMetricToneResolver.tone(for: metric) {
-    case .ok:
-        return .green
-    case .warning:
-        return .yellow
-    case .bad:
-        return .red
-    case .muted:
-        return Color(nsColor: .tertiaryLabelColor)
-    }
-}
-
-private func resetCreditColor(_ tone: ResetCreditDisplayTone) -> Color {
-    switch tone {
-    case .ok:
-        return .green
-    case .warning:
-        return .yellow
-    case .bad:
-        return .red
-    }
-}
-
-private func providerIconImage(for providerId: String) -> NSImage? {
-    guard let iconName = providerIconName(providerId),
-          let url = Bundle.module.url(
-              forResource: iconName,
-              withExtension: "pdf"
-          ),
-          let image = NSImage(contentsOf: url) else {
-        return nil
-    }
-
-    image.isTemplate = true
-    return image
-}
-
-private func providerIconName(_ providerId: String) -> String? {
-    switch providerId {
-    case "codex":
-        return "codex"
-    case "claude-code":
-        return "claude"
-    case "zhipu", "zhipu-http":
-        return "zai"
-    default:
-        return nil
-    }
-}
-
-private func providerAccentColor(_ providerId: String) -> Color {
-    switch providerId {
-    case "codex":
-        return .blue
-    case "claude-code":
-        return .orange
-    case "zhipu", "zhipu-http":
-        return .teal
-    default:
-        return Color(nsColor: .secondaryLabelColor)
-    }
-}
-
-private func statusColor(_ status: UsageStatus) -> Color {
-    Color(nsColor: statusNSColor(status))
-}
-
-private func statusNSColor(_ status: UsageStatus) -> NSColor {
-    switch status {
-    case .ok:
-        return .systemGreen
-    case .warning:
-        return .systemOrange
-    case .error:
-        return .systemRed
-    case .unknown:
-        return .tertiaryLabelColor
-    }
-}
-
-private func statusIconName(_ status: UsageStatus) -> String {
-    switch status {
-    case .ok:
-        return "checkmark.seal.fill"
-    case .warning:
-        return "exclamationmark.circle.fill"
-    case .error:
-        return "xmark.circle.fill"
-    case .unknown:
-        return "questionmark.circle.fill"
-    }
-}
-
-private func statusText(_ status: UsageStatus) -> String {
-    switch status {
-    case .ok:
-        return "正常"
-    case .warning:
-        return "提醒"
-    case .error:
-        return "异常"
-    case .unknown:
-        return "未知"
-    }
-}
-
-private func timeText(_ date: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "HH:mm"
-    return formatter.string(from: date)
-}
-
-private func beijingTimeText(_ date: Date?) -> String {
-    guard let date else {
-        return "--"
-    }
-
-    let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "zh_CN")
-    formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
-    formatter.dateFormat = "yyyy-MM-dd HH:mm"
-    return formatter.string(from: date)
-}
-
-private func resetCreditDetailText(_ credit: ResetCredit) -> String {
-    """
-    发放：\(beijingTimeText(credit.issuedAt))
-    过期：\(beijingTimeText(credit.expiresAt))
-    """
-}

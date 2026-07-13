@@ -13,6 +13,8 @@ final class ProviderStore: ObservableObject {
     /// 弹窗头部「今日」汇总（OpenDesign 稿）；本地索引每次更新后重查。
     @Published private(set) var todaySummary: MenuBarTodaySummary = .empty
     @Published private(set) var localIndexUpdatedAt: Date?
+    /// 弹窗底部「暂停扫描」（OpenDesign 稿）：暂停期间定时器照跳，但两类刷新都短路。
+    @Published var isScanPaused = false
 
     let config: TokenMeterConfig
     private let providers: [UsageProvider]
@@ -79,6 +81,10 @@ final class ProviderStore: ObservableObject {
     }
 
     func refresh() async {
+        guard !isScanPaused else {
+            return
+        }
+
         guard !isRefreshing else {
             return
         }
@@ -157,6 +163,10 @@ final class ProviderStore: ObservableObject {
 
     @discardableResult
     func refreshLocalAgentIndex() async -> LocalIndexRefreshResult {
+        guard !isScanPaused else {
+            return LocalIndexRefreshResult(scanned: 0, failures: 0, status: .ok, message: "扫描已暂停")
+        }
+
         guard let database, let scanner else {
             localIndexStatusText = "本地会话索引不可用"
             return LocalIndexRefreshResult(scanned: 0, failures: 0, status: .unavailable, message: localIndexStatusText)
@@ -196,7 +206,7 @@ final class ProviderStore: ObservableObject {
             localIndexStatusText = "本地会话索引更新失败"
             status = .failed
         } else if scanned > 0 {
-            localIndexStatusText = "已更新 \(scanned) 个本地会话来源"
+            localIndexStatusText = "已更新 \(scanned) 个本地数据源"
             status = .ok
         } else {
             localIndexStatusText = "没有已启用的本地会话来源"
