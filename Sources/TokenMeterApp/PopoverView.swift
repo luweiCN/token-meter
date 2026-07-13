@@ -63,13 +63,9 @@ extension Color {
 /// 上自定义 popover 背景的通行做法，箭头会一并变色，系统边框随之消隐。
 private struct PopoverChromeTint: NSViewRepresentable {
     let color: NSColor
-    let border: NSColor
 
     final class TintView: NSView {
         var color: NSColor = .clear {
-            didSet { apply() }
-        }
-        var border: NSColor = .clear {
             didSet { apply() }
         }
 
@@ -82,9 +78,8 @@ private struct PopoverChromeTint: NSViewRepresentable {
             guard let frameView = window?.contentView?.superview else { return }
             frameView.wantsLayer = true
             frameView.layer?.backgroundColor = color.cgColor
-            // 外框描边与内部卡片同一 --border 色，系统默认那圈亮边被覆盖。
-            frameView.layer?.borderColor = border.cgColor
-            frameView.layer?.borderWidth = 1
+            // 不描边（用户裁定）：背景色本身就是边界，系统边框一并压为 0。
+            frameView.layer?.borderWidth = 0
             frameView.layer?.cornerRadius = 11
         }
     }
@@ -92,13 +87,11 @@ private struct PopoverChromeTint: NSViewRepresentable {
     func makeNSView(context: Context) -> TintView {
         let view = TintView()
         view.color = color
-        view.border = border
         return view
     }
 
     func updateNSView(_ nsView: TintView, context: Context) {
         nsView.color = color
-        nsView.border = border
     }
 }
 
@@ -182,39 +175,8 @@ struct PopoverView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            panelContent(currentHeight: proxy.size.height > 20 ? proxy.size.height : panelHeight)
-        }
-        .frame(width: 378)
-        .background(theme.surface)
-        .background(PopoverChromeTint(
-            color: themeName == "light"
-                ? NSColor(red: 1, green: 1, blue: 1, alpha: 1)
-                : NSColor(red: 0x02 / 255.0, green: 0x18 / 255.0, blue: 0x2A / 255.0, alpha: 1),
-            border: themeName == "light"
-                ? NSColor(red: 0xB9 / 255.0, green: 0xD2 / 255.0, blue: 0xE3 / 255.0, alpha: 1)
-                : NSColor(red: 0x0A / 255.0, green: 0x4A / 255.0, blue: 0x7A / 255.0, alpha: 1)))
-        .environment(\.mbTheme, theme)
-        .environment(\.colorScheme, themeName == "light" ? .light : .dark)
-        .onAppear {
-            store.reloadTodaySummary()
-            onPreferredHeightChange(panelHeight)
-        }
-        .onChange(of: panelHeight) { newHeight in
-            onPreferredHeightChange(newHeight)
-        }
-        .onChange(of: themeName) { _ in
-            onThemeChange()
-        }
-        .task {
-            await store.refreshNotificationAuthorizationState()
-        }
-    }
-
-    private func panelContent(currentHeight: CGFloat) -> some View {
         VStack(spacing: 0) {
-            // 吸顶头部：surface 底色（滚动区是更深的 bg），加分隔线与投影，
-            // 滚动内容从它下面钻过时层次分明。
+            // 吸顶头部：毛玻璃 + surface 叠加，滚动内容从下面穿过时层次分明。
             VStack(spacing: 0) {
                 PanelHead(store: store, themeName: $themeName)
                 TodayBlock(summary: store.todaySummary)
@@ -231,6 +193,8 @@ struct PopoverView: View {
             .shadow(color: .black.opacity(0.45), radius: 10, y: 4)
             .zIndex(1)
 
+            // 滚动区弹性吃掉头尾之外的全部空间——没有任何手动高度算术，
+            // 能否滚动由 AppKit 按「文档高 > 视口高」自行判定。
             ThinScrollView { height in
                 if abs(measuredContentHeight - height) > 0.5 {
                     measuredContentHeight = height
@@ -271,7 +235,7 @@ struct PopoverView: View {
                 .background(theme.bg)
             }
             .background(theme.bg)
-            .frame(height: max(1, currentHeight - chromeMeasured))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             VStack(spacing: 0) {
                 PanelDivider()
@@ -283,8 +247,27 @@ struct PopoverView: View {
             .background(theme.surface)
             .readHeight { footHeight = $0 }
         }
-        .frame(width: 378, height: currentHeight, alignment: .top)
-        .clipped()
+        .frame(width: 378, height: panelHeight, alignment: .top)
+        .background(theme.surface)
+        .background(PopoverChromeTint(
+            color: themeName == "light"
+                ? NSColor(red: 1, green: 1, blue: 1, alpha: 1)
+                : NSColor(red: 0x02 / 255.0, green: 0x18 / 255.0, blue: 0x2A / 255.0, alpha: 1)))
+        .environment(\.mbTheme, theme)
+        .environment(\.colorScheme, themeName == "light" ? .light : .dark)
+        .onAppear {
+            store.reloadTodaySummary()
+            onPreferredHeightChange(panelHeight)
+        }
+        .onChange(of: panelHeight) { newHeight in
+            onPreferredHeightChange(newHeight)
+        }
+        .onChange(of: themeName) { _ in
+            onThemeChange()
+        }
+        .task {
+            await store.refreshNotificationAuthorizationState()
+        }
     }
 
     private var sourceLineText: String {
@@ -345,7 +328,7 @@ private struct PanelHead: View {
         .focusable(false)
             .help("切换外观")
         }
-        .padding(EdgeInsets(top: 22, leading: 16, bottom: 10, trailing: 16))
+        .padding(EdgeInsets(top: 20, leading: 16, bottom: 10, trailing: 16))
     }
 
     private var dateText: String {
