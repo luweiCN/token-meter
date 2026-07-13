@@ -58,6 +58,40 @@ extension Color {
     }
 }
 
+/// NSPopover 的系统 chrome（框架、箭头、边框）没有公开的换色 API。放一个零尺寸
+/// NSView 进层级，等它挂上窗口后把 frame view 的 layer 染成面板色——这是 macOS
+/// 上自定义 popover 背景的通行做法，箭头会一并变色，系统边框随之消隐。
+private struct PopoverChromeTint: NSViewRepresentable {
+    let color: NSColor
+
+    final class TintView: NSView {
+        var color: NSColor = .clear {
+            didSet { apply() }
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            apply()
+        }
+
+        func apply() {
+            guard let frameView = window?.contentView?.superview else { return }
+            frameView.wantsLayer = true
+            frameView.layer?.backgroundColor = color.cgColor
+        }
+    }
+
+    func makeNSView(context: Context) -> TintView {
+        let view = TintView()
+        view.color = color
+        return view
+    }
+
+    func updateNSView(_ nsView: TintView, context: Context) {
+        nsView.color = color
+    }
+}
+
 private struct MBThemeKey: EnvironmentKey {
     static let defaultValue = MBTheme.dark
 }
@@ -124,7 +158,10 @@ struct PopoverView: View {
             panelContent(currentHeight: proxy.size.height > 20 ? proxy.size.height : panelHeight)
         }
         .frame(width: 378)
-        .background(theme.bg)
+        .background(theme.surface)
+        .background(PopoverChromeTint(color: themeName == "light"
+            ? NSColor(red: 1, green: 1, blue: 1, alpha: 1)
+            : NSColor(red: 0x02 / 255.0, green: 0x18 / 255.0, blue: 0x2A / 255.0, alpha: 1)))
         .environment(\.mbTheme, theme)
         .environment(\.colorScheme, themeName == "light" ? .light : .dark)
         .onAppear {
@@ -151,8 +188,8 @@ struct PopoverView: View {
                 SourceLine(text: sourceLineText)
                 PanelDivider()
             }
-            .background(theme.bg)
-            .shadow(color: .black.opacity(0.28), radius: 7, y: 3)
+            .background(theme.surface)
+            .shadow(color: .black.opacity(0.4), radius: 9, y: 4)
             .zIndex(1)
 
             ThinScrollView { height in
@@ -164,13 +201,12 @@ struct PopoverView: View {
                     Color.clear.frame(height: 4)
 
                     if !store.todaySummary.perProvider.isEmpty {
-                        SectionBlock(title: "今日 · 按服务商") {
-                            VStack(spacing: 0) {
-                                ForEach(store.todaySummary.perProvider, id: \.providerId) { row in
-                                    ProviderRow(row: row)
-                                }
+                        VStack(spacing: 0) {
+                            ForEach(store.todaySummary.perProvider, id: \.providerId) { row in
+                                ProviderRow(row: row)
                             }
                         }
+                        .padding(EdgeInsets(top: 6, leading: 16, bottom: 8, trailing: 16))
                         PanelDivider()
                     }
 
@@ -259,10 +295,10 @@ private struct PanelHead: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .focusable(false)
+        .focusable(false)
             .help("切换外观")
         }
-        .padding(EdgeInsets(top: 14, leading: 16, bottom: 10, trailing: 16))
+        .padding(EdgeInsets(top: 18, leading: 16, bottom: 10, trailing: 16))
     }
 
     private var dateText: String {
@@ -314,7 +350,7 @@ private struct TodayBlock: View {
                     .foregroundStyle(theme.fg2)
             }
 
-            (Text("今日 ")
+            (Text("花费 ")
                 + Text(MenuBarNumberFormat.usd(summary.costUsdMicros)).foregroundColor(theme.fg2)
                 + Text(" · ")
                 + Text("\(summary.sessions)").foregroundColor(theme.fg2)
@@ -401,7 +437,7 @@ private struct ProviderRow: View {
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(theme.muted)
                 .monospacedDigit()
-                .frame(minWidth: 96, alignment: .trailing)
+                .fixedSize()
         }
         .padding(.vertical, 5)
     }
@@ -619,6 +655,7 @@ private struct QuotaGroupView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focusable(false)
     }
 
     /// 红标里的紧凑时长（稿风格 m/h/d）：11,585m → 8d。
@@ -731,6 +768,7 @@ private struct StaleCard: View {
 
             Button("重试", action: onRetry)
                 .buttonStyle(.plain)
+        .focusable(false)
                 .font(.system(size: 11))
                 .foregroundStyle(theme.fg)
                 .padding(EdgeInsets(top: 3, leading: 11, bottom: 3, trailing: 11))
@@ -874,6 +912,7 @@ private struct ResetCardsGroup: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+        .focusable(false)
 
             if expanded {
                 VStack(spacing: 8) {
@@ -977,38 +1016,54 @@ private struct FootBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            FootButton(action: onOpenMainInterface) {
+            // 主操作：accent 实底
+            Button(action: onOpenMainInterface) {
                 Text("打开应用")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(theme.onAccent)
+                    .padding(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.accent))
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+        .focusable(false)
 
-            // 标签式开关按钮：描边胶囊，暂停中转 warn 色。
+            // 标签式开关：同高描边钮，暂停中转 warn
             Button {
                 isScanPaused.toggle()
             } label: {
                 Text(isScanPaused ? "恢复扫描" : "暂停扫描")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(isScanPaused ? theme.warn : theme.fg2)
-                    .padding(EdgeInsets(top: 3, leading: 10, bottom: 3, trailing: 10))
+                    .padding(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
                     .background(
-                        Capsule().fill(isScanPaused ? theme.tintWarn : theme.surface2)
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(isScanPaused ? theme.tintWarn : Color.clear)
                     )
                     .overlay(
-                        Capsule().stroke(isScanPaused ? theme.warn.opacity(0.5) : theme.border, lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(isScanPaused ? theme.warn.opacity(0.55) : theme.border, lineWidth: 1)
                     )
-                    .contentShape(Capsule())
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .focusable(false)
+        .focusable(false)
 
             Spacer()
 
-            FootButton(action: onOpenMainInterface) {
+            Button(action: onOpenMainInterface) {
                 Image(systemName: "gearshape")
                     .font(.system(size: 11))
+                    .foregroundStyle(theme.fg2)
+                    .frame(width: 25, height: 25)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.surface2.opacity(0.6)))
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+        .focusable(false)
             .help("设置")
         }
-        .padding(EdgeInsets(top: 9, leading: 10, bottom: 9, trailing: 10))
+        .padding(EdgeInsets(top: 10, leading: 14, bottom: 12, trailing: 14))
     }
 }
 
@@ -1028,6 +1083,7 @@ private struct FootButton<Label: View>: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focusable(false)
         .onHover { hovering = $0 }
     }
 }
@@ -1058,7 +1114,7 @@ private struct NotificationPermissionControl: View {
                     .frame(width: 20, height: 20)
             }
             .buttonStyle(.plain)
-            .focusable(false)
+        .focusable(false)
         case .authorized, .unknown:
             EmptyView()
         }
