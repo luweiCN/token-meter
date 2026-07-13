@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import type { ActivityRow, SubagentRow } from '../api.js';
 import { formatDurationShort, formatRelative, formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
@@ -102,7 +102,8 @@ const SORTS: Array<{ key: SortKey; label: string }> = [
 /// 每个字段的「顺手」默认方向：量与时间是从大/新看起（降序），名称是字母序（升序）。
 const DEFAULT_DIR: Record<SortKey, SortDir> = { tokens: 'desc', cost: 'desc', time: 'desc', label: 'asc' };
 
-/// 子代理下钻弹窗：子代理动辄几十上百个，故用居中 modal + 滚动，并带名称筛选与排序。
+/// 子代理下钻抽屉（OpenDesign 稿）：右侧滑入，遮罩点击/×/Esc 关闭。
+/// 子代理动辄几十上百个，抽屉内滚动，带名称筛选与排序。
 /// 排序区与筛选框在视觉上分开，靠激活态高亮和方向箭头表明当前排序键与方向，避免被误认成又一个筛选。
 function SubagentModal({
   projectName, rows, now, onClose
@@ -110,6 +111,27 @@ function SubagentModal({
   const [sortBy, setSortBy] = useState<SortKey>('tokens');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [filter, setFilter] = useState('');
+  const [entered, setEntered] = useState(false);
+
+  // 挂载后下一帧加 .on 触发入场过渡；关闭先撤 .on 等出场动画再卸载。
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setEntered(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  const close = () => {
+    setEntered(false);
+    window.setTimeout(onClose, 250);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onSort = (key: SortKey) => {
     if (key === sortBy) {
@@ -137,13 +159,15 @@ function SubagentModal({
   }, [rows, filter, sortBy, sortDir]);
 
   return (
-    <div className="subagent-modal__overlay" role="dialog" aria-modal="true" aria-label="子代理明细" onClick={onClose}>
-      <div className="subagent-modal" onClick={e => e.stopPropagation()}>
-        <div className="subagent-modal__head">
-          <h3 className="subagent-modal__title">{projectName} · {rows.length} 个子代理</h3>
-          <button type="button" className="subagent-modal__close" aria-label="关闭" onClick={onClose}>×</button>
-        </div>
-        <div className="subagent-modal__toolbar">
+    <>
+      <div className={`drawer-mask${entered ? ' on' : ''}`} onClick={close} aria-hidden="true" />
+      <div className={`drawer${entered ? ' on' : ''}`} role="dialog" aria-modal="true" aria-label="子代理明细">
+        <header>
+          <div className="ttl">{projectName}</div>
+          <div className="meta">{rows.length} 个子代理</div>
+          <button type="button" className="close" aria-label="关闭" onClick={close}>×</button>
+        </header>
+        <div className="tools">
           <input
             className="subagent-modal__filter"
             placeholder="按名称筛选"
@@ -165,7 +189,7 @@ function SubagentModal({
             ))}
           </div>
         </div>
-        <div className="subagent-modal__list">
+        <div className="body">
           {shown.length === 0 ? (
             <p className="muted subagent-modal__empty">没有匹配的子代理。</p>
           ) : (
@@ -181,6 +205,6 @@ function SubagentModal({
           )}
         </div>
       </div>
-    </div>
+    </>
   );
 }

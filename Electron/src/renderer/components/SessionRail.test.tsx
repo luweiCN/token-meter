@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SessionRail } from './SessionRail.js';
 import type { ActivityRow, SubagentRow } from '../api.js';
@@ -67,14 +67,18 @@ describe('SessionRail sub-agent drill-down', () => {
     expect(window.tokenMeter.overview.subagentBreakdown).toHaveBeenCalledWith(1);
   });
 
-  it('opens a titled modal and closes it via the close button', async () => {
+  it('opens a titled drawer and closes it via the close button', async () => {
     render(<SessionRail sessions={[base]} now={Date.now()} />);
     fireEvent.click(screen.getByRole('button', { name: /2 个子代理/ }));
 
     await waitFor(() => expect(screen.getByText('explorer')).toBeTruthy());
-    expect(screen.getByText(/proj · 2 个子代理/)).toBeTruthy();  // modal 标题：会话名 + 数量
+    // 抽屉头部：标题（会话名）与数量分行；卡片上也有同名项目，限定在 dialog 内断言
+    const drawer = screen.getByRole('dialog', { name: '子代理明细' });
+    expect(within(drawer).getByText('proj')).toBeTruthy();
+    expect(within(drawer).getByText('2 个子代理')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+    // 关闭有 250ms 出场动画，之后才卸载
     await waitFor(() => expect(screen.queryByText('explorer')).toBeNull());
   });
 
