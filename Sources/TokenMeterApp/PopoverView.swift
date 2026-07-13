@@ -63,9 +63,13 @@ extension Color {
 /// 上自定义 popover 背景的通行做法，箭头会一并变色，系统边框随之消隐。
 private struct PopoverChromeTint: NSViewRepresentable {
     let color: NSColor
+    let border: NSColor
 
     final class TintView: NSView {
         var color: NSColor = .clear {
+            didSet { apply() }
+        }
+        var border: NSColor = .clear {
             didSet { apply() }
         }
 
@@ -78,17 +82,23 @@ private struct PopoverChromeTint: NSViewRepresentable {
             guard let frameView = window?.contentView?.superview else { return }
             frameView.wantsLayer = true
             frameView.layer?.backgroundColor = color.cgColor
+            // 外框描边与内部卡片同一 --border 色，系统默认那圈亮边被覆盖。
+            frameView.layer?.borderColor = border.cgColor
+            frameView.layer?.borderWidth = 1
+            frameView.layer?.cornerRadius = 10
         }
     }
 
     func makeNSView(context: Context) -> TintView {
         let view = TintView()
         view.color = color
+        view.border = border
         return view
     }
 
     func updateNSView(_ nsView: TintView, context: Context) {
         nsView.color = color
+        nsView.border = border
     }
 }
 
@@ -141,16 +151,20 @@ struct PopoverView: View {
     var onOpenMainInterface: () -> Void = {}
     var onThemeChange: () -> Void = {}
 
-    /// 固定不随内容滚动的高度：head + today + srcline ≈ 118，foot ≈ 42。
-    private let chromeHeight: CGFloat = 160
-
     private var theme: MBTheme { themeName == "light" ? .light : .dark }
+
+    /// 吸顶区与底栏的高度是【实测】的（readHeight），不是估计值——写死的估计值
+    /// 偏小时，VStack 总高超出面板，底部按钮的 padding 会被整个裁掉且毫无征兆。
+    @State private var headerHeight: CGFloat = 150
+    @State private var footHeight: CGFloat = 48
+
+    private var chromeMeasured: CGFloat { headerHeight + footHeight }
 
     private var panelHeight: CGFloat {
         guard measuredContentHeight > 20 else {
             return min(maxPanelHeight, initialPanelHeight)
         }
-        return min(maxPanelHeight, chromeHeight + measuredContentHeight)
+        return min(maxPanelHeight, chromeMeasured + measuredContentHeight)
     }
 
     var body: some View {
@@ -159,9 +173,13 @@ struct PopoverView: View {
         }
         .frame(width: 378)
         .background(theme.surface)
-        .background(PopoverChromeTint(color: themeName == "light"
-            ? NSColor(red: 1, green: 1, blue: 1, alpha: 1)
-            : NSColor(red: 0x02 / 255.0, green: 0x18 / 255.0, blue: 0x2A / 255.0, alpha: 1)))
+        .background(PopoverChromeTint(
+            color: themeName == "light"
+                ? NSColor(red: 1, green: 1, blue: 1, alpha: 1)
+                : NSColor(red: 0x02 / 255.0, green: 0x18 / 255.0, blue: 0x2A / 255.0, alpha: 1),
+            border: themeName == "light"
+                ? NSColor(red: 0xD8 / 255.0, green: 0xE6 / 255.0, blue: 0xF0 / 255.0, alpha: 1)
+                : NSColor(red: 0x03 / 255.0, green: 0x32 / 255.0, blue: 0x59 / 255.0, alpha: 1)))
         .environment(\.mbTheme, theme)
         .environment(\.colorScheme, themeName == "light" ? .light : .dark)
         .onAppear {
@@ -181,7 +199,8 @@ struct PopoverView: View {
 
     private func panelContent(currentHeight: CGFloat) -> some View {
         VStack(spacing: 0) {
-            // 吸顶头部：底边分隔线 + 轻投影，滚动内容从它下面钻过时有明确的层次分界。
+            // 吸顶头部：surface 底色（滚动区是更深的 bg），加分隔线与投影，
+            // 滚动内容从它下面钻过时层次分明。
             VStack(spacing: 0) {
                 PanelHead(store: store, themeName: $themeName)
                 TodayBlock(summary: store.todaySummary)
@@ -189,6 +208,7 @@ struct PopoverView: View {
                 PanelDivider()
             }
             .background(theme.surface)
+            .readHeight { headerHeight = $0 }
             .shadow(color: .black.opacity(0.4), radius: 9, y: 4)
             .zIndex(1)
 
@@ -198,7 +218,7 @@ struct PopoverView: View {
                 }
             } content: {
                 VStack(alignment: .leading, spacing: 0) {
-                    Color.clear.frame(height: 4)
+                    Color.clear.frame(height: 6)
 
                     if !store.todaySummary.perProvider.isEmpty {
                         VStack(spacing: 0) {
@@ -226,16 +246,23 @@ struct PopoverView: View {
                         UnknownNote(count: store.todaySummary.unknownEvents)
                     }
 
-                    Color.clear.frame(height: 10)
+                    Color.clear.frame(height: 12)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(theme.bg)
             }
-            .frame(height: max(1, currentHeight - chromeHeight))
+            .background(theme.bg)
+            .frame(height: max(1, currentHeight - chromeMeasured))
 
-            PanelDivider()
-            FootBar(
-                isScanPaused: $store.isScanPaused,
-                onOpenMainInterface: onOpenMainInterface
-            )
+            VStack(spacing: 0) {
+                PanelDivider()
+                FootBar(
+                    isScanPaused: $store.isScanPaused,
+                    onOpenMainInterface: onOpenMainInterface
+                )
+            }
+            .background(theme.surface)
+            .readHeight { footHeight = $0 }
         }
         .frame(width: 378, height: currentHeight)
     }
@@ -298,7 +325,7 @@ private struct PanelHead: View {
         .focusable(false)
             .help("切换外观")
         }
-        .padding(EdgeInsets(top: 18, leading: 16, bottom: 10, trailing: 16))
+        .padding(EdgeInsets(top: 22, leading: 16, bottom: 10, trailing: 16))
     }
 
     private var dateText: String {
