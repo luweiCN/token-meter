@@ -40,9 +40,11 @@ codesign --force --deep --sign - --identifier "$BUNDLE_ID" "$BUILD_APP_DIR" >/de
 cp -R "$ROOT_DIR/.build/release/TokenMeter_TokenMeterApp.bundle" "$BUILD_APP_DIR/TokenMeter_TokenMeterApp.bundle"
 cp -R "$ROOT_DIR/.build/release/TokenMeter_TokenMeterCore.bundle" "$BUILD_APP_DIR/TokenMeter_TokenMeterCore.bundle"
 
-# 停掉旧实例（若在跑），换成新的一份。
+# 停掉旧实例（若在跑），换成新的一份。Electron 主界面也要杀：
+# 旧进程引用的 Resources/Electron 马上会被整目录替换，留着必白屏。
 osascript -e 'tell application "TokenMeter" to quit' 2>/dev/null || true
 pkill -f "$INSTALL_APP_DIR/Contents/MacOS/TokenMeterApp" 2>/dev/null || true
+pkill -f "$INSTALL_APP_DIR/Contents/Resources/Electron" 2>/dev/null || true
 sleep 1
 rm -rf "$INSTALL_APP_DIR"
 cp -R "$BUILD_APP_DIR" "$INSTALL_APP_DIR"
