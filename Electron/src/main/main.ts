@@ -5,6 +5,26 @@ import { registerIpcHandlers } from './ipc.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// dev 模式用独立的用户数据目录：与正式安装版共用时触发 Chromium 的
+// singleton 冲突，后启动的实例白屏或直接退出。
+if (process.env.VITE_DEV_SERVER_URL) {
+  app.setPath('userData', `${app.getPath('userData')}-dev`);
+}
+
+// 同一份 userData 只允许一个实例：重复启动（连点两次「打开应用」）的
+// 第二个实例同样会撞 singleton 白屏——拿不到锁就退出，把已有窗口带到前台。
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+app.on('second-instance', () => {
+  const window = getMainWindow();
+  if (window) {
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  }
+});
+
 let mainWindow: BrowserWindow | null = null;
 
 export function getMainWindow(): BrowserWindow | null {
