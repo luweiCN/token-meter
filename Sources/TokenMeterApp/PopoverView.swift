@@ -449,28 +449,22 @@ private final class ThinScroller: NSScroller {
 
     override class var isCompatibleWithOverlayScrollers: Bool { true }
 
-    /// 展开进度：系统悬停时把 overlay scroller 从 ~10 动画加宽到 ~16，
-    /// 每一帧的 bounds.width 就是插值信号——槽的透明度、knob 的颜色都跟着渐变。
-    private var expansionProgress: CGFloat {
-        max(0, min(1, (bounds.width - 11) / 5))
-    }
-
     override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
-        let progress = expansionProgress
-        guard progress > 0 else { return }   // 常态无槽，悬停展开中渐显
-        NSColor.tertiaryLabelColor.withAlphaComponent(0.12 * progress).setFill()
-        let track = slotRect.insetBy(dx: 2, dy: 2)
-        NSBezierPath(roundedRect: track, xRadius: track.width / 2, yRadius: track.width / 2).fill()
+        // 细条不画槽。悬停展开动效已撤：其触发链在自定义 scroller 上不可靠，
+        // 保留的行为（细条、闪现、渐隐、拖拽）全部确定。
     }
 
     override func drawKnob() {
-        // 直接用系统 knobRect 内缩绘制——它每一帧都反映悬停展开动画的当前
-        // 宽度（产品级实现的通行做法）。自算横向几何的两版分别造成
-        // 「悬停不变宽」与「knob 左移」。
-        let knob = rect(for: .knob).insetBy(dx: 3, dy: 2)
-        guard knob.width > 1, knob.height > 1 else { return }
-        NSColor.tertiaryLabelColor.withAlphaComponent(0.5 + 0.22 * expansionProgress).setFill()
-        NSBezierPath(roundedRect: knob, xRadius: knob.width / 2, yRadius: knob.width / 2).fill()
+        let knob = rect(for: .knob)
+        let width: CGFloat = 4
+        let inset = NSRect(
+            x: bounds.width - 3 - width,
+            y: knob.origin.y + 2,
+            width: width,
+            height: max(24, knob.height - 4)
+        )
+        NSColor.tertiaryLabelColor.withAlphaComponent(0.55).setFill()
+        NSBezierPath(roundedRect: inset, xRadius: width / 2, yRadius: width / 2).fill()
     }
 }
 
