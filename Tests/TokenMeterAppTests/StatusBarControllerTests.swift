@@ -161,6 +161,7 @@ private final class SpyPopover: PopoverPresenting {
     private(set) var isShown = false
     var contentSize: NSSize = .zero
     var contentViewController: NSViewController?
+    var appearance: NSAppearance?
     private(set) var performCloseCallCount = 0
 
     func show(relativeTo positioningRect: NSRect, of positioningView: NSView, preferredEdge: NSRectEdge) {

@@ -105,6 +105,7 @@ struct PopoverView: View {
     let maxPanelHeight: CGFloat
     let onPreferredHeightChange: (CGFloat) -> Void
     var onOpenMainInterface: () -> Void = {}
+    var onThemeChange: () -> Void = {}
 
     /// 固定不随内容滚动的高度：head + today + srcline ≈ 118，foot ≈ 42。
     private let chromeHeight: CGFloat = 160
@@ -133,6 +134,9 @@ struct PopoverView: View {
         .onChange(of: panelHeight) { newHeight in
             onPreferredHeightChange(newHeight)
         }
+        .onChange(of: themeName) { _ in
+            onThemeChange()
+        }
         .task {
             await store.refreshNotificationAuthorizationState()
         }
@@ -140,9 +144,16 @@ struct PopoverView: View {
 
     private func panelContent(currentHeight: CGFloat) -> some View {
         VStack(spacing: 0) {
-            PanelHead(store: store, themeName: $themeName)
-            TodayBlock(summary: store.todaySummary)
-            SourceLine(text: sourceLineText)
+            // 吸顶头部：底边分隔线 + 轻投影，滚动内容从它下面钻过时有明确的层次分界。
+            VStack(spacing: 0) {
+                PanelHead(store: store, themeName: $themeName)
+                TodayBlock(summary: store.todaySummary)
+                SourceLine(text: sourceLineText)
+                PanelDivider()
+            }
+            .background(theme.bg)
+            .shadow(color: .black.opacity(0.28), radius: 7, y: 3)
+            .zIndex(1)
 
             ThinScrollView { height in
                 if abs(measuredContentHeight - height) > 0.5 {
@@ -150,7 +161,7 @@ struct PopoverView: View {
                 }
             } content: {
                 VStack(alignment: .leading, spacing: 0) {
-                    PanelDivider()
+                    Color.clear.frame(height: 4)
 
                     if !store.todaySummary.perProvider.isEmpty {
                         SectionBlock(title: "今日 · 按服务商") {
@@ -178,6 +189,8 @@ struct PopoverView: View {
                     if store.todaySummary.unknownEvents > 0 {
                         UnknownNote(count: store.todaySummary.unknownEvents)
                     }
+
+                    Color.clear.frame(height: 10)
                 }
             }
             .frame(height: max(1, currentHeight - chromeHeight))
@@ -243,10 +256,10 @@ private struct PanelHead: View {
                 }
                 .foregroundStyle(theme.fg2)
                 .frame(width: 24, height: 24)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.border, lineWidth: 1))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .focusable(false)
             .help("切换外观")
         }
         .padding(EdgeInsets(top: 14, leading: 16, bottom: 10, trailing: 16))
@@ -574,7 +587,7 @@ private struct QuotaGroupView: View {
                     .lineLimit(1)
 
                 if let minutes = model.staleMinutes {
-                    Text("\(minutes)m 未更新")
+                    Text("\(Self.staleBadgeText(minutes)) 未更新")
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundStyle(theme.danger)
                         .padding(EdgeInsets(top: 1, leading: 7, bottom: 1, trailing: 7))
@@ -606,6 +619,13 @@ private struct QuotaGroupView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// 红标里的紧凑时长（稿风格 m/h/d）：11,585m → 8d。
+    static func staleBadgeText(_ minutes: Int) -> String {
+        if minutes < 60 { return "\(minutes)m" }
+        if minutes < 24 * 60 { return "\(minutes / 60)h" }
+        return "\(minutes / (24 * 60))d"
     }
 }
 
@@ -956,25 +976,29 @@ private struct FootBar: View {
     @Environment(\.mbTheme) private var theme
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 8) {
             FootButton(action: onOpenMainInterface) {
-                HStack(spacing: 5) {
-                    Text("打开 TokenMeter")
-                    Text("⌘O")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(theme.muted)
-                        .padding(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(theme.border, lineWidth: 1))
-                }
+                Text("打开应用")
             }
-            .keyboardShortcut("o", modifiers: .command)
 
-            FootButton {
+            // 标签式开关按钮：描边胶囊，暂停中转 warn 色。
+            Button {
                 isScanPaused.toggle()
             } label: {
                 Text(isScanPaused ? "恢复扫描" : "暂停扫描")
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(isScanPaused ? theme.warn : theme.fg2)
+                    .padding(EdgeInsets(top: 3, leading: 10, bottom: 3, trailing: 10))
+                    .background(
+                        Capsule().fill(isScanPaused ? theme.tintWarn : theme.surface2)
+                    )
+                    .overlay(
+                        Capsule().stroke(isScanPaused ? theme.warn.opacity(0.5) : theme.border, lineWidth: 1)
+                    )
+                    .contentShape(Capsule())
             }
+            .buttonStyle(.plain)
+            .focusable(false)
 
             Spacer()
 

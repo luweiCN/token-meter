@@ -109,6 +109,7 @@ protocol PopoverPresenting: AnyObject {
     var isShown: Bool { get }
     var contentSize: NSSize { get set }
     var contentViewController: NSViewController? { get set }
+    var appearance: NSAppearance? { get set }
     func show(relativeTo positioningRect: NSRect, of positioningView: NSView, preferredEdge: NSRectEdge)
     func performClose(_ sender: Any?)
 }
@@ -282,6 +283,7 @@ final class StatusBarController: NSObject {
     private func updatePopoverContent(relativeTo button: NSStatusBarButton?) {
         let size = preferredPopoverSize(relativeTo: button)
         popover.contentSize = NSSize(width: size.width, height: size.initialHeight)
+        applyPopoverAppearance()
         popover.contentViewController = NSHostingController(
             rootView: PopoverView(
                 store: store,
@@ -293,9 +295,19 @@ final class StatusBarController: NSObject {
                 onOpenMainInterface: { [weak self] in
                     self?.popover.performClose(nil)
                     self?.mainInterfaceLauncher.openMainInterface()
+                },
+                onThemeChange: { [weak self] in
+                    self?.applyPopoverAppearance()
                 }
             )
         )
+    }
+
+    /// NSPopover 的系统 chrome（外框材质）跟随弹窗主题——否则深色面板外面
+    /// 套一圈系统浅色边，颜色对不上。
+    private func applyPopoverAppearance() {
+        let isLight = UserDefaults.standard.string(forKey: "menubarTheme") == "light"
+        popover.appearance = NSAppearance(named: isLight ? .aqua : .darkAqua)
     }
 
     private func preferredPopoverSize(relativeTo button: NSStatusBarButton?) -> (width: CGFloat, initialHeight: CGFloat, maxHeight: CGFloat) {
