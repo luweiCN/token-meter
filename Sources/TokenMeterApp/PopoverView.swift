@@ -171,7 +171,9 @@ struct PopoverView: View {
         guard measuredContentHeight > 20 else {
             return min(maxPanelHeight, initialPanelHeight)
         }
-        return min(maxPanelHeight, chromeMeasured + measuredContentHeight)
+        // 自然高度再拔 10%（用户裁定）：全折叠的矮态不至于太局促；
+        // 展开态本就会被 maxPanelHeight 钳住，不受影响。
+        return min(maxPanelHeight, (chromeMeasured + measuredContentHeight) * 1.1)
     }
 
     var body: some View {
