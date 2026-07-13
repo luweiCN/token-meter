@@ -3,15 +3,22 @@ import { useMemo, useState } from 'react';
 import type { ActivityRow, SubagentRow } from '../api.js';
 import { formatDuration, formatRelative, formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
 
-/// 右侧会话列表（spec §7.2）：进行中的（5 分钟内消耗过 token）置顶并打脉冲点，
-/// 下方是最近结束的若干条。数据已由 repository 的 sessionRail 排好序 + 子代理归并。
-///
-/// 卡片按信息层次排：标题（项目名 + 状态）→ 用过的模型（tag）→ 用量数字（token 为主，
-/// 成本/时长次要）→ 子代理徽标。token/成本是【含子代理的合计】故标「总」；模型 tag 是
-/// 【主会话自己用过的】（不含子代理），两个层级放一起才不会被误读成「这个模型用了这么多」。
-///
-/// 「进行中」不等于「正在运行」——没有可靠的非侵入判据（spec §7.2.1），这里只陈述
-/// 磁盘上的事实：这个会话（含其子代理）在 5 分钟内消耗过 token。
+/// 实时会话卡（OpenDesign 稿 8b）三态：
+///   running —— 2 分钟内有新事件（repository 的 isLive，脉冲绿点）
+///   idle    —— 2~15 分钟（「等待输入」，黄点）；15 分钟只是稿上 6m=idle/18m=done 的中点取整
+///   done    —— 更久（「已结束」，灰点）
+/// 三态都只陈述磁盘事实，不声称进程状态（spec §7.2.1）。
+const IDLE_WINDOW_MS = 15 * 60_000;
+
+function cardState(s: ActivityRow): 'running' | 'idle' | 'done' {
+  if (s.isLive) return 'running';
+  return s.msSinceLastEvent < IDLE_WINDOW_MS ? 'idle' : 'done';
+}
+
+const STATE_LABEL = { running: '运行中', idle: '等待输入', done: '已结束' } as const;
+
+/// 实时会话网格：一张 lcard 一个主会话，token/成本是【含子代理的合计】。
+/// 会话标题不展示——97% 的会话（Codex SDK 批量调用）源日志里就没有标题。
 export function SessionRail({ sessions, now }: { sessions: ActivityRow[]; now: number }) {
   const [open, setOpen] = useState<{ projectName: string; rows: SubagentRow[] } | null>(null);
 
@@ -25,51 +32,51 @@ export function SessionRail({ sessions, now }: { sessions: ActivityRow[]; now: n
   }
   return (
     <>
-      <ul className="session-rail__list">
+      <div className="live-grid">
         {sessions.map(s => {
+          const state = cardState(s);
           const unknownNote = formatUnknownCostNote(s.costUnknownEvents);
+          const model = s.models[0] ?? s.primaryModel;
           return (
-            <li key={s.sessionId} className={`session-rail__item${s.isLive ? ' is-live' : ''}`}>
-              <div className="session-rail__head">
-                {s.isLive ? <span className="session-rail__pulse" aria-hidden="true" /> : null}
-                <strong className="session-rail__project" title={s.projectName}>{s.projectName}</strong>
-                <span className="session-rail__provider">{s.providerId}</span>
-                <span className={`session-rail__status${s.isLive ? ' is-live' : ''}`}>
-                  {s.isLive ? '进行中' : formatRelative(s.msSinceLastEvent)}
-                </span>
+            <div key={s.sessionId} className="lcard" data-state={state}>
+              <div className="lc-top">
+                <i className="dot" aria-hidden="true" />
+                <span className="proj" title={s.projectName}>{s.projectName}</span>
+                <span className="last">{s.isLive ? '刚刚' : formatRelative(s.msSinceLastEvent)}</span>
               </div>
-
-              {s.models.length > 0 ? (
-                <div className="session-rail__models" aria-label="主会话用过的模型">
-                  {s.models.map(m => <span key={m} className="session-rail__model-tag">{m}</span>)}
-                </div>
+              {model ? (
+                <span className="lc-model" title={s.models.join('、') || model}>
+                  {model}
+                  {s.models.length > 1 ? ` +${s.models.length - 1}` : ''}
+                </span>
               ) : null}
-
-              <div className="session-rail__stats">
-                <strong className="session-rail__tokens">总 {formatTokens(s.tokensTotal)} tokens</strong>
-                <span className="session-rail__stat">
-                  {formatUsdMicros(s.costUsdMicros)}
-                  {unknownNote ? (
-                    <span className="cost-unknown" title="部分事件价格未知，成本可能偏低">（{unknownNote}）</span>
-                  ) : null}
-                </span>
-                <span className="session-rail__stat">{formatDuration(Math.max(0, now - s.firstEventEpochMs))}</span>
-              </div>
-
-              {s.subagentCount > 0 ? (
-                <button
-                  type="button"
-                  className="session-rail__subagents"
-                  aria-label={`${s.subagentCount} 个子代理，点开看明细`}
-                  onClick={() => void openBreakdown(s)}
+              <div className="lc-nums">
+                <span className="num">{formatTokens(s.tokensTotal)}</span>
+                <span
+                  className="num"
+                  title={unknownNote ? `部分事件价格未知，成本可能偏低（${unknownNote}）` : undefined}
                 >
-                  {s.subagentCount} 个子代理
-                </button>
-              ) : null}
-            </li>
+                  {formatUsdMicros(s.costUsdMicros)}{unknownNote ? '†' : ''}
+                </span>
+                <span className="num">{formatDuration(Math.max(0, now - s.firstEventEpochMs))}</span>
+              </div>
+              <div className="lc-foot">
+                <span className="state">{STATE_LABEL[state]}</span>
+                {s.subagentCount > 0 ? (
+                  <button
+                    type="button"
+                    className="agbtn"
+                    aria-label={`${s.subagentCount} 个子代理，点开看明细`}
+                    onClick={() => void openBreakdown(s)}
+                  >
+                    {s.subagentCount} 子代理
+                  </button>
+                ) : null}
+              </div>
+            </div>
           );
         })}
-      </ul>
+      </div>
 
       {open ? (
         <SubagentModal projectName={open.projectName} rows={open.rows} now={now} onClose={() => setOpen(null)} />

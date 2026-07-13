@@ -76,6 +76,15 @@ export interface OverviewKpis {
   todayCostUsdMicros: number;
   todayCostUnknownEvents: number;
   monthCostUsdMicros: number;
+  monthCostUnknownEvents: number;
+  /// 累计指标（OpenDesign 稿的四指标卡与页头副标题）。
+  totalTokens: number;
+  totalCostUsdMicros: number;
+  totalCostUnknownEvents: number;
+  totalEvents: number;
+  totalSessions: number;
+  /// 最早的 usage_date（「自 X 起」）；库里还没有任何 rollup 时为 null。
+  firstDate: string | null;
 }
 
 export interface TrendBucket {
@@ -118,6 +127,8 @@ export interface ModelRank {
   tokens: number;
   costUsdMicros: number;
   costUnknownEvents: number;
+  /// 该模型唯一的服务商 id；跨多个服务商用过时为 null（前端显示「混合」）。
+  providerId: string | null;
 }
 
 /// 概览页默认展示的时间范围。趋势与排行走最近 30 天（30 根 ≤ 120 可读上限，day 粒度合法）；
@@ -179,11 +190,12 @@ export class OverviewRepository {
     const to = this.localDate(0);
     const trendFrom = this.localDate(-(TREND_DAYS - 1));
     const heatmapFrom = this.localDate(-(HEATMAP_DAYS - 1));
+    const kpis = this.kpis();
 
     return {
       dataState: 'ready',
       today: to,
-      kpis: this.kpis(),
+      kpis,
       trend: this.trend(trendFrom, to, 'day'),
       trendRange: { from: trendFrom, to, granularity: 'day' },
       agentTrend: {
@@ -194,7 +206,8 @@ export class OverviewRepository {
       heatmap: this.heatmap(heatmapFrom, to),
       heatmapLastDay: to,
       heatmapDays: HEATMAP_DAYS,
-      modelRanking: this.modelRanking(trendFrom, to, 'cost'),
+      // 模型排行按累计 token 降序（OpenDesign 稿口径），范围从首个 rollup 日起。
+      modelRanking: this.modelRanking(kpis.firstDate ?? to, to, 'tokens'),
       sessionRail: this.sessionRail(SESSION_RAIL_LIMIT)
     };
   }
@@ -357,10 +370,29 @@ export class OverviewRepository {
          FROM daily_rollup WHERE usage_date = ?`
     ).get(today) as { cost: number; unknown: number };
 
-    const monthCost = (this.db.prepare(
-      `SELECT coalesce(sum(cost_usd_micros), 0) AS n
+    const monthRow = this.db.prepare(
+      `SELECT coalesce(sum(cost_usd_micros), 0) AS cost,
+              coalesce(sum(cost_unknown_events), 0) AS unknown
          FROM daily_rollup WHERE usage_date LIKE ?`
-    ).get(`${monthPrefix}-%`) as { n: number }).n;
+    ).get(`${monthPrefix}-%`) as { cost: number; unknown: number };
+
+    // 累计口径全部从 daily_rollup 聚合（行数按 天×provider×模型 计，很小）；
+    // 会话数只数主会话，与今日会话数同一口径。
+    const totalRow = this.db.prepare(
+      `SELECT min(usage_date) AS firstDate,
+              coalesce(sum(tokens_input + tokens_output + tokens_cache_read
+                           + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
+              coalesce(sum(cost_usd_micros), 0) AS cost,
+              coalesce(sum(cost_unknown_events), 0) AS unknown,
+              coalesce(sum(events_count), 0) AS events
+         FROM daily_rollup`
+    ).get() as { firstDate: string | null; tokens: number; cost: number; unknown: number; events: number };
+
+    const totalSessions = (this.db.prepare(
+      `SELECT count(*) AS n FROM session_rollup sr
+         JOIN agent_sessions s ON s.id = sr.session_id
+        WHERE s.root_session_key IS NULL AND s.status != 'deleted'`
+    ).get() as { n: number }).n;
 
     // 会话数必须 count(distinct)，绝不能 sum(daily_rollup.sessions_count)：
     // 同一会话当天用了两个模型会占两行（spec §4.2）。
@@ -379,7 +411,14 @@ export class OverviewRepository {
       todaySessions,
       todayCostUsdMicros: todayRow.cost,
       todayCostUnknownEvents: todayRow.unknown,
-      monthCostUsdMicros: monthCost
+      monthCostUsdMicros: monthRow.cost,
+      monthCostUnknownEvents: monthRow.unknown,
+      totalTokens: totalRow.tokens,
+      totalCostUsdMicros: totalRow.cost,
+      totalCostUnknownEvents: totalRow.unknown,
+      totalEvents: totalRow.events,
+      totalSessions,
+      firstDate: totalRow.firstDate
     };
   }
 
@@ -527,17 +566,24 @@ export class OverviewRepository {
   /// 每个模型都带上 costUnknownEvents：成本 0 到底是免费还是未定价，UI 必须能区分。
   modelRanking(from: string, to: string, sortBy: 'cost' | 'tokens'): ModelRank[] {
     const orderBy = sortBy === 'cost' ? 'costUsdMicros DESC, tokens DESC' : 'tokens DESC, costUsdMicros DESC';
-    return this.db.prepare(
+    const rows = this.db.prepare(
       `SELECT model_canonical AS model,
               coalesce(sum(tokens_input + tokens_output + tokens_cache_read
                            + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
               coalesce(sum(cost_usd_micros), 0) AS costUsdMicros,
-              coalesce(sum(cost_unknown_events), 0) AS costUnknownEvents
+              coalesce(sum(cost_unknown_events), 0) AS costUnknownEvents,
+              count(DISTINCT provider_id) AS providerCount,
+              min(provider_id) AS soleProvider
          FROM daily_rollup
         WHERE usage_date BETWEEN ? AND ?
      GROUP BY model_canonical
      ORDER BY ${orderBy}`
-    ).all(from, to) as ModelRank[];
+    ).all(from, to) as Array<ModelRank & { providerCount: number; soleProvider: string | null }>;
+    // 同名模型经多个服务商用过（gpt-5.5 在 codex 与 omp 都出现）时不冒认单一来源。
+    return rows.map(({ providerCount, soleProvider, ...rank }) => ({
+      ...rank,
+      providerId: providerCount === 1 ? soleProvider : null
+    }));
   }
 }
 

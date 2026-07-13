@@ -513,3 +513,36 @@ describe('agentTrend', () => {
     expect(series.buckets).toHaveLength(10);
   });
 });
+
+describe('kpis totals & modelRanking provider', () => {
+  it('carries all-time totals, first date and month unknown count', () => {
+    db.exec(`INSERT INTO daily_rollup(usage_date, provider_id, source_kind, model_canonical,
+             tokens_input, cost_usd_micros, cost_unknown_events, events_count) VALUES
+             ('2026-06-01','claude-code','claude_jsonl','m1', 100, 5000, 2, 10),
+             ('2026-07-09','codex','codex_jsonl','m2', 40, 2000, 1, 4)`);
+    seedSession(1, 'codex', 'proj', 60_000, 1000);
+    seedSubSession(2, 'codex', 's1', 'worker', 60_000, 500);   // 子会话不计入累计会话数
+
+    const k = new OverviewRepository(db, () => NOW).kpis();
+
+    expect(k.firstDate).toBe('2026-06-01');
+    expect(k.totalTokens).toBe(140);
+    expect(k.totalCostUsdMicros).toBe(7000);
+    expect(k.totalCostUnknownEvents).toBe(3);
+    expect(k.totalEvents).toBe(14);
+    expect(k.totalSessions).toBe(1);
+    expect(k.monthCostUnknownEvents).toBe(1);
+  });
+
+  it('reports the sole provider per model, or null when providers mix', () => {
+    db.exec(`INSERT INTO daily_rollup(usage_date, provider_id, source_kind, model_canonical, tokens_input) VALUES
+             ('2026-07-09','codex','codex_jsonl','gpt-5.5', 100),
+             ('2026-07-09','omp','omp_jsonl','gpt-5.5', 50),
+             ('2026-07-09','claude-code','claude_jsonl','claude-fable-5', 900)`);
+
+    const rows = new OverviewRepository(db, () => NOW).modelRanking('2026-07-01', '2026-07-10', 'tokens');
+
+    expect(rows[0]).toMatchObject({ model: 'claude-fable-5', providerId: 'claude-code' });
+    expect(rows[1]).toMatchObject({ model: 'gpt-5.5', tokens: 150, providerId: null });
+  });
+});

@@ -1646,6 +1646,10 @@ select {
   animation: tm-pulse 1.6s ease-in-out infinite;
 }
 
+.lcard[data-state="idle"] .dot {
+  background: var(--warn);
+}
+
 @keyframes tm-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(68, 255, 177, 0.45); }
   55% { box-shadow: 0 0 0 5px rgba(68, 255, 177, 0); }
@@ -1688,6 +1692,10 @@ select {
 
 .lcard[data-state="running"] .state {
   color: var(--ok);
+}
+
+.lcard[data-state="idle"] .state {
+  color: var(--warn);
 }
 
 .agbtn {

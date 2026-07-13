@@ -315,7 +315,7 @@ describe('AppShell renderer routes', () => {
     const user = userEvent.setup();
     render(<AppShell />);
 
-    expect(screen.getByRole('heading', { level: 1, name: '概览' })).toBeTruthy();
+    expect(screen.getByRole('heading', { level: 1, name: '总览' })).toBeTruthy();
     expectNoEnglishScaffold();
 
     await user.click(screen.getByRole('button', { name: '会话' }));

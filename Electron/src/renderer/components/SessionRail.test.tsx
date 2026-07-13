@@ -24,11 +24,28 @@ beforeEach(() => {
 });
 
 describe('SessionRail sub-agent drill-down', () => {
-  it('renders main-session models as tags and labels the token total as 总', () => {
+  it('renders the first model as a tag with an overflow count and the merged token total', () => {
     render(<SessionRail sessions={[base]} now={Date.now()} />);
-    expect(screen.getByText('gpt-5.5')).toBeTruthy();
-    expect(screen.getByText('gpt-5.6-sol')).toBeTruthy();
-    expect(screen.getByText(/^总 .+ tokens$/)).toBeTruthy();
+    // lcard 只放一个模型标签；其余模型收进 +N 与 title
+    const tag = screen.getByText(/gpt-5\.5 \+1/);
+    expect(tag.getAttribute('title')).toContain('gpt-5.6-sol');
+    expect(screen.getByText('1.80K')).toBeTruthy();   // formatTokens(1800)，含子代理的合计
+  });
+
+  it('maps freshness to the three card states: running / idle / done', () => {
+    render(
+      <SessionRail
+        now={Date.now()}
+        sessions={[
+          { ...base, sessionId: 1, isLive: true },
+          { ...base, sessionId: 2, isLive: false, msSinceLastEvent: 5 * 60_000 },
+          { ...base, sessionId: 3, isLive: false, msSinceLastEvent: 30 * 60_000 }
+        ]}
+      />
+    );
+    expect(screen.getByText('运行中').closest('.lcard')?.getAttribute('data-state')).toBe('running');
+    expect(screen.getByText('等待输入').closest('.lcard')?.getAttribute('data-state')).toBe('idle');
+    expect(screen.getByText('已结束').closest('.lcard')?.getAttribute('data-state')).toBe('done');
   });
 
   it('shows a sub-agent count badge when a session has sub-agents', () => {
