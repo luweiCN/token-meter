@@ -2,19 +2,6 @@ import AppKit
 import SwiftUI
 import TokenMeterCore
 
-// TEMP-DIAG：诊断日志直写文件（unified log 对动态字符串打码，查不到）。
-func tmDiag(_ text: String) {
-    let line = String(format: "%.3f %@\n", Date().timeIntervalSince1970, text)
-    let path = "/tmp/tm-jump.log"
-    if let handle = FileHandle(forWritingAtPath: path) {
-        handle.seekToEndOfFile()
-        handle.write(line.data(using: .utf8) ?? Data())
-        handle.closeFile()
-    } else {
-        FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8))
-    }
-}
-
 // MARK: - 主题（OpenDesign 稿 coolnight，深色原生 / 浅色派生，随弹窗右上角按钮切换）
 
 struct MBTheme: Equatable {
@@ -85,17 +72,14 @@ private struct PopoverChromeTint: NSViewRepresentable {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             apply()
-            // TEMP-DIAG
+            // 窗口 resize 与内容布局并成同一事务：AppKit 原点在左下，resize 的
+            // 瞬间帧里内容会跟着底边走，同步布局让归位发生在同一次屏幕提交内
+            // （面板打开时从估值到实值的那一次调整靠它保持顶部稳定）。
             if let window {
                 NotificationCenter.default.addObserver(
                     forName: NSWindow.didResizeNotification, object: window, queue: .main
                 ) { note in
-                    guard let win = note.object as? NSWindow else { return }
-                    // 关键：窗口 resize 与内容布局并成同一事务。AppKit 原点在左下，
-                    // resize 的瞬间帧里内容跟着底边走（视觉上被挤上/挤下），SwiftUI
-                    // 下一拍才归位——在通知里同步布局，归位发生在同一次屏幕提交内。
-                    win.contentView?.layoutSubtreeIfNeeded()
-                    tmDiag(String(format: "window h=%.1f y=%.1f (laid out in-transaction)", win.frame.height, win.frame.origin.y))
+                    (note.object as? NSWindow)?.contentView?.layoutSubtreeIfNeeded()
                 }
             }
         }
@@ -230,7 +214,7 @@ struct PopoverView: View {
             // 纯 SwiftUI 滚动区：AppKit 滚动容器与 SwiftUI 内容之间的高度信号
             // 无论怎么接都差一拍（诊断日志：展开居中跳 ±60.5、收起文档卡 732、
             // offset 被推到 236 再回弹），树内没有 AppKit 边界后这一类问题整体消失。
-            ScrollView(.vertical) {
+            ThinScrollBarView(contentHeight: measuredContentHeight) {
                 VStack(alignment: .leading, spacing: 0) {
                     Color.clear.frame(height: 6)
 
@@ -451,6 +435,65 @@ private struct SourceLine: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
+    }
+}
+
+/// 细滚动条（纯 SwiftUI）：隐藏系统粗条，自绘 4px 圆头细条——滚动时浮现、
+/// 停止约一秒后淡出，可滚动才出现。仅指示，不支持拖拽（菜单栏面板以滚轮为主）。
+private struct TmScrollOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+private struct ThinScrollBarView<Content: View>: View {
+    let contentHeight: CGFloat
+    @ViewBuilder var content: Content
+
+    @State private var offset: CGFloat = 0
+    @State private var thumbVisible = false
+    @State private var fadeTask: Task<Void, Never>?
+
+    var body: some View {
+        GeometryReader { viewport in
+            let viewportHeight = viewport.size.height
+            ScrollView(.vertical) {
+                content
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(key: TmScrollOffsetKey.self, value: -geo.frame(in: .named("tmScroll")).minY)
+                        }
+                    )
+            }
+            .coordinateSpace(name: "tmScroll")
+            .scrollIndicators(.hidden)
+            .onPreferenceChange(TmScrollOffsetKey.self) { newOffset in
+                offset = newOffset
+                guard contentHeight > viewportHeight + 1 else { return }
+                thumbVisible = true
+                fadeTask?.cancel()
+                fadeTask = Task {
+                    try? await Task.sleep(nanoseconds: 900_000_000)
+                    if !Task.isCancelled {
+                        withAnimation(.easeOut(duration: 0.25)) { thumbVisible = false }
+                    }
+                }
+            }
+            .overlay(alignment: .topTrailing) {
+                if contentHeight > viewportHeight + 1 {
+                    let trackHeight = viewportHeight - 8
+                    let thumbHeight = max(24, trackHeight * viewportHeight / contentHeight)
+                    let maxOffset = max(1, contentHeight - viewportHeight)
+                    let progress = min(1, max(0, offset / maxOffset))
+                    Capsule()
+                        .fill(Color.primary.opacity(0.28))
+                        .frame(width: 4, height: thumbHeight)
+                        .offset(y: 4 + (trackHeight - thumbHeight) * progress)
+                        .padding(.trailing, 4)
+                        .opacity(thumbVisible ? 1 : 0)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
     }
 }
 
@@ -728,14 +771,6 @@ private struct QuotaGroupView: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
-        // TEMP-DIAG：组头全局 Y 的逐帧轨迹
-        .background(GeometryReader { geo in
-            Color.clear
-                .onAppear { tmDiag(String(format: "row(%@) y=%.1f", model.name, geo.frame(in: .global).minY)) }
-                .onChange(of: geo.frame(in: .global).minY) { y in
-                    tmDiag(String(format: "row(%@) y=%.1f", model.name, y))
-                }
-        })
     }
 
     /// 红标里的紧凑时长（稿风格 m/h/d）：11,585m → 8d。
