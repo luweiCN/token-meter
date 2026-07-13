@@ -1,5 +1,5 @@
-import { useRef, useState, type MouseEvent } from 'react';
-import type { HeatmapDay } from '../../main/overviewRepository.js';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import type { DayModelRow, HeatmapDay } from '../../main/overviewRepository.js';
 import { buildCalendarGrid } from './calendar.js';
 import { logBucket } from './scale.js';
 import { formatCount, formatTokens, formatUsdMicros } from '../format.js';
@@ -29,7 +29,29 @@ export function YearHeatmap({ days, lastDay, count = 371, metric = 'tokens' }: Y
   const [hovered, setHovered] = useState<string | null>(null);
   const [pinned, setPinned] = useState<string | null>(null);
   const [pos, setPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [modelRows, setModelRows] = useState<DayModelRow[]>([]);
   const gridRef = useRef<HTMLDivElement>(null);
+
+  // 按模型明细只在钉住时拉取（悬停扫过不打请求）；失败静默为无明细。
+  useEffect(() => {
+    if (!pinned) {
+      setModelRows([]);
+      return;
+    }
+    let cancelled = false;
+    // 可选链：无 preload 的环境（组件单测）没有 window.tokenMeter，静默无明细。
+    window.tokenMeter?.overview
+      .dayModelBreakdown(pinned)
+      .then(rows => {
+        if (!cancelled) setModelRows(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setModelRows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pinned]);
 
   const dayByDate = new Map(days.map(d => [d.date, d]));
   const max = Math.max(0, ...days.map(d => d[metric]));
@@ -92,41 +114,53 @@ export function YearHeatmap({ days, lastDay, count = 371, metric = 'tokens' }: Y
         ))}
       </div>
 
-      {shownDate && shownDay && (
-        <div
-          role="tooltip"
-          className={`year-heatmap__card${pinned === shownDate ? ' is-pinned' : ''}`}
-          style={{
-            position: 'absolute',
-            top: pos.y - 8,
-            left: pos.x,
-            transform: 'translateY(-100%)',
-            pointerEvents: pinned === shownDate ? 'auto' : 'none'
-          }}
-        >
-          <div className="year-heatmap__card-head">
-            <span className="year-heatmap__card-date">{shownDate}</span>
-            {pinned === shownDate ? (
-              <button
-                type="button"
-                className="year-heatmap__card-close"
-                aria-label="关闭"
-                onClick={() => setPinned(null)}
-              >
-                ×
-              </button>
-            ) : null}
+      {shownDate && shownDay && (() => {
+        // 位置夹取：280px 宽的浮层不越出组件右缘（截断的来源），
+        // 贴近顶部时翻到格子下方显示。
+        const POP_WIDTH = 280;
+        const hostWidth = gridRef.current?.clientWidth ?? POP_WIDTH;
+        const left = Math.max(0, Math.min(pos.x, hostWidth - POP_WIDTH));
+        const flipBelow = pos.y < 150;
+        return (
+          <div
+            role="tooltip"
+            className="day-pop on"
+            style={{
+              left,
+              top: flipBelow ? pos.y + 16 : pos.y - 8,
+              transform: flipBelow ? 'none' : 'translateY(-100%)',
+              pointerEvents: pinned === shownDate ? 'auto' : 'none'
+            }}
+          >
+            <h4>
+              <span>{shownDate}</span>
+              {pinned === shownDate ? (
+                <span className="x" role="button" aria-label="关闭" onClick={() => setPinned(null)}>×</span>
+              ) : null}
+            </h4>
+            <div className="dp-stats">
+              <div>
+                <b>{formatUsdMicros(shownDay.costUsdMicros)}</b>
+                <span>花费</span>
+              </div>
+              <div>
+                <b>{formatTokens(shownDay.tokens)}</b>
+                <span>Token</span>
+              </div>
+              <div>
+                <b>{formatCount(shownDay.sessions)}</b>
+                <span>会话</span>
+              </div>
+            </div>
+            {pinned === shownDate && modelRows.slice(0, 6).map(r => (
+              <div className="dp-mrow" key={r.model}>
+                <span className="mono">{r.model}</span>
+                <span className="num">{formatTokens(r.tokens)}</span>
+              </div>
+            ))}
           </div>
-          <strong className="year-heatmap__card-total">
-            {formatTokens(shownDay.tokens)} <span>tokens</span>
-          </strong>
-          <div className="year-heatmap__card-meta">
-            <span>{formatUsdMicros(shownDay.costUsdMicros)}</span>
-            <span>{formatCount(shownDay.sessions)} 会话</span>
-            <span>{formatCount(shownDay.events)} 事件</span>
-          </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

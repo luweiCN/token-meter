@@ -122,6 +122,12 @@ export interface HeatmapDay {
   events: number;
 }
 
+export interface DayModelRow {
+  model: string;
+  tokens: number;
+  costUsdMicros: number;
+}
+
 export interface ModelRank {
   model: string;
   tokens: number;
@@ -560,6 +566,20 @@ export class OverviewRepository {
         WHERE d.usage_date BETWEEN ? AND ?
      GROUP BY d.usage_date ORDER BY d.usage_date`
     ).all(from, to, from, to) as HeatmapDay[];
+  }
+
+  /// 热力图日详情浮层（OpenDesign 稿 day-pop）：当日按模型的 token/花费分行。
+  dayModelBreakdown(date: string): DayModelRow[] {
+    return this.db.prepare(
+      `SELECT model_canonical AS model,
+              coalesce(sum(tokens_input + tokens_output + tokens_cache_read
+                           + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
+              coalesce(sum(cost_usd_micros), 0) AS costUsdMicros
+         FROM daily_rollup
+        WHERE usage_date = ?
+     GROUP BY model_canonical
+     ORDER BY tokens DESC`
+    ).all(date) as DayModelRow[];
   }
 
   /// `sortBy` 是联合类型，orderBy 由它派生——不拼接用户输入的排序列。

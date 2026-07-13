@@ -1,4 +1,4 @@
-import type { OverviewPayload, SubagentRow } from '../main/overviewRepository.js';
+import type { DayModelRow, OverviewPayload, SubagentRow } from '../main/overviewRepository.js';
 
 export type { OverviewPayload, OverviewReady, OverviewEmpty } from '../main/overviewRepository.js';
 export type {
@@ -9,7 +9,8 @@ export type {
   HeatmapDay,
   ModelRank,
   ActivityRow,
-  SubagentRow
+  SubagentRow,
+  DayModelRow
 } from '../main/overviewRepository.js';
 
 /// Swift 全量重扫的流式进度（index:scanProgress）。字段与 ipc.test.ts 的 fixture 一致。
@@ -157,6 +158,7 @@ declare global {
       overview: {
         query(): Promise<OverviewPayload>;
         subagentBreakdown(sessionId: number): Promise<SubagentRow[]>;
+        dayModelBreakdown(date: string): Promise<DayModelRow[]>;
         onInvalidate(callback: () => void): () => void;
       };
       sessions: {

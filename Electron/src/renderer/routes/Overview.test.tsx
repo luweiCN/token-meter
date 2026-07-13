@@ -11,6 +11,7 @@ import type { OverviewPayload, ScanProgress } from '../api.js';
 interface TokenMeterApi {
   overview: {
     query: Mock<() => Promise<OverviewPayload>>;
+    dayModelBreakdown: Mock<(date: string) => Promise<unknown[]>>;
     onInvalidate: Mock<(cb: () => void) => () => void>;
   };
   index: {
@@ -91,6 +92,9 @@ function install(): TokenMeterApi {
   const value: TokenMeterApi = {
     overview: {
       query: vi.fn<() => Promise<OverviewPayload>>(),
+      dayModelBreakdown: vi.fn<(date: string) => Promise<unknown[]>>().mockResolvedValue([
+        { model: 'claude-fable-5', tokens: 180, costUsdMicros: 90 }
+      ]),
       onInvalidate: vi.fn((cb: () => void) => {
         invalidateCb = cb;
         return () => { invalidateCb = null; };
