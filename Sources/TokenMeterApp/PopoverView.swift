@@ -265,9 +265,6 @@ struct PopoverView: View {
             store.reloadTodaySummary()
             onPreferredHeightChange(panelHeight)
         }
-        .onChange(of: panelHeight) { newHeight in
-            onPreferredHeightChange(newHeight)
-        }
         .onChange(of: themeName) { _ in
             onThemeChange()
         }

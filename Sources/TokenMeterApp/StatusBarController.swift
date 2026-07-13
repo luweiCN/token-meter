@@ -285,7 +285,7 @@ final class StatusBarController: NSObject {
         let size = preferredPopoverSize(relativeTo: button)
         popover.contentSize = NSSize(width: size.width, height: size.initialHeight)
         configurePopoverChrome()
-        popover.contentViewController = NSHostingController(
+        let hosting = NSHostingController(
             rootView: PopoverView(
                 store: store,
                 initialPanelHeight: size.initialHeight,
@@ -302,6 +302,10 @@ final class StatusBarController: NSObject {
                 }
             )
         )
+        // SwiftUI 理想尺寸 → preferredContentSize → NSPopover 原生跟随。
+        // 系统在同一帧里协调窗口与内容，杜绝「内容先变、窗口后跟」的裁切帧。
+        hosting.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = hosting
     }
 
     /// NSPopover 的系统 chrome（外框材质）跟随弹窗主题——否则深色面板外面
