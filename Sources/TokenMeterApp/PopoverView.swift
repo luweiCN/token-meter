@@ -449,38 +449,28 @@ private final class ThinScroller: NSScroller {
 
     override class var isCompatibleWithOverlayScrollers: Bool { true }
 
-    /// 悬停展开是系统行为：鼠标移到滚动条上，AppKit 把 scroller 加宽（约 +6）
-    /// 并重绘——用自身宽度判定展开态，随之加宽 knob、加深颜色、显出轨道。
-    private var isExpanded: Bool { bounds.width >= 14 }
-
-    /// knob 与轨道一律【右缘锚定】：展开时 scroller 区域向左加宽，若按中点
-    /// 定位，knob 会随中点左移——右边距恒定才是「原地变宽」的观感。
-    private let trailingInset: CGFloat = 3
+    /// 展开进度：系统悬停时把 overlay scroller 从 ~10 动画加宽到 ~16，
+    /// 每一帧的 bounds.width 就是插值信号——槽的透明度、knob 的颜色都跟着渐变。
+    private var expansionProgress: CGFloat {
+        max(0, min(1, (bounds.width - 11) / 5))
+    }
 
     override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
-        guard isExpanded else { return }   // 常态无槽；悬停展开时垫一条淡轨道作高亮
-        NSColor.tertiaryLabelColor.withAlphaComponent(0.12).setFill()
-        let width: CGFloat = 9
-        let track = NSRect(
-            x: bounds.width - trailingInset - width,
-            y: slotRect.minY + 2,
-            width: width,
-            height: slotRect.height - 4
-        )
-        NSBezierPath(roundedRect: track, xRadius: width / 2, yRadius: width / 2).fill()
+        let progress = expansionProgress
+        guard progress > 0 else { return }   // 常态无槽，悬停展开中渐显
+        NSColor.tertiaryLabelColor.withAlphaComponent(0.12 * progress).setFill()
+        let track = slotRect.insetBy(dx: 2, dy: 2)
+        NSBezierPath(roundedRect: track, xRadius: track.width / 2, yRadius: track.width / 2).fill()
     }
 
     override func drawKnob() {
-        let knob = rect(for: .knob)
-        let width: CGFloat = isExpanded ? 7 : 4
-        let inset = NSRect(
-            x: bounds.width - trailingInset - width - (isExpanded ? 1 : 0),
-            y: knob.origin.y + 2,
-            width: width,
-            height: max(24, knob.height - 4)
-        )
-        NSColor.tertiaryLabelColor.withAlphaComponent(isExpanded ? 0.72 : 0.5).setFill()
-        NSBezierPath(roundedRect: inset, xRadius: width / 2, yRadius: width / 2).fill()
+        // 直接用系统 knobRect 内缩绘制——它每一帧都反映悬停展开动画的当前
+        // 宽度（产品级实现的通行做法）。自算横向几何的两版分别造成
+        // 「悬停不变宽」与「knob 左移」。
+        let knob = rect(for: .knob).insetBy(dx: 3, dy: 2)
+        guard knob.width > 1, knob.height > 1 else { return }
+        NSColor.tertiaryLabelColor.withAlphaComponent(0.5 + 0.22 * expansionProgress).setFill()
+        NSBezierPath(roundedRect: knob, xRadius: knob.width / 2, yRadius: knob.width / 2).fill()
     }
 }
 
