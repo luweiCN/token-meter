@@ -195,11 +195,10 @@ struct PopoverView: View {
 
             // 滚动区弹性吃掉头尾之外的全部空间——没有任何手动高度算术，
             // 能否滚动由 AppKit 按「文档高 > 视口高」自行判定。
-            ThinScrollView { height in
-                if abs(measuredContentHeight - height) > 0.5 {
-                    measuredContentHeight = height
-                }
-            } content: {
+            // 内容高度在 SwiftUI 侧实测（readHeight），不依赖 AppKit 布局回调——
+            // 折叠触发多轮布局时那条通道会停在中间态的值，面板随之算短，
+            // 明明装得下的内容也会冒出滚动条。
+            ThinScrollView { _ in } content: {
                 VStack(alignment: .leading, spacing: 0) {
                     Color.clear.frame(height: 6)
 
@@ -233,6 +232,11 @@ struct PopoverView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(theme.bg)
+                .readHeight { height in
+                    if abs(measuredContentHeight - height) > 0.5 {
+                        measuredContentHeight = height
+                    }
+                }
             }
             .background(theme.bg)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
