@@ -214,7 +214,7 @@ struct PopoverView: View {
             // 纯 SwiftUI 滚动区：AppKit 滚动容器与 SwiftUI 内容之间的高度信号
             // 无论怎么接都差一拍（诊断日志：展开居中跳 ±60.5、收起文档卡 732、
             // offset 被推到 236 再回弹），树内没有 AppKit 边界后这一类问题整体消失。
-            ThinScrollBarView(contentHeight: measuredContentHeight) {
+            ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 0) {
                     Color.clear.frame(height: 6)
 
@@ -248,6 +248,7 @@ struct PopoverView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(theme.bg)
+                .background(ThinScrollerStyler())
                 .readHeight { height in
                     if abs(measuredContentHeight - height) > 0.5 {
                         measuredContentHeight = height
@@ -438,62 +439,61 @@ private struct SourceLine: View {
     }
 }
 
-/// 细滚动条（纯 SwiftUI）：隐藏系统粗条，自绘 4px 圆头细条——滚动时浮现、
-/// 停止约一秒后淡出，可滚动才出现。仅指示，不支持拖拽（菜单栏面板以滚轮为主）。
-private struct TmScrollOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+/// 细滚动条：AppKit 官方定制通道。SwiftUI ScrollView 在 macOS 底层就是
+/// NSScrollView，从内容视图经 enclosingScrollView 拿到它，换上重绘过的
+/// NSScroller——拖拽、滚动同步、overlay 自动淡出全部系统托管，只换外观。
+private final class ThinScroller: NSScroller {
+    override class func scrollerWidth(for controlSize: NSControl.ControlSize, scrollerStyle: NSScroller.Style) -> CGFloat {
+        10
+    }
+
+    override class var isCompatibleWithOverlayScrollers: Bool { true }
+
+    override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
+        // overlay 细条不要槽。
+    }
+
+    override func drawKnob() {
+        let knob = rect(for: .knob)
+        let width: CGFloat = 4
+        let inset = NSRect(
+            x: knob.midX - width / 2,
+            y: knob.origin.y + 2,
+            width: width,
+            height: max(24, knob.height - 4)
+        )
+        NSColor.tertiaryLabelColor.withAlphaComponent(0.5).setFill()
+        NSBezierPath(roundedRect: inset, xRadius: width / 2, yRadius: width / 2).fill()
+    }
 }
 
-private struct ThinScrollBarView<Content: View>: View {
-    let contentHeight: CGFloat
-    @ViewBuilder var content: Content
+private struct ThinScrollerStyler: NSViewRepresentable {
+    final class ProbeView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            apply()
+        }
 
-    @State private var offset: CGFloat = 0
-    @State private var thumbVisible = false
-    @State private var fadeTask: Task<Void, Never>?
-
-    var body: some View {
-        GeometryReader { viewport in
-            let viewportHeight = viewport.size.height
-            ScrollView(.vertical) {
-                content
-                    .background(
-                        GeometryReader { geo in
-                            Color.clear.preference(key: TmScrollOffsetKey.self, value: -geo.frame(in: .named("tmScroll")).minY)
-                        }
-                    )
-            }
-            .coordinateSpace(name: "tmScroll")
-            .scrollIndicators(.hidden)
-            .onPreferenceChange(TmScrollOffsetKey.self) { newOffset in
-                offset = newOffset
-                guard contentHeight > viewportHeight + 1 else { return }
-                thumbVisible = true
-                fadeTask?.cancel()
-                fadeTask = Task {
-                    try? await Task.sleep(nanoseconds: 900_000_000)
-                    if !Task.isCancelled {
-                        withAnimation(.easeOut(duration: 0.25)) { thumbVisible = false }
-                    }
-                }
-            }
-            .overlay(alignment: .topTrailing) {
-                if contentHeight > viewportHeight + 1 {
-                    let trackHeight = viewportHeight - 8
-                    let thumbHeight = max(24, trackHeight * viewportHeight / contentHeight)
-                    let maxOffset = max(1, contentHeight - viewportHeight)
-                    let progress = min(1, max(0, offset / maxOffset))
-                    Capsule()
-                        .fill(Color.primary.opacity(0.28))
-                        .frame(width: 4, height: thumbHeight)
-                        .offset(y: 4 + (trackHeight - thumbHeight) * progress)
-                        .padding(.trailing, 4)
-                        .opacity(thumbVisible ? 1 : 0)
-                        .allowsHitTesting(false)
-                }
+        func apply() {
+            guard let scrollView = enclosingScrollView else { return }
+            if !(scrollView.verticalScroller is ThinScroller) {
+                let scroller = ThinScroller()
+                scroller.scrollerStyle = .overlay
+                scrollView.verticalScroller = scroller
+                scrollView.hasVerticalScroller = true
+                scrollView.scrollerStyle = .overlay
+                scrollView.autohidesScrollers = true
             }
         }
+    }
+
+    func makeNSView(context: Context) -> ProbeView {
+        ProbeView()
+    }
+
+    func updateNSView(_ nsView: ProbeView, context: Context) {
+        // SwiftUI 更新可能重置底层 scroller，每次校验补装。
+        nsView.apply()
     }
 }
 
