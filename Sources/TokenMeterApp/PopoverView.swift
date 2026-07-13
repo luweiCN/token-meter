@@ -2,6 +2,19 @@ import AppKit
 import SwiftUI
 import TokenMeterCore
 
+// TEMP-DIAG：诊断日志直写文件（unified log 对动态字符串打码，查不到）。
+func tmDiag(_ text: String) {
+    let line = String(format: "%.3f %@\n", Date().timeIntervalSince1970, text)
+    let path = "/tmp/tm-jump.log"
+    if let handle = FileHandle(forWritingAtPath: path) {
+        handle.seekToEndOfFile()
+        handle.write(line.data(using: .utf8) ?? Data())
+        handle.closeFile()
+    } else {
+        FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8))
+    }
+}
+
 // MARK: - 主题（OpenDesign 稿 coolnight，深色原生 / 浅色派生，随弹窗右上角按钮切换）
 
 struct MBTheme: Equatable {
@@ -72,6 +85,15 @@ private struct PopoverChromeTint: NSViewRepresentable {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             apply()
+            // TEMP-DIAG
+            if let window {
+                NotificationCenter.default.addObserver(
+                    forName: NSWindow.didResizeNotification, object: window, queue: .main
+                ) { note in
+                    let f = (note.object as? NSWindow)?.frame ?? .zero
+                    tmDiag(String(format: "window h=%.1f y=%.1f", f.height, f.origin.y))
+                }
+            }
         }
 
         func apply() {
@@ -206,7 +228,7 @@ struct PopoverView: View {
             // 内容高度在 SwiftUI 侧实测（readHeight），不依赖 AppKit 布局回调——
             // 折叠触发多轮布局时那条通道会停在中间态的值，面板随之算短，
             // 明明装得下的内容也会冒出滚动条。
-            ThinScrollView { _ in } content: {
+            ThinScrollView(contentHeight: measuredContentHeight) { _ in } content: {
                 VStack(alignment: .leading, spacing: 0) {
                     Color.clear.frame(height: 6)
 
@@ -254,6 +276,7 @@ struct PopoverView: View {
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
             .background(theme.bg)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -704,6 +727,14 @@ private struct QuotaGroupView: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
+        // TEMP-DIAG：组头全局 Y 的逐帧轨迹
+        .background(GeometryReader { geo in
+            Color.clear
+                .onAppear { tmDiag(String(format: "row(%@) y=%.1f", model.name, geo.frame(in: .global).minY)) }
+                .onChange(of: geo.frame(in: .global).minY) { y in
+                    tmDiag(String(format: "row(%@) y=%.1f", model.name, y))
+                }
+        })
     }
 
     /// 红标里的紧凑时长（稿风格 m/h/d）：11,585m → 8d。
@@ -1193,10 +1224,14 @@ private struct ThinScrollView<Content: View>: NSViewRepresentable {
     let onContentHeightChange: (CGFloat) -> Void
     let content: Content
 
+    let contentHeight: CGFloat
+
     init(
+        contentHeight: CGFloat = 0,
         onContentHeightChange: @escaping (CGFloat) -> Void = { _ in },
         @ViewBuilder content: () -> Content
     ) {
+        self.contentHeight = contentHeight
         self.onContentHeightChange = onContentHeightChange
         self.content = content()
     }
@@ -1217,10 +1252,11 @@ private struct ThinScrollView<Content: View>: NSViewRepresentable {
     func updateNSView(_ nsView: ThinScrollContainerView, context: Context) {
         nsView.onContentHeightChange = onContentHeightChange
         context.coordinator.hostingView?.rootView = content
-        // 这里绝不能强制 layout：rootView 赋值后 SwiftUI 的新尺寸是【异步】提交的，
-        // 立刻 layoutSubtreeIfNeeded 会按旧尺寸布局一轮，SwiftUI 提交后再布局一轮，
-        // 中间态就是「内容闪到别处再跳回来」。约束已把文档视图钉在视口顶部，
-        // 尺寸变化由 AppKit 按自己的节奏收敛；滚动条由 frameDidChange 通知驱动。
+        // 文档高度走显式约束（SwiftUI 侧实测值），不再依赖 hosting 的 intrinsic——
+        // intrinsic 与 frame 差一帧的窗口里，SwiftUI 会把超高内容【垂直居中】放置
+        // （诊断日志：展开 +121px 时三行齐跳 ±60.5px），这就是「跳一下」的本体。
+        // 根内容已顶对齐（greedy top frame），高度差的瞬间只会底部溢出，顶部恒稳。
+        nsView.setContentHeight(contentHeight)
     }
 
     final class Coordinator {
@@ -1293,16 +1329,30 @@ private final class ThinScrollContainerView: NSView {
             queue: .main
         ) { [weak self] _ in
             self?.updateThumb()
+            // TEMP-DIAG
+            tmDiag(String(format: "docFrame h=%.1f", self?.scrollView.documentView?.frame.height ?? -1))
         }
 
+        let heightConstraint = documentView.heightAnchor.constraint(equalToConstant: max(1, pendingContentHeight))
+        documentHeightConstraint = heightConstraint
         documentConstraints = [
             documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
             documentView.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
             documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
+            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            heightConstraint
         ]
         NSLayoutConstraint.activate(documentConstraints)
         updateDocumentLayout()
+    }
+
+    private var documentHeightConstraint: NSLayoutConstraint?
+    private var pendingContentHeight: CGFloat = 1
+
+    func setContentHeight(_ height: CGFloat) {
+        pendingContentHeight = max(1, height)
+        guard let documentHeightConstraint, abs(documentHeightConstraint.constant - pendingContentHeight) > 0.5 else { return }
+        documentHeightConstraint.constant = pendingContentHeight
     }
 
     func updateDocumentLayout() {
@@ -1454,6 +1504,13 @@ private final class ThinScrollContainerView: NSView {
         ) { [weak self] _ in
             self?.updateThumb()
             self?.handleScrollActivity()
+            // TEMP-DIAG
+            if let self {
+                tmDiag(String(format: "scroll offset=%.1f viewportH=%.1f docH=%.1f",
+                      self.scrollView.contentView.bounds.origin.y,
+                      self.scrollView.contentView.bounds.height,
+                      self.scrollView.documentView?.frame.height ?? -1))
+            }
         }
     }
 
