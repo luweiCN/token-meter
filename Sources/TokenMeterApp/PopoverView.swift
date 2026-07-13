@@ -1217,7 +1217,10 @@ private struct ThinScrollView<Content: View>: NSViewRepresentable {
     func updateNSView(_ nsView: ThinScrollContainerView, context: Context) {
         nsView.onContentHeightChange = onContentHeightChange
         context.coordinator.hostingView?.rootView = content
-        nsView.updateDocumentLayout()
+        // 这里绝不能强制 layout：rootView 赋值后 SwiftUI 的新尺寸是【异步】提交的，
+        // 立刻 layoutSubtreeIfNeeded 会按旧尺寸布局一轮，SwiftUI 提交后再布局一轮，
+        // 中间态就是「内容闪到别处再跳回来」。约束已把文档视图钉在视口顶部，
+        // 尺寸变化由 AppKit 按自己的节奏收敛；滚动条由 frameDidChange 通知驱动。
     }
 
     final class Coordinator {
