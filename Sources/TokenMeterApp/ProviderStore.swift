@@ -10,6 +10,9 @@ final class ProviderStore: ObservableObject {
     @Published private(set) var notificationAuthorizationState: UsageNotificationAuthorizationState = .unknown
     @Published private(set) var settingsSnapshot: SettingsSnapshot?
     @Published private(set) var localIndexStatusText: String = "本地会话索引未启动"
+    /// 弹窗头部「今日」汇总（OpenDesign 稿）；本地索引每次更新后重查。
+    @Published private(set) var todaySummary: MenuBarTodaySummary = .empty
+    @Published private(set) var localIndexUpdatedAt: Date?
 
     let config: TokenMeterConfig
     private let providers: [UsageProvider]
@@ -147,6 +150,11 @@ final class ProviderStore: ObservableObject {
     /// 避免几分钟的扫描占住 MainActor 冻结菜单栏。
     var localAgentScanner: LocalAgentScanner? { scanner }
 
+    func reloadTodaySummary() {
+        guard let database else { return }
+        todaySummary = MenuBarTodaySummaryRepository.load(from: database)
+    }
+
     @discardableResult
     func refreshLocalAgentIndex() async -> LocalIndexRefreshResult {
         guard let database, let scanner else {
@@ -194,6 +202,11 @@ final class ProviderStore: ObservableObject {
             localIndexStatusText = "没有已启用的本地会话来源"
             status = .ok
         }
+
+        if scanned > 0 {
+            localIndexUpdatedAt = Date()
+        }
+        reloadTodaySummary()
 
         return LocalIndexRefreshResult(scanned: scanned, failures: failures, status: status, message: localIndexStatusText)
     }

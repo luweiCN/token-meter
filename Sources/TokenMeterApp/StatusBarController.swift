@@ -286,10 +286,15 @@ final class StatusBarController: NSObject {
             rootView: PopoverView(
                 store: store,
                 initialPanelHeight: size.initialHeight,
-                maxPanelHeight: size.maxHeight
-            ) { [weak self] height in
-                self?.updatePopoverHeight(height)
-            }
+                maxPanelHeight: size.maxHeight,
+                onPreferredHeightChange: { [weak self] height in
+                    self?.updatePopoverHeight(height)
+                },
+                onOpenMainInterface: { [weak self] in
+                    self?.popover.performClose(nil)
+                    self?.mainInterfaceLauncher.openMainInterface()
+                }
+            )
         )
     }
 
@@ -299,7 +304,7 @@ final class StatusBarController: NSObject {
             ?? 820
         let maxHeight = min(760, max(360, screenHeight - 96))
         let estimatedHeight = estimatedCollapsedContentHeight()
-        return (width: 320, initialHeight: min(maxHeight, estimatedHeight), maxHeight: maxHeight)
+        return (width: 378, initialHeight: min(maxHeight, estimatedHeight), maxHeight: maxHeight)
     }
 
     private func updatePopoverHeight(_ height: CGFloat) {

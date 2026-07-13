@@ -2,6 +2,57 @@ import AppKit
 import SwiftUI
 import TokenMeterCore
 
+/// coolnight（OpenDesign 稿）的弹窗色板。弹窗是深色品牌面板，不随系统外观切换——
+/// 设计稿只定义了深色形态。
+enum Coolnight {
+    static let bg = Color(red: 0x00 / 255.0, green: 0x11 / 255.0, blue: 0x1E / 255.0)
+    static let surface = Color(red: 0x02 / 255.0, green: 0x18 / 255.0, blue: 0x2A / 255.0)
+    static let surface2 = Color(red: 0x03 / 255.0, green: 0x21 / 255.0, blue: 0x38 / 255.0)
+    static let fg = Color(red: 0xCB / 255.0, green: 0xE0 / 255.0, blue: 0xF0 / 255.0)
+    static let fg2 = Color(red: 0xA9 / 255.0, green: 0xB1 / 255.0, blue: 0xD6 / 255.0)
+    static let muted = Color(red: 0x5D / 255.0, green: 0x84 / 255.0, blue: 0xA6 / 255.0)
+    static let border = Color(red: 0x03 / 255.0, green: 0x32 / 255.0, blue: 0x59 / 255.0)
+    static let accent = Color(red: 0x0F / 255.0, green: 0xC5 / 255.0, blue: 0xED / 255.0)
+    static let ok = Color(red: 0x44 / 255.0, green: 0xFF / 255.0, blue: 0xB1 / 255.0)
+    static let warn = Color(red: 0xFF / 255.0, green: 0xE0 / 255.0, blue: 0x73 / 255.0)
+    static let danger = Color(red: 0xE5 / 255.0, green: 0x2E / 255.0, blue: 0x2E / 255.0)
+
+    /// agent 系列色 s1-s4（与主窗口图例一致）。名单外的 provider 用 muted。
+    static func seriesColor(_ providerId: String) -> Color {
+        switch providerId {
+        case "claude-code": return accent
+        case "codex": return Color(red: 0xA2 / 255.0, green: 0x77 / 255.0, blue: 0xFF / 255.0)
+        case "omp": return ok
+        case "opencode": return warn
+        default: return muted
+        }
+    }
+
+    static func providerLabel(_ providerId: String) -> String {
+        switch providerId {
+        case "claude-code": return "Claude Code"
+        case "codex": return "Codex CLI"
+        case "omp": return "OMP"
+        case "opencode": return "OpenCode"
+        default: return providerId
+        }
+    }
+}
+
+enum MenuBarNumberFormat {
+    static func tokens(_ value: Int64) -> String {
+        let v = Double(value)
+        if v >= 1_000_000_000 { return String(format: "%.1fB", v / 1_000_000_000) }
+        if v >= 1_000_000 { return String(format: "%.1fM", v / 1_000_000) }
+        if v >= 1_000 { return String(format: "%.1fK", v / 1_000) }
+        return String(Int(v))
+    }
+
+    static func usd(_ micros: Int64) -> String {
+        String(format: "$%.2f", Double(micros) / 1_000_000)
+    }
+}
+
 struct PopoverView: View {
     @ObservedObject var store: ProviderStore
     @State private var activeTooltipID: String?
@@ -9,12 +60,14 @@ struct PopoverView: View {
     let initialPanelHeight: CGFloat
     let maxPanelHeight: CGFloat
     let onPreferredHeightChange: (CGFloat) -> Void
+    var onOpenMainInterface: () -> Void = {}
 
-    private let chromeHeight: CGFloat = 62
+    /// 头部（日期行 + 大数字）+ 底部操作行的固定高度。
+    private let chromeHeight: CGFloat = 158
 
     private var panelHeight: CGFloat {
-        guard !store.providerSnapshots.isEmpty else {
-            return min(maxPanelHeight, 220)
+        guard !store.providerSnapshots.isEmpty || !store.todaySummary.perProvider.isEmpty else {
+            return min(maxPanelHeight, 280)
         }
 
         guard measuredContentHeight > 20 else {
@@ -28,9 +81,11 @@ struct PopoverView: View {
         GeometryReader { proxy in
             panelContent(currentHeight: proxy.size.height > 20 ? proxy.size.height : panelHeight)
         }
-        .frame(width: 320)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(width: 378)
+        .background(Coolnight.bg)
+        .environment(\.colorScheme, .dark)
         .onAppear {
+            store.reloadTodaySummary()
             onPreferredHeightChange(panelHeight)
         }
         .onChange(of: panelHeight) { newHeight in
@@ -45,9 +100,7 @@ struct PopoverView: View {
         VStack(spacing: 0) {
             header
 
-            Divider()
-
-            if store.providerSnapshots.isEmpty {
+            if store.providerSnapshots.isEmpty && store.todaySummary.perProvider.isEmpty {
                 emptyState
             } else {
                 ThinScrollView { height in
@@ -55,20 +108,33 @@ struct PopoverView: View {
                         measuredContentHeight = height
                     }
                 } content: {
-                    VStack(spacing: 10) {
-                        ForEach(store.providerSnapshots, id: \.providerId) { snapshot in
-                            ProviderCardView(
-                                snapshot: snapshot,
-                                activeTooltipID: $activeTooltipID
-                            )
+                    VStack(alignment: .leading, spacing: 12) {
+                        if !store.todaySummary.perProvider.isEmpty {
+                            TodayByProviderSection(summary: store.todaySummary)
+                        }
+
+                        if !store.providerSnapshots.isEmpty {
+                            SectionTitle(text: "订阅额度")
+                            ForEach(store.providerSnapshots, id: \.providerId) { snapshot in
+                                ProviderCardView(
+                                    snapshot: snapshot,
+                                    activeTooltipID: $activeTooltipID
+                                )
+                            }
+                        }
+
+                        if store.todaySummary.unknownEvents > 0 {
+                            UnknownCostFootnote(count: store.todaySummary.unknownEvents)
                         }
                     }
                     .padding(12)
                 }
                 .frame(height: scrollViewportHeight(for: currentHeight))
             }
+
+            footer
         }
-        .frame(width: 320, height: currentHeight)
+        .frame(width: 378, height: currentHeight)
     }
 
     private func scrollViewportHeight(for currentHeight: CGFloat) -> CGFloat {
@@ -76,10 +142,12 @@ struct PopoverView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
+                BrandMark()
                 Text("TokenMeter")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Coolnight.fg)
                     .lineLimit(1)
 
                 Spacer()
@@ -91,42 +159,194 @@ struct PopoverView: View {
                         .controlSize(.small)
                 }
 
-                Text(providerCountText)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                Text(dateText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Coolnight.muted)
                     .monospacedDigit()
-                    .lineLimit(1)
             }
 
-            Text(store.localIndexStatusText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(MenuBarNumberFormat.tokens(store.todaySummary.tokens))
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundStyle(Coolnight.fg)
+                    .monospacedDigit()
+                Text("tokens")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Coolnight.muted)
+            }
+
+            Text("今日 \(MenuBarNumberFormat.usd(store.todaySummary.costUsdMicros)) · \(store.todaySummary.sessions) 个会话")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Coolnight.fg2)
+                .monospacedDigit()
+
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(Coolnight.ok)
+                    .frame(width: 6, height: 6)
+                Text(indexStatusLine)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Coolnight.muted)
+                    .lineLimit(1)
+            }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
     }
 
-    private var providerCountText: String {
-        if store.isRefreshing {
-            return "刷新中"
-        }
+    private var dateText: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日 EEE"
+        return formatter.string(from: Date())
+    }
 
-        let okCount = store.providerSnapshots.filter { $0.status == .ok }.count
-        return "\(okCount)/\(store.providerSnapshots.count)"
+    private var indexStatusLine: String {
+        guard let updatedAt = store.localIndexUpdatedAt else { return store.localIndexStatusText }
+        let minutes = max(0, Int(Date().timeIntervalSince(updatedAt) / 60))
+        let ago = minutes == 0 ? "刚刚" : "\(minutes) 分钟前"
+        return "\(store.localIndexStatusText) · \(ago)"
+    }
+
+    private var footer: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Coolnight.border)
+                .frame(height: 1)
+            HStack(spacing: 14) {
+                Button(action: onOpenMainInterface) {
+                    HStack(spacing: 5) {
+                        Text("打开 TokenMeter")
+                            .font(.system(size: 11.5, weight: .medium))
+                        Text("⌘O")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Coolnight.muted)
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Coolnight.fg2)
+                .keyboardShortcut("o", modifiers: .command)
+
+                Spacer()
+
+                Button("刷新") {
+                    Task { await store.refresh() }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Coolnight.fg2)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+        }
     }
 
     private var emptyState: some View {
         VStack(spacing: 8) {
             Image(systemName: "chart.bar.xaxis")
                 .font(.system(size: 28))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Coolnight.muted)
 
             Text("暂无用量数据")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Coolnight.muted)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// 品牌小标（设计稿左上角的圆角方框折线 logo）。
+private struct BrandMark: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .stroke(Coolnight.accent, lineWidth: 1.6)
+                .frame(width: 20, height: 20)
+            Path { p in
+                p.move(to: CGPoint(x: 4.5, y: 12.5))
+                p.addLine(to: CGPoint(x: 7.5, y: 7.5))
+                p.addLine(to: CGPoint(x: 10, y: 11))
+                p.addLine(to: CGPoint(x: 12.5, y: 5.5))
+                p.addLine(to: CGPoint(x: 14.5, y: 12.5))
+            }
+            .stroke(Coolnight.accent, style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+            .frame(width: 19, height: 18)
+        }
+    }
+}
+
+private struct SectionTitle: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(Coolnight.muted)
+            .padding(.top, 2)
+    }
+}
+
+/// 「今日 · 按服务商」分组（OpenDesign 稿）：色点 + 名称 + tokens + 金额 + 会话数。
+private struct TodayByProviderSection: View {
+    let summary: MenuBarTodaySummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionTitle(text: "今日 · 按服务商")
+                .padding(.bottom, 6)
+
+            VStack(spacing: 0) {
+                ForEach(Array(summary.perProvider.enumerated()), id: \.element.providerId) { index, row in
+                    HStack(spacing: 8) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Coolnight.seriesColor(row.providerId))
+                            .frame(width: 8, height: 8)
+                        Text(Coolnight.providerLabel(row.providerId))
+                            .font(.system(size: 12))
+                            .foregroundStyle(Coolnight.fg)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(MenuBarNumberFormat.tokens(row.tokens))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Coolnight.fg)
+                            .monospacedDigit()
+                        Text(MenuBarNumberFormat.usd(row.costUsdMicros))
+                            .font(.system(size: 11))
+                            .foregroundStyle(Coolnight.muted)
+                            .monospacedDigit()
+                        Text("· \(row.sessions)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Coolnight.muted)
+                            .monospacedDigit()
+                    }
+                    .padding(.vertical, 6)
+
+                    if index < summary.perProvider.count - 1 {
+                        Rectangle()
+                            .fill(Coolnight.border.opacity(0.6))
+                            .frame(height: 1)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 底注：今日 N 条事件价格未知，未计入金额（黄点，与主窗口的 .unk 同语义）。
+private struct UnknownCostFootnote: View {
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(Coolnight.warn)
+                .frame(width: 6, height: 6)
+            Text("今日 \(count) 条事件价格未知，未计入金额")
+                .font(.system(size: 10.5))
+                .foregroundStyle(Coolnight.muted)
+        }
+        .padding(.top, 2)
     }
 }
 
