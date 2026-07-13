@@ -47,3 +47,14 @@ export function formatRelative(msSince: number): string {
   const days = Math.floor(hours / 24);
   return `${days} 天前`;
 }
+
+/// 卡片里的紧凑时长（设计稿风格）：32m / 2h 21m / 3d 2h。
+/// 完整中文版（formatDuration）在弹窗等宽裕处继续用。
+export function formatDurationShort(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ${minutes % 60}m`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ${hours % 24}h`;
+}

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 
 import type { ActivityRow, SubagentRow } from '../api.js';
-import { formatDuration, formatRelative, formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
+import { formatDurationShort, formatRelative, formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
 
 /// 实时会话卡（OpenDesign 稿 8b）三态：
 ///   running —— 2 分钟内有新事件（repository 的 isLive，脉冲绿点）
@@ -50,16 +50,20 @@ export function SessionRail({ sessions, now }: { sessions: ActivityRow[]; now: n
                   {s.models.length > 1 ? ` +${s.models.length - 1}` : ''}
                 </span>
               ) : null}
-              <div className="lc-nums">
-                <span className="num">{formatTokens(s.tokensTotal)}</span>
-                <span
-                  className="num"
-                  title={unknownNote ? `部分事件价格未知，成本可能偏低（${unknownNote}）` : undefined}
-                >
-                  {formatUsdMicros(s.costUsdMicros)}{unknownNote ? '†' : ''}
-                </span>
+              <div className="lc-stats">
+                <div>
+                  <i>Token</i>
+                  <b className="num">{formatTokens(s.tokensTotal)}</b>
+                </div>
+                <div title={unknownNote ? `部分事件价格未知，成本可能偏低（${unknownNote}）` : undefined}>
+                  <i>花费</i>
+                  <b className="num">{formatUsdMicros(s.costUsdMicros)}{unknownNote ? '†' : ''}</b>
+                </div>
+                <div>
+                  <i>时长</i>
+                  <b className="num">{formatDurationShort(Math.max(0, now - s.firstEventEpochMs))}</b>
+                </div>
               </div>
-              <div className="lc-dur num">{formatDuration(Math.max(0, now - s.firstEventEpochMs))}</div>
               <div className="lc-foot">
                 <span className="state">{STATE_LABEL[state]}</span>
                 {s.subagentCount > 0 ? (
