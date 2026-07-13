@@ -449,26 +449,42 @@ private final class ThinScroller: NSScroller {
 
     override class var isCompatibleWithOverlayScrollers: Bool { true }
 
+    /// 悬停展开是系统行为：鼠标移到滚动条上，AppKit 把 scroller 加宽（约 +6）
+    /// 并重绘——用自身宽度判定展开态，随之加宽 knob、加深颜色、显出轨道。
+    private var isExpanded: Bool { bounds.width >= 14 }
+
     override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {
-        // overlay 细条不要槽。
+        guard isExpanded else { return }   // 常态无槽；悬停展开时垫一条淡轨道作高亮
+        NSColor.tertiaryLabelColor.withAlphaComponent(0.12).setFill()
+        let width: CGFloat = 9
+        let track = NSRect(
+            x: slotRect.midX - width / 2,
+            y: slotRect.minY + 2,
+            width: width,
+            height: slotRect.height - 4
+        )
+        NSBezierPath(roundedRect: track, xRadius: width / 2, yRadius: width / 2).fill()
     }
 
     override func drawKnob() {
         let knob = rect(for: .knob)
-        let width: CGFloat = 4
+        let width: CGFloat = isExpanded ? 7 : 4
         let inset = NSRect(
             x: knob.midX - width / 2,
             y: knob.origin.y + 2,
             width: width,
             height: max(24, knob.height - 4)
         )
-        NSColor.tertiaryLabelColor.withAlphaComponent(0.5).setFill()
+        NSColor.tertiaryLabelColor.withAlphaComponent(isExpanded ? 0.72 : 0.5).setFill()
         NSBezierPath(roundedRect: inset, xRadius: width / 2, yRadius: width / 2).fill()
     }
 }
 
 private struct ThinScrollerStyler: NSViewRepresentable {
     final class ProbeView: NSView {
+        private weak var trackedScrollView: NSScrollView?
+        private var trackingAreaInstalled: NSTrackingArea?
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             apply()
@@ -483,6 +499,38 @@ private struct ThinScrollerStyler: NSViewRepresentable {
                 scrollView.hasVerticalScroller = true
                 scrollView.scrollerStyle = .overlay
                 scrollView.autohidesScrollers = true
+            }
+            installTracking(on: scrollView)
+        }
+
+        /// 进出面板的滚动条礼仪：进面板闪现一下（提示有内容可滚），
+        /// 离开面板立即渐隐（不等系统的淡出计时）。
+        private func installTracking(on scrollView: NSScrollView) {
+            guard trackedScrollView !== scrollView else { return }
+            if let old = trackingAreaInstalled, let oldView = trackedScrollView {
+                oldView.removeTrackingArea(old)
+            }
+            let area = NSTrackingArea(
+                rect: .zero,
+                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                owner: self
+            )
+            scrollView.addTrackingArea(area)
+            trackedScrollView = scrollView
+            trackingAreaInstalled = area
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            guard let scrollView = trackedScrollView else { return }
+            scrollView.verticalScroller?.alphaValue = 1
+            scrollView.flashScrollers()
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            guard let scroller = trackedScrollView?.verticalScroller else { return }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                scroller.animator().alphaValue = 0
             }
         }
     }
