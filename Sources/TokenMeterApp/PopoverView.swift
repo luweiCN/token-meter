@@ -167,7 +167,13 @@ struct PopoverView: View {
 
     private var chromeMeasured: CGFloat { headerHeight + footHeight }
 
+    /// 弹窗打开期间面板高度【锁定】：首次内容测量到位后定格，之后展开/收起
+    /// 一律由滚动区内部消化——没有 resize 就没有任何可跳动的东西（原生菜单栏
+    /// 面板同款行为）。每次打开都重建视图，锁定值随之按当次内容重算。
+    @State private var lockedHeight: CGFloat?
+
     private var panelHeight: CGFloat {
+        if let lockedHeight { return lockedHeight }
         guard measuredContentHeight > 20 else {
             return min(maxPanelHeight, initialPanelHeight)
         }
@@ -237,6 +243,15 @@ struct PopoverView: View {
                 .readHeight { height in
                     if abs(measuredContentHeight - height) > 0.5 {
                         measuredContentHeight = height
+                    }
+                    if lockedHeight == nil, height > 20 {
+                        // 延一拍锁定：等 header/foot 的首轮测量一并回填后再定格。
+                        DispatchQueue.main.async {
+                            if lockedHeight == nil {
+                                lockedHeight = min(maxPanelHeight, (chromeMeasured + measuredContentHeight) * 1.1)
+                                onPreferredHeightChange(lockedHeight ?? panelHeight)
+                            }
+                        }
                     }
                 }
             }
