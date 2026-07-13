@@ -556,8 +556,10 @@ private struct QuotaGroupView: View {
     }
 
     private var summaryRow: some View {
+        // 内容即时插拔，不做 SwiftUI 高度动画——面板高度的平滑过渡由 NSPopover 的
+        // contentSize 原生动画负责，两边同时动画会互相打架（内容先压扁再弹开）。
         Button {
-            withAnimation(.easeOut(duration: 0.18)) { expanded.toggle() }
+            expanded.toggle()
         } label: {
             HStack(spacing: 8) {
                 Text(model.badge)
@@ -598,6 +600,7 @@ private struct QuotaGroupView: View {
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(theme.muted)
                     .rotationEffect(.degrees(expanded ? 90 : 0))
+                    .animation(.easeOut(duration: 0.15), value: expanded)
             }
             .padding(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
             .contentShape(Rectangle())
@@ -656,7 +659,8 @@ private struct AlertCard: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(theme.fg2)
                     .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
             }
 
             Spacer(minLength: 0)
@@ -677,18 +681,33 @@ private struct StaleCard: View {
     let onRetry: () -> Void
     @Environment(\.mbTheme) private var theme
 
+    /// 「11,579 分钟前」没法读——超过一小时换算成时/天。
+    private var ageText: String {
+        if minutes < 60 { return "\(minutes) 分钟" }
+        if minutes < 24 * 60 { return "\(minutes / 60) 小时" }
+        return "\(minutes / (24 * 60)) 天"
+    }
+
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(alignment: .top, spacing: 9) {
             Image(systemName: "exclamationmark.circle")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(theme.danger)
+                .padding(.top, 1)
 
-            (Text("额度刷新失败").foregroundColor(theme.danger).fontWeight(.semibold)
-                + Text(" · 以下为 \(minutes) 分钟前的数据"))
-                .font(.system(size: 11.5))
-                .foregroundStyle(theme.fg2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("额度刷新失败")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.danger)
+                Text("以下为 \(ageText)前的数据")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(theme.fg2)
+                    .lineSpacing(2)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+            }
 
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
 
             Button("重试", action: onRetry)
                 .buttonStyle(.plain)
@@ -701,7 +720,7 @@ private struct StaleCard: View {
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.border, lineWidth: 1))
                 )
         }
-        .padding(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+        .padding(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
         .background(RoundedRectangle(cornerRadius: 8).fill(theme.tintDanger))
     }
 }
@@ -812,7 +831,7 @@ private struct ResetCardsGroup: View {
     var body: some View {
         VStack(spacing: 0) {
             Button {
-                withAnimation(.easeOut(duration: 0.18)) { expanded.toggle() }
+                expanded.toggle()
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.clockwise")
@@ -829,6 +848,7 @@ private struct ResetCardsGroup: View {
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(theme.muted)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
+                        .animation(.easeOut(duration: 0.15), value: expanded)
                 }
                 .padding(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
                 .contentShape(Rectangle())
