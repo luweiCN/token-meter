@@ -329,7 +329,8 @@ select:focus-visible {
 }
 
 .view {
-  max-width: 1240px;
+  /* 不设宽度上限：宽屏吃满主区（设计稿的 1240 上限在超宽屏上右侧空一截，用户裁定去掉）。 */
+  max-width: none;
 }
 
 .vhead {
