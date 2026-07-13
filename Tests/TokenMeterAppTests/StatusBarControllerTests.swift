@@ -158,6 +158,7 @@ private final class RecordingMainInterfaceLauncher: MainInterfaceLaunching {
 @MainActor
 private final class SpyPopover: PopoverPresenting {
     var behavior: NSPopover.Behavior = .transient
+    var animates = true
     private(set) var isShown = false
     var contentSize: NSSize = .zero
     var contentViewController: NSViewController?

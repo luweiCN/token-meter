@@ -106,6 +106,7 @@ enum StatusItemClickAction: Equatable {
 @MainActor
 protocol PopoverPresenting: AnyObject {
     var behavior: NSPopover.Behavior { get set }
+    var animates: Bool { get set }
     var isShown: Bool { get }
     var contentSize: NSSize { get set }
     var contentViewController: NSViewController? { get set }
@@ -283,7 +284,7 @@ final class StatusBarController: NSObject {
     private func updatePopoverContent(relativeTo button: NSStatusBarButton?) {
         let size = preferredPopoverSize(relativeTo: button)
         popover.contentSize = NSSize(width: size.width, height: size.initialHeight)
-        applyPopoverAppearance()
+        configurePopoverChrome()
         popover.contentViewController = NSHostingController(
             rootView: PopoverView(
                 store: store,
@@ -305,6 +306,11 @@ final class StatusBarController: NSObject {
 
     /// NSPopover 的系统 chrome（外框材质）跟随弹窗主题——否则深色面板外面
     /// 套一圈系统浅色边，颜色对不上。
+    private func configurePopoverChrome() {
+        popover.animates = false
+        applyPopoverAppearance()
+    }
+
     private func applyPopoverAppearance() {
         let isLight = UserDefaults.standard.string(forKey: "menubarTheme") == "light"
         popover.appearance = NSAppearance(named: isLight ? .aqua : .darkAqua)
