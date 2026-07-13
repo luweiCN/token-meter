@@ -673,17 +673,17 @@ private struct QuotaGroupView: View {
 
                 Spacer(minLength: 8)
 
-                if !expanded {
-                    Text(model.summaryText)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(theme.muted)
-                        .monospacedDigit()
-                        .lineLimit(1)
-                }
+                Text(model.summaryText)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(theme.muted)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .opacity(expanded ? 0 : 1)
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(theme.muted)
+                    .frame(width: 14, height: 14)
                     .rotationEffect(.degrees(expanded ? 90 : 0))
                     .animation(.easeOut(duration: 0.15), value: expanded)
             }
@@ -941,6 +941,7 @@ private struct ResetCardsGroup: View {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(theme.muted)
+                        .frame(width: 14, height: 14)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                         .animation(.easeOut(duration: 0.15), value: expanded)
                 }
