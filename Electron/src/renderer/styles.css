@@ -1325,7 +1325,9 @@ select {
 /* ── 总览：实时会话卡 ── */
 .live-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  /* 每行最多 5 张：列宽下限取「215px 与五分之一行宽的较大者」，
+     宽屏被 20% 顶住不会挤出第 6 列，窄屏仍按 215px 自适应。 */
+  grid-template-columns: repeat(auto-fill, minmax(max(215px, calc(20% - 8px)), 1fr));
   gap: 10px;
 }
 
@@ -1409,6 +1411,13 @@ select {
   gap: 10px;
   font-size: 11.5px;
   color: var(--fg2);
+  white-space: nowrap;
+}
+
+.lc-dur {
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .lc-foot {

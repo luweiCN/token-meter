@@ -58,8 +58,8 @@ export function SessionRail({ sessions, now }: { sessions: ActivityRow[]; now: n
                 >
                   {formatUsdMicros(s.costUsdMicros)}{unknownNote ? '†' : ''}
                 </span>
-                <span className="num">{formatDuration(Math.max(0, now - s.firstEventEpochMs))}</span>
               </div>
+              <div className="lc-dur num">{formatDuration(Math.max(0, now - s.firstEventEpochMs))}</div>
               <div className="lc-foot">
                 <span className="state">{STATE_LABEL[state]}</span>
                 {s.subagentCount > 0 ? (
