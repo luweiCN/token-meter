@@ -85,7 +85,7 @@ private struct PopoverChromeTint: NSViewRepresentable {
             // 外框描边与内部卡片同一 --border 色，系统默认那圈亮边被覆盖。
             frameView.layer?.borderColor = border.cgColor
             frameView.layer?.borderWidth = 1
-            frameView.layer?.cornerRadius = 10
+            frameView.layer?.cornerRadius = 11
         }
     }
 
@@ -100,6 +100,20 @@ private struct PopoverChromeTint: NSViewRepresentable {
         nsView.color = color
         nsView.border = border
     }
+}
+
+/// 吸顶区毛玻璃：原生 NSVisualEffectView，窗口内混合——滚动内容从下面穿过时
+/// 透出模糊残影，吸顶与滚动区的层次一眼可辨。
+private struct HeaderBlur: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .hudWindow
+        view.blendingMode = .withinWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
 private struct MBThemeKey: EnvironmentKey {
@@ -155,8 +169,8 @@ struct PopoverView: View {
 
     /// 吸顶区与底栏的高度是【实测】的（readHeight），不是估计值——写死的估计值
     /// 偏小时，VStack 总高超出面板，底部按钮的 padding 会被整个裁掉且毫无征兆。
-    @State private var headerHeight: CGFloat = 150
-    @State private var footHeight: CGFloat = 48
+    @State private var headerHeight: CGFloat = 192
+    @State private var footHeight: CGFloat = 50
 
     private var chromeMeasured: CGFloat { headerHeight + footHeight }
 
@@ -178,8 +192,8 @@ struct PopoverView: View {
                 ? NSColor(red: 1, green: 1, blue: 1, alpha: 1)
                 : NSColor(red: 0x02 / 255.0, green: 0x18 / 255.0, blue: 0x2A / 255.0, alpha: 1),
             border: themeName == "light"
-                ? NSColor(red: 0xD8 / 255.0, green: 0xE6 / 255.0, blue: 0xF0 / 255.0, alpha: 1)
-                : NSColor(red: 0x03 / 255.0, green: 0x32 / 255.0, blue: 0x59 / 255.0, alpha: 1)))
+                ? NSColor(red: 0xB9 / 255.0, green: 0xD2 / 255.0, blue: 0xE3 / 255.0, alpha: 1)
+                : NSColor(red: 0x0A / 255.0, green: 0x4A / 255.0, blue: 0x7A / 255.0, alpha: 1)))
         .environment(\.mbTheme, theme)
         .environment(\.colorScheme, themeName == "light" ? .light : .dark)
         .onAppear {
@@ -207,9 +221,14 @@ struct PopoverView: View {
                 SourceLine(text: sourceLineText)
                 PanelDivider()
             }
-            .background(theme.surface)
+            .background(
+                ZStack {
+                    HeaderBlur()
+                    theme.surface.opacity(0.72)
+                }
+            )
             .readHeight { headerHeight = $0 }
-            .shadow(color: .black.opacity(0.4), radius: 9, y: 4)
+            .shadow(color: .black.opacity(0.45), radius: 10, y: 4)
             .zIndex(1)
 
             ThinScrollView { height in
@@ -264,7 +283,8 @@ struct PopoverView: View {
             .background(theme.surface)
             .readHeight { footHeight = $0 }
         }
-        .frame(width: 378, height: currentHeight)
+        .frame(width: 378, height: currentHeight, alignment: .top)
+        .clipped()
     }
 
     private var sourceLineText: String {
