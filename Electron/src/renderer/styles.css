@@ -2379,3 +2379,78 @@ th.sort.desc::after{content:"↓";opacity:1;color:var(--accent)}
 .pgr button.on{background:var(--accent);color:var(--on-accent);font-weight:600}
 .pgr button:disabled{opacity:.35;cursor:not-allowed}
 .pgr .gap{min-width:26px;height:26px;display:grid;place-items:center;color:var(--muted);font-family:var(--mono);font-size:11px}
+
+/* ============ 菜单栏外观（预览条 / 画廊 / 入口卡）============
+   预览 cell 内只用系统语义色（g-*，深浅菜单栏各一组）——品牌青禁入 cell。
+   结构与色值移植自 OpenDesign 稿 app.html（menubar-styles 同源）。 */
+.mbprev{display:flex;flex-direction:column;gap:8px}
+.mbar{display:flex;align-items:center;height:24px;border-radius:6px;padding:0 10px;gap:14px;justify-content:flex-end;overflow:hidden}
+.mbar.mbdark{background:#1c1d20;color:rgba(255,255,255,.88)}
+.mbar.mblight{background:#f3f2f4;color:rgba(0,0,0,.82);border:1px solid rgba(0,0,0,.08)}
+.mbcell{display:inline-flex;align-items:center;gap:4px;height:17px;white-space:nowrap}
+.mbcell .nm{font-size:11px;font-weight:600}
+.mbcell .pct{font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums;font-weight:500}
+.mbcell .pct i{font-style:normal;opacity:.45;margin:0 1px}
+.mbar.mbdark  .g-ok{color:#30d158}.mbar.mbdark  .g-warn{color:#ffd60a}.mbar.mbdark  .g-bad{color:#ff453a}.mbar.mbdark  .g-off{color:rgba(255,255,255,.38)}
+.mbar.mblight .g-ok{color:#1d9a46}.mbar.mblight .g-warn{color:#b48b00}.mbar.mblight .g-bad{color:#d70015}.mbar.mblight .g-off{color:rgba(0,0,0,.32)}
+.mbglyph{display:inline-flex}
+.mbglyph svg{display:block}
+.mb-vbars{display:inline-flex;gap:2px;align-items:flex-end}
+.mb-vbars .tr{position:relative;width:3px;height:13px;border-radius:1px;overflow:hidden}
+.mbar.mbdark .mb-vbars .tr,.mbar.mbdark .mb-hbar .tr{background:rgba(255,255,255,.14)}
+.mbar.mblight .mb-vbars .tr,.mbar.mblight .mb-hbar .tr{background:rgba(0,0,0,.1)}
+.mb-vbars .tr i{position:absolute;bottom:0;left:0;width:100%;background:currentColor;display:block}
+.mb-hbar{display:inline-flex;flex-direction:column;gap:2px}
+.mb-hbar .tr{position:relative;width:22px;height:3px;border-radius:1.5px;overflow:hidden}
+.mb-hbar .tr i{position:absolute;left:0;top:0;height:100%;border-radius:1.5px;background:currentColor;display:block}
+.mb-dots{display:inline-flex;gap:3px}
+.mb-dots i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
+.mb-caps{display:inline-flex;gap:3px}
+.mb-caps .c{position:relative;width:14px;height:8px;border-radius:2.5px;overflow:hidden}
+.mbar.mbdark .mb-caps .c{box-shadow:inset 0 0 0 1px rgba(255,255,255,.25)}
+.mbar.mblight .mb-caps .c{box-shadow:inset 0 0 0 1px rgba(0,0,0,.2)}
+.mb-caps .c i{position:absolute;left:1px;top:1px;bottom:1px;border-radius:1.5px;background:currentColor;display:block}
+.mb-ticks{display:inline-flex;gap:1.5px;align-items:center}
+.mb-ticks i{width:2.5px;height:10px;border-radius:1px;display:block}
+.mbar.mbdark .mb-ticks i{background:rgba(255,255,255,.14)}
+.mbar.mblight .mb-ticks i{background:rgba(0,0,0,.1)}
+.mb-ticks i.f{background:currentColor}
+.mb-grid4{display:grid;gap:2px}
+.mb-grid4 i{width:5.5px;height:5.5px;border-radius:50%;background:currentColor;display:block}
+.mb-monogram{display:inline-flex;gap:4px;align-items:center}
+.mb-monogram b{font-size:11px;font-weight:700}
+.mb-monogram b.mb-stale{text-decoration:line-through;text-decoration-thickness:1.2px}
+.mb-strip{display:inline-flex;height:13px;border-radius:3px;overflow:hidden;gap:1px}
+.mb-strip i{width:6px;height:100%;display:block;background:currentColor}
+.mb-logo{width:13px;height:13px;display:inline-flex;opacity:.85}
+.mb-logo svg{display:block}
+.mb-tagnum{display:inline-flex;align-items:baseline;gap:6px}
+.mb-tagnum .u{display:inline-flex;align-items:baseline;gap:1.5px}
+.mb-tagnum .u b{font-size:10px;font-weight:600;opacity:.55}
+.mb-deck2{display:inline-flex;gap:8px;align-items:center}
+.mb-deck2 .u{display:flex;flex-direction:column;align-items:center;line-height:1;gap:1px}
+.mb-deck2 .u b{font-size:7.5px;font-weight:600;opacity:.55;letter-spacing:.02em}
+.mb-deck2 .u .pct{font-size:10.5px;line-height:1}
+/* 入口摘要卡 / 画廊 / 下钻页控件 */
+.mbentry{cursor:pointer;transition:border-color .15s}
+.mbentry:hover{border-color:var(--accent)}
+.mbcur{font-size:11.5px;color:var(--fg2);background:var(--surface2);border-radius:5px;padding:2px 9px}
+.mbgal{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-bottom:6px}
+.mbgal-h{grid-column:1/-1;font-size:10.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:6px 0 -2px}
+.mbgal-h:first-child{margin-top:0}
+.mbg{display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 6px 8px;border:1px solid var(--border);border-radius:8px;transition:border-color .15s,background .15s;background:none;cursor:pointer;font:inherit;color:inherit}
+.mbg:hover{background:var(--surface2)}
+.mbg.on{border-color:var(--accent);background:var(--surface2)}
+.mbg-thumb{height:20px;display:flex;align-items:center;justify-content:center;color:var(--fg2)}
+.mbg.on .mbg-thumb{color:var(--fg)}
+.mbg-name{font-size:11px;color:var(--fg2)}
+.mbg.on .mbg-name{color:var(--fg);font-weight:600}
+.mbg-thumb .mb-vbars .tr,.mbg-thumb .mb-hbar .tr{background:color-mix(in srgb,var(--fg2) 22%,transparent)}
+.mbg-thumb .mb-ticks i{background:color-mix(in srgb,var(--fg2) 22%,transparent)}
+.mbg-thumb .mb-ticks i.f,.mbg-thumb .mb-vbars .tr i,.mbg-thumb .mb-hbar .tr i,.mbg-thumb .mb-dots i,.mbg-thumb .mb-caps .c i{background:currentColor}
+.mbg-thumb .mb-caps .c{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg2) 40%,transparent)}
+.mbg-thumb .pct{font-family:var(--mono);font-size:11px}
+.mbkeep{font-size:11px;color:var(--muted)}
+.mbkeep:empty{display:none}
+.seg.mini button{padding:2px 8px;font-size:10.5px}
+.seg.dis{opacity:.4;pointer-events:none}
