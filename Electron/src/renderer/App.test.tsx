@@ -130,6 +130,14 @@ const settingsSnapshot: SettingsSnapshot = {
   menuBarPrimaryProviderId: 'codex',
   autoRefreshSeconds: 300,
   quotaUsedThresholdPercent: 0,
+  menubarAppearance: {
+    style: 'rings',
+    showName: true,
+    showGlyph: true,
+    showNumber: true,
+    usage: 'tok',
+    windowOrder: 'longFirst'
+  },
   enabledAgentKinds: ['claudeCode', 'codex'],
   providerOverrides: [
     {

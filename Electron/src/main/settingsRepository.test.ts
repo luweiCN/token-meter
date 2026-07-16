@@ -87,6 +87,14 @@ describe('SettingsRepository', () => {
       menuBarPrimaryProviderId: 'codex',
       autoRefreshSeconds: 300,
       quotaUsedThresholdPercent: 0,
+      menubarAppearance: {
+        style: 'rings',
+        showName: true,
+        showGlyph: true,
+        showNumber: true,
+        usage: 'tok',
+        windowOrder: 'longFirst'
+      },
       enabledAgentKinds: ['claudeCode', 'codex'],
       providerOverrides: [
         {
@@ -226,5 +234,69 @@ describe('SettingsRepository', () => {
     expect(() => repo.update({ quotaUsedThresholdPercent: 30 }, 5)).toThrow(/quotaUsedThresholdPercent/);
     expect(() => repo.update({ quotaUsedThresholdPercent: 101 }, 5)).toThrow(/quotaUsedThresholdPercent/);
     expect(() => repo.update({ quotaUsedThresholdPercent: 85.5 }, 5)).toThrow(/quotaUsedThresholdPercent/);
+  });
+
+  describe('menubar appearance settings', () => {
+    it('returns defaults when nothing stored', () => {
+      const { repo } = openRepo();
+      expect(repo.get().menubarAppearance).toEqual({
+        style: 'rings',
+        showName: true,
+        showGlyph: true,
+        showNumber: true,
+        usage: 'tok',
+        windowOrder: 'longFirst'
+      });
+    });
+
+    it('adds menubar columns to a legacy overrides table (idempotent)', () => {
+      // memoryDb 建的就是无 menubar 列的老表：构造 repo 即触发 ensure。
+      const { db, repo } = openRepo();
+      const again = new SettingsRepository(db); // 第二次构造不抛
+      expect(again.get().providerOverrides).toEqual(repo.get().providerOverrides);
+      const cols = db.prepare('PRAGMA table_info(provider_config_overrides)').all() as Array<{ name: string }>;
+      expect(cols.map((c) => c.name)).toContain('menubar_glyph_window');
+      expect(cols.map((c) => c.name)).toContain('menubar_number_window');
+      // 老行数据保留
+      expect(repo.get().providerOverrides.find((o) => o.providerId === 'codex')?.enabled).toBe(true);
+    });
+
+    it('applies menubar patch fields and bumps version', () => {
+      const { repo } = openRepo();
+      const result = repo.update(
+        {
+          menubarStyle: 'deck2',
+          menubarShowName: false,
+          menubarUsage: 'cost',
+          menubarWindowOrder: 'shortFirst',
+          providerMenubarVisible: { codex: false },
+          providerGlyphWindow: { 'claude-code': 'both' },
+          providerNumberWindow: { 'claude-code': 'short' }
+        },
+        3
+      );
+      expect(result).toEqual({ requestedVersion: 4, status: 'pending' });
+      const snapshot = repo.get();
+      expect(snapshot.version).toBe(4);
+      expect(snapshot.menubarAppearance.style).toBe('deck2');
+      expect(snapshot.menubarAppearance.showName).toBe(false);
+      expect(snapshot.menubarAppearance.showGlyph).toBe(true);
+      expect(snapshot.menubarAppearance.usage).toBe('cost');
+      expect(snapshot.menubarAppearance.windowOrder).toBe('shortFirst');
+      const codex = snapshot.providerOverrides.find((o) => o.providerId === 'codex');
+      expect(codex?.showInMenuBar).toBe(false);
+      const claude = snapshot.providerOverrides.find((o) => o.providerId === 'claude-code');
+      expect(claude?.menubarGlyphWindow).toBe('both');
+      expect(claude?.menubarNumberWindow).toBe('short');
+    });
+
+    it('rejects invalid enum values', () => {
+      const { repo } = openRepo();
+      expect(() => repo.update({ menubarStyle: 'holographic' }, 3)).toThrow(/menubarStyle/);
+      expect(() => repo.update({ menubarUsage: 'gold' }, 3)).toThrow(/menubarUsage/);
+      expect(() => repo.update({ providerGlyphWindow: { codex: 'weekly' } }, 3)).toThrow(/providerGlyphWindow/);
+      expect(() => repo.update({ menubarWindowOrder: 'upsideDown' }, 3)).toThrow(/menubarWindowOrder/);
+      expect(() => repo.update({ menubarShowGlyph: 1 }, 3)).toThrow(/menubarShowGlyph/);
+    });
   });
 });

@@ -31,6 +31,28 @@ export interface ProviderConfigOverride {
   menuRank?: number;
   showInMenuBar?: boolean;
   showInCharts?: boolean;
+  menubarGlyphWindow?: MenubarWindowChoice;
+  menubarNumberWindow?: MenubarWindowChoice;
+}
+
+/// 菜单栏样式族（与主进程 settingsRepository / Swift MenuBarStyleId 同名单；
+/// renderer 不 import main 模块，此处独立导出一份常量供画廊等使用）。
+export const MENUBAR_STYLE_IDS = [
+  'rings', 'vbars', 'hbar', 'digits', 'dots', 'caps', 'ticks', 'ring1',
+  'grid', 'sentinel', 'monogram', 'strip', 'tagnum', 'deck2', 'ringdeck', 'barsdeck'
+] as const;
+export type MenubarStyleId = (typeof MENUBAR_STYLE_IDS)[number];
+export type MenubarWindowChoice = 'short' | 'long' | 'both';
+export type MenubarUsageTail = 'off' | 'tok' | 'cost';
+export type MenubarWindowOrder = 'longFirst' | 'shortFirst';
+
+export interface MenubarAppearance {
+  style: MenubarStyleId;
+  showName: boolean;
+  showGlyph: boolean;
+  showNumber: boolean;
+  usage: MenubarUsageTail;
+  windowOrder: MenubarWindowOrder;
 }
 
 export interface SettingsSnapshot {
@@ -41,6 +63,7 @@ export interface SettingsSnapshot {
   providerOverrides: ProviderConfigOverride[];
   /// 额度用量告警阈值（usedPercent 达到即通知）。0 = 关闭，有效值 50~100。
   quotaUsedThresholdPercent: number;
+  menubarAppearance: MenubarAppearance;
 }
 
 export interface SettingsPatch {
@@ -53,7 +76,26 @@ export interface SettingsPatch {
   quotaUsedThresholdPercent?: number;
   /// providerId → 启停(设置页额度供应商行开关;主进程 settingsRepository 同名字段)。
   providerEnabled?: Record<string, boolean>;
+  menubarStyle?: MenubarStyleId;
+  menubarShowName?: boolean;
+  menubarShowGlyph?: boolean;
+  menubarShowNumber?: boolean;
+  menubarUsage?: MenubarUsageTail;
+  menubarWindowOrder?: MenubarWindowOrder;
+  /// providerId → 菜单栏显示（show_in_menu_bar；独立于 enabled 的数据启停）。
+  providerMenubarVisible?: Record<string, boolean>;
+  providerGlyphWindow?: Record<string, MenubarWindowChoice>;
+  providerNumberWindow?: Record<string, MenubarWindowChoice>;
 }
+
+export const MENUBAR_APPEARANCE_DEFAULT: MenubarAppearance = {
+  style: 'rings',
+  showName: true,
+  showGlyph: true,
+  showNumber: true,
+  usage: 'tok',
+  windowOrder: 'longFirst'
+};
 
 /// macOS 通知授权状态（Swift UNUserNotificationCenter 经 IPC 转发）。
 export type NotificationAuthState = 'authorized' | 'denied' | 'notDetermined' | 'unknown';

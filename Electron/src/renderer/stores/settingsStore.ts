@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
 export type { SettingsApplyRequest, SettingsSnapshot } from '../api.js';
+import { MENUBAR_APPEARANCE_DEFAULT } from '../api.js';
 import type { SettingsApplyRequest, SettingsPatch, SettingsSnapshot } from '../api.js';
 
 const initialSnapshot: SettingsSnapshot = {
@@ -8,7 +9,8 @@ const initialSnapshot: SettingsSnapshot = {
   autoRefreshSeconds: 300,
   enabledAgentKinds: [],
   providerOverrides: [],
-  quotaUsedThresholdPercent: 0
+  quotaUsedThresholdPercent: 0,
+  menubarAppearance: MENUBAR_APPEARANCE_DEFAULT
 };
 
 let snapshot = initialSnapshot;

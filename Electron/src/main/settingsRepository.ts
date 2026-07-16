@@ -1,5 +1,24 @@
 import type Database from 'better-sqlite3';
 
+export const MENUBAR_STYLE_IDS = [
+  'rings', 'vbars', 'hbar', 'digits', 'dots', 'caps', 'ticks', 'ring1',
+  'grid', 'sentinel', 'monogram', 'strip', 'tagnum', 'deck2', 'ringdeck', 'barsdeck'
+] as const;
+export type MenubarStyleId = (typeof MENUBAR_STYLE_IDS)[number];
+export type MenubarWindowChoice = 'short' | 'long' | 'both';
+export type MenubarUsageTail = 'off' | 'tok' | 'cost';
+export type MenubarWindowOrder = 'longFirst' | 'shortFirst';
+
+/// 菜单栏外观（样式/元素/今日尾巴/窗口顺序）。Swift 端 MenuBarAppearanceSettings 同构。
+export interface MenubarAppearance {
+  style: MenubarStyleId;
+  showName: boolean;
+  showGlyph: boolean;
+  showNumber: boolean;
+  usage: MenubarUsageTail;
+  windowOrder: MenubarWindowOrder;
+}
+
 export interface ProviderConfigOverride {
   providerId: string;
   enabled?: boolean;
@@ -7,6 +26,8 @@ export interface ProviderConfigOverride {
   menuRank?: number;
   showInMenuBar?: boolean;
   showInCharts?: boolean;
+  menubarGlyphWindow?: MenubarWindowChoice;
+  menubarNumberWindow?: MenubarWindowChoice;
 }
 
 export interface SettingsSnapshot {
@@ -17,6 +38,7 @@ export interface SettingsSnapshot {
   providerOverrides: ProviderConfigOverride[];
   /// 额度用量告警阈值（usedPercent 达到即通知）。0 = 关闭，有效值 50~100。
   quotaUsedThresholdPercent: number;
+  menubarAppearance: MenubarAppearance;
 }
 
 export interface SettingsPatch {
@@ -29,7 +51,21 @@ export interface SettingsPatch {
   providerEnabled?: Record<string, boolean>;
   /// 0 = 关闭告警，50~100 = 用量达该百分比时通知（Swift 侧刷新额度时检测）。
   quotaUsedThresholdPercent?: number;
+  menubarStyle?: MenubarStyleId;
+  menubarShowName?: boolean;
+  menubarShowGlyph?: boolean;
+  menubarShowNumber?: boolean;
+  menubarUsage?: MenubarUsageTail;
+  menubarWindowOrder?: MenubarWindowOrder;
+  /// providerId → 菜单栏显示（写 show_in_menu_bar；独立于 enabled 的数据启停）。
+  providerMenubarVisible?: Record<string, boolean>;
+  providerGlyphWindow?: Record<string, MenubarWindowChoice>;
+  providerNumberWindow?: Record<string, MenubarWindowChoice>;
 }
+
+const MENUBAR_WINDOW_CHOICES = ['short', 'long', 'both'] as const;
+const MENUBAR_USAGE_TAILS = ['off', 'tok', 'cost'] as const;
+const MENUBAR_WINDOW_ORDERS = ['longFirst', 'shortFirst'] as const;
 
 const LOCAL_AGENT_KIND_ALLOWED: Record<string, true> = {
   claudeCode: true,
@@ -55,10 +91,31 @@ interface ProviderOverrideRow {
   menu_rank: number | null;
   show_in_menu_bar: 0 | 1 | null;
   show_in_charts: 0 | 1 | null;
+  menubar_glyph_window: string | null;
+  menubar_number_window: string | null;
 }
 
 export class SettingsRepository {
-  constructor(private readonly db: Database.Database) {}
+  constructor(private readonly db: Database.Database) {
+    this.ensureMenubarColumns();
+  }
+
+  /// 配置表新增列的幂等迁移（与 Swift TokenMeterDatabaseMigrator.ensureConfigColumns 同款）：
+  /// Swift 未升级/未运行时 Electron 也能安全查询。
+  private ensureMenubarColumns() {
+    const cols = (this.db.prepare('PRAGMA table_info(provider_config_overrides)').all() as Array<{ name: string }>)
+      .map((c) => c.name);
+    if (!cols.includes('menubar_glyph_window')) {
+      this.db.exec(
+        "ALTER TABLE provider_config_overrides ADD COLUMN menubar_glyph_window TEXT CHECK (menubar_glyph_window IN ('short','long','both'))"
+      );
+    }
+    if (!cols.includes('menubar_number_window')) {
+      this.db.exec(
+        "ALTER TABLE provider_config_overrides ADD COLUMN menubar_number_window TEXT CHECK (menubar_number_window IN ('short','long','both'))"
+      );
+    }
+  }
 
   get(): SettingsSnapshot {
     const versionRow = this.db.prepare('SELECT coalesce(max(version), 0) AS version FROM settings').get() as VersionRow;
@@ -68,8 +125,27 @@ export class SettingsRepository {
       autoRefreshSeconds: this.settingInt('scan.autoRefreshSeconds') ?? 300,
       enabledAgentKinds: this.settingStringArray('filters.enabledAgentKinds'),
       providerOverrides: this.providerOverrides(),
-      quotaUsedThresholdPercent: this.settingInt('notifications.quotaUsedThresholdPercent') ?? 0
+      quotaUsedThresholdPercent: this.settingInt('notifications.quotaUsedThresholdPercent') ?? 0,
+      menubarAppearance: {
+        style: this.enumSetting('menubar.style', MENUBAR_STYLE_IDS, 'rings'),
+        showName: (this.settingInt('menubar.showName') ?? 1) !== 0,
+        showGlyph: (this.settingInt('menubar.showGlyph') ?? 1) !== 0,
+        showNumber: (this.settingInt('menubar.showNumber') ?? 1) !== 0,
+        usage: this.enumSetting('menubar.usage', MENUBAR_USAGE_TAILS, 'tok'),
+        windowOrder: this.enumSetting('menubar.windowOrder', MENUBAR_WINDOW_ORDERS, 'longFirst')
+      }
     };
+  }
+
+  /// 枚举 kv：缺失/坏类型/非法值一律回默认（与 Swift 端同策略，向后兼容）。
+  private enumSetting<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+    let raw: string | undefined;
+    try {
+      raw = this.settingString(key);
+    } catch {
+      return fallback;
+    }
+    return raw !== undefined && (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback;
   }
 
   update(patch: unknown, expectedVersion: number) {
@@ -121,7 +197,61 @@ export class SettingsRepository {
           upsert.run(providerId, enabled ? 1 : 0);
         }
       }
-      if (validatedPatch.providerDisplayNames !== undefined || validatedPatch.providerEnabled !== undefined) {
+      if (validatedPatch.menubarStyle !== undefined) {
+        this.setSetting('menubar.style', JSON.stringify(validatedPatch.menubarStyle), 'string', nextVersion);
+      }
+      if (validatedPatch.menubarShowName !== undefined) {
+        this.setSetting('menubar.showName', String(validatedPatch.menubarShowName ? 1 : 0), 'int', nextVersion);
+      }
+      if (validatedPatch.menubarShowGlyph !== undefined) {
+        this.setSetting('menubar.showGlyph', String(validatedPatch.menubarShowGlyph ? 1 : 0), 'int', nextVersion);
+      }
+      if (validatedPatch.menubarShowNumber !== undefined) {
+        this.setSetting('menubar.showNumber', String(validatedPatch.menubarShowNumber ? 1 : 0), 'int', nextVersion);
+      }
+      if (validatedPatch.menubarUsage !== undefined) {
+        this.setSetting('menubar.usage', JSON.stringify(validatedPatch.menubarUsage), 'string', nextVersion);
+      }
+      if (validatedPatch.menubarWindowOrder !== undefined) {
+        this.setSetting('menubar.windowOrder', JSON.stringify(validatedPatch.menubarWindowOrder), 'string', nextVersion);
+      }
+      if (validatedPatch.providerMenubarVisible !== undefined) {
+        const upsert = this.db.prepare(
+          `INSERT INTO provider_config_overrides (provider_id, show_in_menu_bar, updated_at)
+           VALUES (?, ?, datetime('now'))
+           ON CONFLICT(provider_id) DO UPDATE SET show_in_menu_bar = excluded.show_in_menu_bar, updated_at = excluded.updated_at`
+        );
+        for (const [providerId, visible] of Object.entries(validatedPatch.providerMenubarVisible)) {
+          upsert.run(providerId, visible ? 1 : 0);
+        }
+      }
+      if (validatedPatch.providerGlyphWindow !== undefined) {
+        const upsert = this.db.prepare(
+          `INSERT INTO provider_config_overrides (provider_id, menubar_glyph_window, updated_at)
+           VALUES (?, ?, datetime('now'))
+           ON CONFLICT(provider_id) DO UPDATE SET menubar_glyph_window = excluded.menubar_glyph_window, updated_at = excluded.updated_at`
+        );
+        for (const [providerId, choice] of Object.entries(validatedPatch.providerGlyphWindow)) {
+          upsert.run(providerId, choice);
+        }
+      }
+      if (validatedPatch.providerNumberWindow !== undefined) {
+        const upsert = this.db.prepare(
+          `INSERT INTO provider_config_overrides (provider_id, menubar_number_window, updated_at)
+           VALUES (?, ?, datetime('now'))
+           ON CONFLICT(provider_id) DO UPDATE SET menubar_number_window = excluded.menubar_number_window, updated_at = excluded.updated_at`
+        );
+        for (const [providerId, choice] of Object.entries(validatedPatch.providerNumberWindow)) {
+          upsert.run(providerId, choice);
+        }
+      }
+      if (
+        validatedPatch.providerDisplayNames !== undefined ||
+        validatedPatch.providerEnabled !== undefined ||
+        validatedPatch.providerMenubarVisible !== undefined ||
+        validatedPatch.providerGlyphWindow !== undefined ||
+        validatedPatch.providerNumberWindow !== undefined
+      ) {
         // overrides 不在 settings 表里，写一个哨兵键推进 version——否则乐观锁
         // 版本不前进，Swift 端 settingsChanged(version) 的对账会判为落后而失败。
         this.setSetting('providers.overridesUpdatedAt', JSON.stringify(new Date().toISOString()), 'string', nextVersion);
@@ -170,11 +300,17 @@ export class SettingsRepository {
   private providerOverrides(): ProviderConfigOverride[] {
     const rows = this.db
       .prepare(
-        `SELECT provider_id, enabled, display_name, menu_rank, show_in_menu_bar, show_in_charts
+        `SELECT provider_id, enabled, display_name, menu_rank, show_in_menu_bar, show_in_charts,
+                menubar_glyph_window, menubar_number_window
          FROM provider_config_overrides
          ORDER BY menu_rank ASC, provider_id ASC`
       )
       .all() as ProviderOverrideRow[];
+
+    const windowChoice = (value: string | null): MenubarWindowChoice | undefined =>
+      value !== null && (MENUBAR_WINDOW_CHOICES as readonly string[]).includes(value)
+        ? (value as MenubarWindowChoice)
+        : undefined;
 
     return rows.map((row) => ({
       providerId: row.provider_id,
@@ -182,7 +318,13 @@ export class SettingsRepository {
       ...(row.display_name === null ? {} : { displayName: row.display_name }),
       ...(row.menu_rank === null ? {} : { menuRank: row.menu_rank }),
       ...(row.show_in_menu_bar === null ? {} : { showInMenuBar: row.show_in_menu_bar === 1 }),
-      ...(row.show_in_charts === null ? {} : { showInCharts: row.show_in_charts === 1 })
+      ...(row.show_in_charts === null ? {} : { showInCharts: row.show_in_charts === 1 }),
+      ...(windowChoice(row.menubar_glyph_window) === undefined
+        ? {}
+        : { menubarGlyphWindow: windowChoice(row.menubar_glyph_window) }),
+      ...(windowChoice(row.menubar_number_window) === undefined
+        ? {}
+        : { menubarNumberWindow: windowChoice(row.menubar_number_window) })
     }));
   }
 
@@ -265,6 +407,62 @@ function validateSettingsPatch(patch: unknown): SettingsPatch {
     validated.providerEnabled = entries as Record<string, boolean>;
   }
 
+  if ('menubarStyle' in candidate) {
+    if (typeof candidate.menubarStyle !== 'string' || !(MENUBAR_STYLE_IDS as readonly string[]).includes(candidate.menubarStyle)) {
+      throw new Error(`menubarStyle must be one of: ${MENUBAR_STYLE_IDS.join(', ')}`);
+    }
+    validated.menubarStyle = candidate.menubarStyle as MenubarStyleId;
+  }
+  for (const key of ['menubarShowName', 'menubarShowGlyph', 'menubarShowNumber'] as const) {
+    if (key in candidate) {
+      if (typeof candidate[key] !== 'boolean') {
+        throw new Error(`${key} must be a boolean`);
+      }
+      validated[key] = candidate[key] as boolean;
+    }
+  }
+  if ('menubarUsage' in candidate) {
+    if (typeof candidate.menubarUsage !== 'string' || !(MENUBAR_USAGE_TAILS as readonly string[]).includes(candidate.menubarUsage)) {
+      throw new Error('menubarUsage must be one of: off, tok, cost');
+    }
+    validated.menubarUsage = candidate.menubarUsage as MenubarUsageTail;
+  }
+  if ('menubarWindowOrder' in candidate) {
+    if (
+      typeof candidate.menubarWindowOrder !== 'string' ||
+      !(MENUBAR_WINDOW_ORDERS as readonly string[]).includes(candidate.menubarWindowOrder)
+    ) {
+      throw new Error('menubarWindowOrder must be one of: longFirst, shortFirst');
+    }
+    validated.menubarWindowOrder = candidate.menubarWindowOrder as MenubarWindowOrder;
+  }
+  if ('providerMenubarVisible' in candidate) {
+    const entries = candidate.providerMenubarVisible;
+    if (typeof entries !== 'object' || entries === null || Array.isArray(entries)) {
+      throw new Error('providerMenubarVisible must be an object');
+    }
+    for (const [providerId, visible] of Object.entries(entries)) {
+      if (typeof visible !== 'boolean') {
+        throw new Error(`providerMenubarVisible has invalid flag for provider: ${providerId}`);
+      }
+    }
+    validated.providerMenubarVisible = entries as Record<string, boolean>;
+  }
+  for (const key of ['providerGlyphWindow', 'providerNumberWindow'] as const) {
+    if (key in candidate) {
+      const entries = candidate[key];
+      if (typeof entries !== 'object' || entries === null || Array.isArray(entries)) {
+        throw new Error(`${key} must be an object`);
+      }
+      for (const [providerId, choice] of Object.entries(entries)) {
+        if (typeof choice !== 'string' || !(MENUBAR_WINDOW_CHOICES as readonly string[]).includes(choice)) {
+          throw new Error(`${key} has invalid window choice for provider: ${providerId}`);
+        }
+      }
+      validated[key] = entries as Record<string, MenubarWindowChoice>;
+    }
+  }
+
   return validated;
 }
 
@@ -282,6 +480,15 @@ function hasPatchChanges(patch: SettingsPatch) {
     patch.enabledAgentKinds !== undefined ||
     patch.providerDisplayNames !== undefined ||
     patch.providerEnabled !== undefined ||
-    patch.quotaUsedThresholdPercent !== undefined
+    patch.quotaUsedThresholdPercent !== undefined ||
+    patch.menubarStyle !== undefined ||
+    patch.menubarShowName !== undefined ||
+    patch.menubarShowGlyph !== undefined ||
+    patch.menubarShowNumber !== undefined ||
+    patch.menubarUsage !== undefined ||
+    patch.menubarWindowOrder !== undefined ||
+    patch.providerMenubarVisible !== undefined ||
+    patch.providerGlyphWindow !== undefined ||
+    patch.providerNumberWindow !== undefined
   );
 }
