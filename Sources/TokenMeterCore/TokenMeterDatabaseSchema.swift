@@ -9,7 +9,11 @@ public enum TokenMeterDatabaseSchema {
     /// （user_version ∈ 0/1/2/3）都与之不等，从而在下次启动时触发一次重建。
     /// 5：agent_sessions 加 root_session_key/subagent_label、source_files 加 subagent_label（子代理归并）
     /// 6：价格快照更新（新收 gpt-5.6 系列等），重建以重算既有 unknown 事件的成本
-    public static let derivedVersion: Int64 = 6
+    /// 7：Codex dedupe_key 改锚 total 四元组（resume 重放会改写 timestamp，旧键去重失效、
+    ///    历史被重复计数——实测单日虚增 18 亿 token），重建以清洗既有重复事件
+    /// 9：模型归一化改为取 `/` 最后一段（codex/gpt-5.6-sol 与裸名归并，渠道前缀
+    ///    不属于模型身份，用户裁定），重建以重算既有事件的 model_canonical
+    public static let derivedVersion: Int64 = 9
 
     /// 用户配置。永不删除。这三张表存的是无法从会话文件重建的东西：
     /// - settings：过滤器 / 菜单栏偏好 / 自动刷新间隔
@@ -17,6 +21,25 @@ public enum TokenMeterDatabaseSchema {
     /// - scan_roots：扫描哪些目录（用户可能加了自定义路径），及其扫描状态列
     /// 全是 CREATE TABLE IF NOT EXISTS，幂等，每次启动都跑也安全。以后要加列，请用
     /// `ALTER TABLE ... ADD COLUMN`（同样幂等），永远不要把配置表卷进 derivedVersion 的重建。
+    /// 运行时瞬态状态。既非用户配置（可随时清）也非派生数据（不卷入 derivedVersion 重建）：
+    /// - live_sessions：hooks 上报的「运行中」会话。真相在各 agent 的 hooks 事件流里，
+    ///   app 重启后旧状态无意义，启动时 DROP+CREATE 整表重建——僵尸会话由此消失，
+    ///   无需 TTL 逻辑，加列也直接改这里、不走 ALTER 迁移。
+    public static let runtimeTables = """
+    DROP TABLE IF EXISTS live_sessions;
+    CREATE TABLE live_sessions (
+      agent_kind TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      cwd TEXT,
+      owner_pid INTEGER,
+      state TEXT NOT NULL CHECK (state IN ('running', 'ended')),
+      blocked INTEGER NOT NULL DEFAULT 0 CHECK (blocked IN (0, 1)),
+      started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (agent_kind, session_id)
+    );
+    """
+
     public static let configTables = """
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
@@ -224,6 +247,22 @@ public enum TokenMeterDatabaseSchema {
     );
 
     CREATE INDEX IF NOT EXISTS idx_session_rollup_last ON session_rollup(last_event_epoch_ms DESC);
+
+    -- 「日 × provider × 主会话」的活跃明细，专给 Electron 的会话数聚合用：
+    -- agentTrend 按任意粒度 count(DISTINCT root_session_key)，heatmap 按天
+    -- sum(sessions_count)（数学上等于当天 distinct session_id——每个原始会话只属于
+    -- 一个主会话键，且在天内只被数一次）。没有这张表时那两个查询只能对 usage_events
+    -- 的 date(...,'localtime') 表达式做全表扫描（24 万行实测 700ms+，localtime
+    -- 非确定性、无法建索引），同步查询会冻结 Electron 主进程。
+    CREATE TABLE IF NOT EXISTS daily_active_sessions (
+      usage_date TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      -- source_kind:coalesce(root_session_key, source_session_key)，口径与 sessionRail 一致
+      root_session_key TEXT NOT NULL,
+      -- 该主会话当天名下的原始会话数（distinct session_id，含子会话）
+      sessions_count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (usage_date, provider_id, root_session_key)
+    );
 
     CREATE TABLE IF NOT EXISTS model_pricing (
       model_key TEXT PRIMARY KEY,

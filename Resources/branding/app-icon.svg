@@ -1,0 +1,16 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- 全画布圆角矩形（macOS 标准圆角比例 ~22.4%），四角透明。
+       系统对老式 icns 不自动裁形：留白会被套白底、全出血方形会显示直角，
+       只有自绘满幅圆角这一条路。 -->
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#03202f"/>
+      <stop offset="1" stop-color="#00111e"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="229" fill="url(#plate)"/>
+  <g transform="translate(228,228) scale(25.8)" fill="none" stroke="#0fc5ed" stroke-width="1.6">
+    <rect x="1" y="1" width="20" height="20" rx="5"/>
+    <path d="M6 13.5 9 8.5l2.6 3.6L14 6.5l2 7" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

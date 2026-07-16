@@ -1,11 +1,14 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 
 import { formatRelative } from '../format.js';
+import { applyThemePref, storedThemePref, watchSystemTheme } from '../theme.js';
+import { ToastHost } from './toast.js';
+import { TrafficLightHover } from './TrafficLightHover.js';
 
-export type RouteName = 'dashboard' | 'sessions' | 'index' | 'settings';
+export type RouteName = 'dashboard' | 'projects' | 'sessions' | 'models' | 'settings';
 
-/// 侧栏按 OpenDesign 稿：6 个导航项。「项目」「查询」的页面稿未接入，先渲染禁用态，
-/// 路由类型保持 4 个不变——禁用项不产生路由。
+/// 侧栏导航。「查询」的页面稿未接入，先渲染禁用态——禁用项不产生路由。
+/// 索引状态已并入设置页「数据」区，不再单列。
 const NAV: Array<{ route?: RouteName; label: string; icon: ReactNode; disabled?: boolean }> = [
   {
     route: 'dashboard',
@@ -17,8 +20,8 @@ const NAV: Array<{ route?: RouteName; label: string; icon: ReactNode; disabled?:
     )
   },
   {
+    route: 'projects',
     label: '项目',
-    disabled: true,
     icon: (
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
         <path d="M1.5 4.5v6a1.5 1.5 0 0 0 1.5 1.5h8a1.5 1.5 0 0 0 1.5-1.5V5.8a1.5 1.5 0 0 0-1.5-1.5H7L5.6 2.6a1 1 0 0 0-.7-.3H3A1.5 1.5 0 0 0 1.5 3.8v.7Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
@@ -36,12 +39,12 @@ const NAV: Array<{ route?: RouteName; label: string; icon: ReactNode; disabled?:
     )
   },
   {
-    route: 'index',
-    label: '索引状态',
+    route: 'models',
+    label: '模型',
     icon: (
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.4" />
-        <path d="M7 3.5V7l2.5 1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        <path d="M7 1.5 12.5 4.5v5L7 12.5 1.5 9.5v-5L7 1.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+        <path d="M1.5 4.5 7 7.5l5.5-3M7 7.5v5" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
       </svg>
     )
   },
@@ -67,12 +70,6 @@ const NAV: Array<{ route?: RouteName; label: string; icon: ReactNode; disabled?:
   }
 ];
 
-type Theme = 'dark' | 'light';
-
-function initialTheme(): Theme {
-  return localStorage.getItem('tm-theme') === 'light' ? 'light' : 'dark';
-}
-
 export function Layout({
   route,
   onRoute,
@@ -84,15 +81,17 @@ export function Layout({
   lastScanEpochMs: number | null;
   children: ReactNode;
 }) {
-  const [theme, setTheme] = useState<Theme>(initialTheme);
-
+  // 主题切换已收进设置页「外观」；这里启动时应用持久化的选择，
+  // 偏好为「跟随系统」时订阅 macOS 外观变化即时跟随。
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem('tm-theme', theme);
-  }, [theme]);
+    applyThemePref(storedThemePref());
+    return watchSystemTheme();
+  }, []);
 
   return (
     <div className="app">
+      <TrafficLightHover />
+      <ToastHost />
       <aside className="sidebar">
         <div className="sidebar-drag" aria-hidden="true" />
         <div className="brand">
@@ -122,24 +121,6 @@ export function Layout({
           <span className="scan">
             {lastScanEpochMs !== null ? `上次扫描 ${formatRelative(Date.now() - lastScanEpochMs)}` : '尚未扫描'}
           </span>
-          <button
-            type="button"
-            className="theme-btn"
-            title="切换外观"
-            aria-label={theme === 'dark' ? '切换到浅色外观' : '切换到深色外观'}
-            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          >
-            {theme === 'dark' ? (
-              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
-                <path d="M11.5 8.2A5 5 0 0 1 4.8 1.5a5 5 0 1 0 6.7 6.7Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-              </svg>
-            ) : (
-              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
-                <circle cx="6.5" cy="6.5" r="2.6" stroke="currentColor" strokeWidth="1.4" />
-                <path d="M6.5 0.8v1.6M6.5 10.6v1.6M0.8 6.5h1.6M10.6 6.5h1.6M2.5 2.5l1.1 1.1M9.4 9.4l1.1 1.1M10.5 2.5 9.4 3.6M3.6 9.4l-1.1 1.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-              </svg>
-            )}
-          </button>
         </div>
       </aside>
       <main className="main">{children}</main>

@@ -4,8 +4,13 @@ export function formatCount(value: number): string {
   return new Intl.NumberFormat('en-US').format(value);
 }
 
-export function formatTokens(value: number): string {
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;
+/// dailyScale：单日范围的数字永远不升到 B——十亿级写成「2398.5M」，每涨一百万
+/// 都看得见（1 位小数的 B 会把百万级变化吞掉）。多天聚合（周/月/总计）才用 B。
+export function formatTokens(value: number, dailyScale = false): string {
+  if (value >= 1_000_000_000) {
+    if (!dailyScale) return `${(value / 1_000_000_000).toFixed(2)}B`;
+    return `${(value / 1_000_000).toFixed(1)}M`;
+  }
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(2)}K`;
   return formatCount(value);
@@ -57,4 +62,18 @@ export function formatDurationShort(ms: number): string {
   if (hours < 24) return `${hours}h ${minutes % 60}m`;
   const days = Math.floor(hours / 24);
   return `${days}d ${hours % 24}h`;
+}
+
+/// 目录/文件大小的人类可读形式（设置页 E 区与索引状态页共用）。
+export function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+/// SQLite 的 datetime('now') 存 UTC 但无时区后缀，直接 Date.parse 会按本地时区
+/// 解析——UTC+8 下「最近扫描」凭空多出 8 小时（用户实测）。补上 Z 再解析。
+export function parseUtcTimestamp(value: string): number {
+  const normalized = value.includes('T') ? value : `${value.replace(' ', 'T')}Z`;
+  return Date.parse(normalized);
 }

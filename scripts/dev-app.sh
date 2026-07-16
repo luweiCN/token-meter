@@ -21,8 +21,14 @@ if [ ! -d "$BUNDLE_ELECTRON/node_modules/electron" ]; then
   exit 1
 fi
 
+# 上一个 dev 会话被 install-app.sh 的 pkill 打断时，vite 会留成孤儿继续占着
+# 端口；vite 默认静默换端口，而下面传给 Electron 的 URL 仍是 $PORT——两边错位，
+# 窗口连上旧 vite、preload 全挂。启动前清场 + strictPort 双保险。
+lsof -ti ":$PORT" 2>/dev/null | xargs kill 2>/dev/null || true
+sleep 0.5
+
 cd "$ROOT_DIR/Electron"
-npx vite --host 127.0.0.1 --port "$PORT" &
+npx vite --host 127.0.0.1 --port "$PORT" --strictPort &
 VITE_PID=$!
 trap 'kill $VITE_PID 2>/dev/null || true' EXIT
 

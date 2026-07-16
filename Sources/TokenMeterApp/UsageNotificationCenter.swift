@@ -71,10 +71,14 @@ final class UsageNotificationCenter: UsageNotificationDelivering {
         switch event {
         case let .resetCreditsAdded(_, providerName, _, _):
             return "\(providerName) 新增重置卡"
+        case let .resetCreditsConsumed(_, providerName, _, _):
+            return "\(providerName) 重置卡减少"
         case let .quotaRefreshed(_, providerName, _):
             return "\(providerName) 额度已刷新"
         case let .quotaDepleted(_, providerName, _):
             return "\(providerName) 额度已用尽"
+        case let .quotaThresholdCrossed(_, providerName, _, _, _):
+            return "\(providerName) 额度告警"
         }
     }
 
@@ -82,10 +86,14 @@ final class UsageNotificationCenter: UsageNotificationDelivering {
         switch event {
         case let .resetCreditsAdded(_, _, addedCount, totalCount):
             return "新增 \(addedCount) 张，当前共 \(totalCount) 张"
+        case let .resetCreditsConsumed(_, _, removedCount, remainingCount):
+            return "减少 \(removedCount) 张（已使用或过期），剩余 \(remainingCount) 张"
         case let .quotaRefreshed(_, _, metricLabel):
             return "\(metricLabel) 已恢复"
         case let .quotaDepleted(_, _, metricLabel):
             return "\(metricLabel) 已到 0%"
+        case let .quotaThresholdCrossed(_, _, metricLabel, usedPercent, thresholdPercent):
+            return "\(metricLabel) 已用 \(usedPercent)%，超过 \(thresholdPercent)% 阈值"
         }
     }
 

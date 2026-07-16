@@ -32,6 +32,17 @@ final class ModelNameNormalizerTests: XCTestCase {
         XCTAssertEqual(ModelNameNormalizer.canonical("zhipu-coding-plan/glm-5.2"), "glm-5.2")
         XCTAssertEqual(ModelNameNormalizer.canonical("deepseek/deepseek-v4-flash"), "deepseek-v4-flash")
         XCTAssertEqual(ModelNameNormalizer.canonical("gemini/gemini-3.5-flash"), "gemini-3.5-flash")
+        // OpenCode 走 codex 渠道时上报 codex/gpt-5.6-sol：codex/ 是渠道不是模型身份，
+        // 与裸 gpt-5.6-sol 必须归并为同一模型（用户裁定，全应用的模型统计口径）。
+        XCTAssertEqual(ModelNameNormalizer.canonical("codex/gpt-5.6-sol"), "gpt-5.6-sol")
+    }
+
+    func testStripsAnyProviderPrefixNotJustKnownOnes() {
+        // 用户裁定：统计模型用量时供应商/渠道/网关标记一律不属于模型身份，
+        // 不维护前缀白名单，取 `/` 分隔的最后一段作为模型代号。
+        XCTAssertEqual(ModelNameNormalizer.canonical("cloudflare/qwen-32b"), "qwen-32b")
+        XCTAssertEqual(ModelNameNormalizer.canonical("some-future-gateway/claude-fable-5"), "claude-fable-5")
+        XCTAssertEqual(ModelNameNormalizer.canonical("a/b/c/gpt-5.5"), "gpt-5.5")
     }
 
     func testStripsStackedGatewayPrefixes() {

@@ -17,6 +17,19 @@ final class StatusBarControllerTests: XCTestCase {
         XCTAssertEqual(controller.statusItemClickAction(for: nil), .togglePopover)
     }
 
+    func testUpdateTitleDrivesTheWidthTitleLayer() throws {
+        let controller = StatusBarController(
+            store: makeStore(),
+            mainInterfaceLauncher: RecordingMainInterfaceLauncher(),
+            quitApplication: {}
+        )
+
+        controller.updateTitle("1.2M")
+
+        // 宽度由透明 attributedTitle 驱动（可见绘制在 SwiftUI 层）：字符串必须同步。
+        XCTAssertEqual(controller.titleForTesting, "1.2M")
+    }
+
     func testContextMenuContainsOpenMainInterfaceAndQuit() throws {
         let controller = StatusBarController(
             store: makeStore(),

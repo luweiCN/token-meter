@@ -63,6 +63,60 @@ final class UsageNotificationEventDetectorTests: XCTestCase {
         XCTAssertTrue(UsageNotificationEventDetector.events(previous: [previous], current: [current]).isEmpty)
     }
 
+    func testDetectsResetCreditDecreaseAsConsumed() {
+        let previous = snapshot(resetCredits: ResetCreditSummary(availableCount: 3, credits: []))
+        let current = snapshot(resetCredits: ResetCreditSummary(availableCount: 2, credits: []))
+
+        let events = UsageNotificationEventDetector.events(previous: [previous], current: [current])
+
+        XCTAssertEqual(events, [
+            .resetCreditsConsumed(providerId: "codex", providerName: "Codex", removedCount: 1, remainingCount: 2)
+        ])
+    }
+
+    func testThresholdCrossingFiresOnceOnTheWayUp() {
+        // 用量 80% → 88% 跨过 85% 阈值：告警一次。
+        let events = UsageNotificationEventDetector.events(
+            previous: [snapshot(remainingPercent: 20)],
+            current: [snapshot(remainingPercent: 12)],
+            usedThresholdPercent: 85
+        )
+        XCTAssertEqual(events, [
+            .quotaThresholdCrossed(providerId: "codex", providerName: "Codex", metricLabel: "5h", usedPercent: 88, thresholdPercent: 85)
+        ])
+
+        // 已在阈值之上继续涨（88% → 92%）：不重复告警。
+        XCTAssertTrue(
+            UsageNotificationEventDetector.events(
+                previous: [snapshot(remainingPercent: 12)],
+                current: [snapshot(remainingPercent: 8)],
+                usedThresholdPercent: 85
+            ).isEmpty
+        )
+    }
+
+    func testThresholdDisabledWhenZero() {
+        XCTAssertTrue(
+            UsageNotificationEventDetector.events(
+                previous: [snapshot(remainingPercent: 20)],
+                current: [snapshot(remainingPercent: 12)],
+                usedThresholdPercent: 0
+            ).isEmpty
+        )
+    }
+
+    func testDepletionOwnsTheZeroCrossingWithoutDoubleFiring() {
+        // 一步跨过阈值又到 0：只发 depleted，不再叠一条阈值告警。
+        let events = UsageNotificationEventDetector.events(
+            previous: [snapshot(remainingPercent: 20)],
+            current: [snapshot(remainingPercent: 0)],
+            usedThresholdPercent: 85
+        )
+        XCTAssertEqual(events, [
+            .quotaDepleted(providerId: "codex", providerName: "Codex", metricLabel: "5h")
+        ])
+    }
+
     private func snapshot(
         status: UsageStatus = .ok,
         remainingPercent: Double = 50,

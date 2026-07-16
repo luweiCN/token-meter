@@ -150,4 +150,26 @@ public struct ProviderUsageSnapshot: Codable, Equatable {
         self.groups = groups
         self.resetCredits = resetCredits
     }
+
+    /// 应用供应商别名（设置页的 displayName override）：换 displayName 的同时，
+    /// 把「与旧名同名的组」的 title 一起换——弹窗以 group.title == displayName
+    /// 判定主组（QuotaDisplayModel.isPrimary），两者不同步换主组就会丢。
+    public func renamed(to newName: String) -> ProviderUsageSnapshot {
+        guard !newName.isEmpty, newName != displayName else { return self }
+        let renamedGroups = groups.map { group in
+            group.title == displayName
+                ? UsageGroup(id: group.id, title: newName, subtitle: group.subtitle, items: group.items)
+                : group
+        }
+        return ProviderUsageSnapshot(
+            providerId: providerId,
+            displayName: newName,
+            status: status,
+            fetchedAt: fetchedAt,
+            summary: summary,
+            message: message,
+            groups: renamedGroups,
+            resetCredits: resetCredits
+        )
+    }
 }

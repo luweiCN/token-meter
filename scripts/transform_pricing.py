@@ -16,10 +16,12 @@ import sys
 # （cloudflare/、fireworks_ai/ 等）归一后保持原样，不会冒充官方价。
 M = 1_000_000
 
-# 必须与 Swift 的 ModelNameNormalizer.providerPrefixes 逐项对齐，顺序也一样
-# （顺序决定每轮剥掉的是哪个前缀）。两边是各自独立的实现，没有共享真相源，
-# 只改一边就会静默漂移。test_transform_pricing.py 会从 Swift 源码里把这个列表
-# 抠出来对账。
+# 定价键侧专用白名单。用量侧（Swift ModelNameNormalizer）已改为通用规则
+# ——任意 `provider/` 前缀一律剥掉取最后一段（用户裁定）；这里不能跟：
+# 白名单外的第三方托管键（cloudflare/、fireworks_ai/ 等）保留原样带斜杠，
+# 用量侧永远不产带斜杠的键，于是那些价永远匹配不上，不会冒充官方价。
+# 约束变成单向的子集关系：本表每个前缀剥出的键，必须与 Swift 通用规则的
+# 结果一致（test_transform_pricing.py 对账）。
 PROVIDER_PREFIXES = (
     "vertex_ai/", "bedrock/", "anthropic/", "openai/", "openai-codex/", "zai/",
     "deepseek/", "gemini/",

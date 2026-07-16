@@ -56,6 +56,26 @@ describe('useAutoRefresh', () => {
     act(() => { resolveIt(); });
   });
 
+  it('coalesces refreshes requested during flight into one trailing run', async () => {
+    let resolveIt: () => void = () => {};
+    const refresh = vi.fn(() => new Promise<void>(r => { resolveIt = r; }));
+    const { result } = renderHook(() => useAutoRefresh(refresh, { intervalMs: 60_000 }));
+    expect(refresh).toHaveBeenCalledTimes(1);          // 挂载那次，慢查询在途
+
+    // 在途期间连发三次事件驱动的刷新（dashboard:invalidate 连发的写照）：不并发……
+    act(() => { result.current(); result.current(); result.current(); });
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    // ……但也不能丢：完成后合并补跑【一】次，否则 agent 状态要等 60s 轮询才显示。
+    const resolveFirst = resolveIt;
+    await act(async () => { resolveFirst(); await Promise.resolve(); });
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    // 尾随只补一次，不自激振荡。
+    await act(async () => { resolveIt(); await Promise.resolve(); });
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
   it('stops the timer on unmount', () => {
     const refresh = vi.fn().mockResolvedValue(undefined);
     const { unmount } = renderHook(() => useAutoRefresh(refresh, { intervalMs: 1_000 }));

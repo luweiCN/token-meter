@@ -180,6 +180,48 @@ final class RollupBuilderTests: XCTestCase {
                        "总会话数必须从 session_rollup 取")
     }
 
+    func testDailyActiveSessionsFoldsSubSessionsIntoRootKey() throws {
+        let database = try makeDatabase()
+        // 子会话(id=2) root_session_key 指向主会话 s1：两个 session_id 折进同一主会话键。
+        try database.execute(
+            """
+            INSERT INTO agent_sessions(id, source_kind, source_session_key, scan_root_id, project_id, provider_id, source_revision, root_session_key)
+            VALUES (2, 'claude_jsonl', 's2', 1, 1, 'claude-code', 'r', 's1')
+            """
+        )
+        try insertEvent(database, seq: 1, iso: "2026-07-08T05:00:00Z", model: "m", input: 10, cost: 100)
+        try database.execute(
+            """
+            INSERT INTO usage_events(session_id, source_file_id, event_seq, observed_epoch_ms, model_canonical,
+                                     tokens_input, cost_usd_micros, cost_source, source_offset)
+            VALUES (2, 1, 2, ?, 'm', 5, 50, 'computed', 2)
+            """,
+            [.int(Int64(ISO8601DateFormatter().date(from: "2026-07-08T06:00:00Z")!.timeIntervalSince1970 * 1000))]
+        )
+
+        try RollupBuilder(database: database).rebuildAll()
+
+        let rows = try database.query(
+            "SELECT usage_date, provider_id, root_session_key, sessions_count FROM daily_active_sessions"
+        )
+        XCTAssertEqual(rows.count, 1, "主会话与其子会话必须折成一行")
+        XCTAssertEqual(rows[0].string("root_session_key"), "claude_jsonl:s1")
+        XCTAssertEqual(rows[0].int("sessions_count"), 2, "名下原始会话数含子会话（heatmap 求和口径）")
+        XCTAssertEqual(rows[0].string("usage_date"), "2026-07-08", "东八区本地日期")
+    }
+
+    func testDailyActiveSessionsSplitsAcrossDaysAndProviders() throws {
+        let database = try makeDatabase()
+        // 同一主会话跨两天 → 两行（distinct 会话数不可跨天求和正是这张表存在的原因）。
+        try insertEvent(database, seq: 1, iso: "2026-07-07T05:00:00Z", model: "m", input: 10, cost: 100)
+        try insertEvent(database, seq: 2, iso: "2026-07-08T05:00:00Z", model: "m", input: 20, cost: 200)
+
+        try RollupBuilder(database: database).rebuildAll()
+
+        let rows = try database.query("SELECT usage_date FROM daily_active_sessions ORDER BY usage_date")
+        XCTAssertEqual(rows.compactMap { $0.string("usage_date") }, ["2026-07-07", "2026-07-08"])
+    }
+
     func testPrimaryModelBreaksTiesByNameForDeterminism() throws {
         let database = try makeDatabase()
         // 两个模型 token 完全相同。没有名字决胜，胜者取决于 SQLite 的行序，

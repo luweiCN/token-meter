@@ -93,6 +93,13 @@ function createIndexStatusDb() {
        'failed', 'database operation failed', '2026-07-03T11:00:09Z'),
       (101, 1, 'ok/session.jsonl', '/Users/test/.codex/sessions/ok/session.jsonl', 'jsonl_session', 1024, 124,
        'ok-fingerprint', '{"offset":100}', 10, 10, 'ok', NULL, '2026-07-03T10:00:04Z');
+
+    -- 事件数聚合用（每根目录 eventsCount 经 source_files 归属）。
+    CREATE TABLE usage_events (
+      id INTEGER PRIMARY KEY,
+      source_file_id INTEGER NOT NULL
+    );
+    INSERT INTO usage_events(id, source_file_id) VALUES (1, 101), (2, 101), (3, 100);
   `);
   return db;
 }
@@ -126,7 +133,10 @@ describe('IndexStatusRepository', () => {
         lastScanStartedAt: '2026-07-03T10:00:00Z',
         lastScanFinishedAt: '2026-07-03T10:00:05Z',
         lastSuccessfulCursor: 'cursor-123',
-        lastError: null
+        lastError: null,
+        fileCount: 1,
+        totalSizeBytes: 1024,
+        eventsCount: 2
       },
       {
         id: 2,
@@ -138,7 +148,10 @@ describe('IndexStatusRepository', () => {
         lastScanStartedAt: '2026-07-03T09:00:00Z',
         lastScanFinishedAt: '2026-07-03T09:00:01Z',
         lastSuccessfulCursor: null,
-        lastError: 'database operation failed'
+        lastError: 'database operation failed',
+        fileCount: 1,
+        totalSizeBytes: 512,
+        eventsCount: 1
       }
     ]);
     for (const root of status.roots) {
@@ -169,6 +182,20 @@ describe('IndexStatusRepository', () => {
         errorSummary: null
       })
     ]);
+  });
+
+  it('setRootEnabled flips the flag, revives seed-disabled scan modes, and rejects unknown ids', () => {
+    const repo = openRepo();
+
+    repo.setRootEnabled(1, false);
+    expect(repo.status().roots.find((r) => r.id === 1)).toMatchObject({ enabled: false });
+
+    // 种子期禁用的根（enabled=0 且 scan_mode='disabled'）：开启时两者一起恢复，
+    // 否则扫描查询的 enabled=1 AND scan_mode != 'disabled' 联合过滤仍会跳过它。
+    repo.setRootEnabled(2, true);
+    expect(repo.status().roots.find((r) => r.id === 2)).toMatchObject({ enabled: true, scanMode: 'incremental' });
+
+    expect(() => repo.setRootEnabled(999, true)).toThrow(/not found/i);
   });
 
   it('status includes failed file summaries without exposing source content or parser state', () => {

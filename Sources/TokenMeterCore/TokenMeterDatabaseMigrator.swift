@@ -20,9 +20,13 @@ public enum TokenMeterDatabaseMigrator {
         try database.execute(TokenMeterDatabaseSchema.configTables)
 
         let currentVersion = try database.query("PRAGMA user_version")[0].int("user_version") ?? 0
-        guard currentVersion != TokenMeterDatabaseSchema.derivedVersion else { return }
+        if currentVersion != TokenMeterDatabaseSchema.derivedVersion {
+            try rebuildDerivedTables(database)
+        }
 
-        try rebuildDerivedTables(database)
+        // 运行时表必须在派生表重建之后建：rebuildDerivedTables 的「非配置表全删」
+        // 网兜会把它一并 DROP，先建后删就丢表了。
+        try database.execute(TokenMeterDatabaseSchema.runtimeTables)
     }
 
     private static func rebuildDerivedTables(_ database: SQLiteDatabase) throws {

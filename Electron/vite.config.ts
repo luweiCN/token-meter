@@ -1,3 +1,4 @@
+import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,8 +26,12 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: './',
-    plugins: [react()],
+    plugins: [react(), tailwindcss()],
     root: '.',
+    resolve: {
+      // shadcn/ui 惯例别名:组件源码里的 `@/lib/utils`、`@/components/ui/*`。
+      alias: { '@': path.resolve(__dirname, 'src/renderer') }
+    },
     build: {
       outDir: 'dist-renderer'
     }

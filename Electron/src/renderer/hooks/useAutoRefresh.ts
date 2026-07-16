@@ -11,24 +11,36 @@ export interface AutoRefreshOptions {
 /// - 窗口隐藏时【停掉计时器】（`document.visibilityState === 'hidden'` 一处守卫）：
 ///   这是常驻应用在被忽略时不再花任何代价的最直接一招。再次可见时立即补取一次——
 ///   只补一次，不是把隐藏期间跳过的每个 tick 都补回来。
-/// - 单飞（in-flight 去重）：一次刷新在途时不起第二次。定时轮询与 `scan.finished`
-///   事件会撞在一起，一次慢查询期间不去重就能堆出五个并发查询。返回的 `refreshNow`
-///   与轮询共用这道守卫，事件触发的刷新也不会绕过它。
+/// - 单飞 + 尾随合并：一次刷新在途时不起第二次（定时轮询与事件会撞在一起，一次慢查询
+///   期间不去重就能堆出五个并发查询），但在途期间到达的请求【不能丢】——hooks 事件驱动的
+///   dashboard:invalidate 若恰好撞上慢查询被丢弃，新状态要等下一个 60s 轮询才显示
+///   （用户实测「agent 状态变化滞后」的根因之一）。合并成一个尾随标记：当前完成后立即补跑一次。
 /// - 卸载时清理计时器：不清理的 interval 会在热重载里叠加，页面看着正常，CPU 却在空转。
 export function useAutoRefresh(
   refresh: () => Promise<void>,
   { intervalMs }: AutoRefreshOptions
-): () => void {
+): () => Promise<void> {
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
-  const inFlightRef = useRef(false);
+  const inFlightRef = useRef<Promise<void> | null>(null);
+  const trailingRef = useRef(false);
 
-  const refreshNow = useCallback(() => {
-    if (inFlightRef.current) return;                 // 单飞：在途则跳过（轮询/可见/事件共用）
-    inFlightRef.current = true;
-    void Promise.resolve(refreshRef.current()).finally(() => {
-      inFlightRef.current = false;
+  // 返回本次刷新落定的 promise：手动刷新按钮据此显示 loading。在途时合并进
+  // 尾随补跑并返回在途的 promise（按钮等到的是「最近一次数据落地」，足够）。
+  const refreshNow = useCallback((): Promise<void> => {
+    if (inFlightRef.current) {
+      trailingRef.current = true;                    // 在途：合并成一次尾随补跑，不丢更新
+      return inFlightRef.current;
+    }
+    const flight = Promise.resolve(refreshRef.current()).finally(() => {
+      inFlightRef.current = null;
+      if (trailingRef.current) {
+        trailingRef.current = false;
+        void refreshNow();
+      }
     });
+    inFlightRef.current = flight;
+    return flight;
   }, []);
 
   useEffect(() => {
@@ -49,12 +61,12 @@ export function useAutoRefresh(
       if (document.visibilityState === 'hidden') {
         stopTimer();                                 // 隐藏即暂停轮询
       } else {
-        refreshNow();                                // 再次可见立即补取一次
+        void refreshNow();                           // 再次可见立即补取一次
         startTimer();
       }
     };
 
-    refreshNow();                                    // 挂载先取一次
+    void refreshNow();                               // 挂载先取一次
     startTimer();
     document.addEventListener('visibilitychange', onVisibility);
 

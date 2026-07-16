@@ -1,4 +1,4 @@
-import type { BrowserWindowConstructorOptions, IpcMain } from 'electron';
+import { BrowserWindow, type BrowserWindowConstructorOptions, type IpcMain } from 'electron';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,9 @@ interface ExposedApi {
 const mockElectron = vi.hoisted(() => ({
   exposedApis: [] as ExposedApi[],
   ipcHandlers: [] as RegisteredIpcHandler[],
-  windowOptions: [] as BrowserWindowConstructorOptions[]
+  windowOptions: [] as BrowserWindowConstructorOptions[],
+  senderWindow: null as { setWindowButtonVisibility: (visible: boolean) => void } | null,
+  windowButtonVisibility: [] as boolean[]
 }));
 
 const mockDatabase = vi.hoisted(() => ({
@@ -52,9 +54,17 @@ const mockIndexStatusRepository = vi.hoisted(() => ({
   status: vi.fn()
 }));
 
+const mockModelsRepository = vi.hoisted(() => ({
+  constructor: vi.fn(),
+  query: vi.fn()
+}));
+
 const mockSwiftClient = vi.hoisted(() => ({
   notifySwift: vi.fn(),
-  requestFullRescan: vi.fn()
+  requestFullRescan: vi.fn(),
+  subscribeEvents: vi.fn(
+    (_onEvent: (event: { kind: string; [key: string]: string }) => void) => () => {}
+  )
 }));
 
 vi.mock('./database.js', () => ({
@@ -107,9 +117,19 @@ vi.mock('./indexStatusRepository.js', () => ({
   })
 }));
 
+vi.mock('./modelsRepository.js', () => ({
+  ModelsRepository: vi.fn(function ModelsRepositoryMock(database: unknown) {
+    mockModelsRepository.constructor(database);
+    return {
+      query: mockModelsRepository.query
+    };
+  })
+}));
+
 vi.mock('./tokenMeterSocketClient.js', () => ({
   notifySwift: mockSwiftClient.notifySwift,
-  requestFullRescan: mockSwiftClient.requestFullRescan
+  requestFullRescan: mockSwiftClient.requestFullRescan,
+  subscribeEvents: mockSwiftClient.subscribeEvents
 }));
 
 vi.mock('electron', () => ({
@@ -133,7 +153,8 @@ vi.mock('electron', () => ({
       show: vi.fn()
     };
   }), {
-    getAllWindows: vi.fn(() => [])
+    getAllWindows: vi.fn(() => []),
+    fromWebContents: vi.fn(() => mockElectron.senderWindow)
   }),
   contextBridge: {
     exposeInMainWorld: vi.fn((key: string, api: Record<string, unknown>) => {
@@ -155,23 +176,41 @@ import { createWindow } from './main.js';
 import '../preload.js';
 
 const allowedIpcChannels: Record<string, true> = {
+  'agents:detect': true,
+  'credentials:set': true,
+  'credentials:state': true,
   'dashboard:overview': true,
   'overview:query': true,
   'overview:subagentBreakdown': true,
   'overview:dayModelBreakdown': true,
+  'overview:dayProjectBreakdown': true,
   'index:fullReindex': true,
+  'index:setRootEnabled': true,
   'index:status': true,
+  'models:query': true,
+  'notifications:state': true,
+  'notifications:requestAuthorization': true,
+  'projects:list': true,
+  'projects:detail': true,
+  'sessions:projects': true,
   'sessions:query': true,
   'settings:get': true,
-  'settings:update': true
+  'settings:update': true,
+  'window:setButtonsVisible': true
 };
 
 const allowedPreloadApiShape: Record<string, string[]> = {
+  agents: ['detect'],
+  credentials: ['set', 'state'],
   dashboard: ['queryOverview'],
-  overview: ['dayModelBreakdown', 'onInvalidate', 'query', 'subagentBreakdown'],
-  index: ['onScanProgress', 'startFullReindex', 'status'],
-  sessions: ['query'],
-  settings: ['get', 'update']
+  overview: ['dayModelBreakdown', 'dayProjectBreakdown', 'onInvalidate', 'onSessionEvent', 'query', 'subagentBreakdown'],
+  index: ['onScanProgress', 'setRootEnabled', 'startFullReindex', 'status'],
+  models: ['query'],
+  notifications: ['requestAuthorization', 'state'],
+  projects: ['detail', 'list'],
+  sessions: ['projects', 'query'],
+  settings: ['get', 'update'],
+  windowControls: ['setButtonsVisible']
 };
 
 function registerAndFindHandler(channel: string) {
@@ -186,6 +225,12 @@ describe('Electron secure scaffold', () => {
     vi.clearAllMocks();
     mockElectron.ipcHandlers.length = 0;
     mockElectron.windowOptions.length = 0;
+    mockElectron.windowButtonVisibility.length = 0;
+    mockElectron.senderWindow = {
+      setWindowButtonVisibility: (visible: boolean) => {
+        mockElectron.windowButtonVisibility.push(visible);
+      }
+    };
     mockSettingsRepository.get.mockReturnValue({
       version: 3,
       menuBarPrimaryProviderId: 'codex',
@@ -207,6 +252,25 @@ describe('Electron secure scaffold', () => {
     for (const channel of registeredChannels) {
       expect(allowedIpcChannels[channel]).toBe(true);
     }
+  });
+
+  it('window:setButtonsVisible toggles the sender window buttons and coerces non-boolean payloads to false', async () => {
+    const handler = registerAndFindHandler('window:setButtonsVisible');
+    const event = { sender: { id: 1 } };
+
+    await handler(event as never, true);
+    await handler(event as never, false);
+    await handler(event as never, 'yes');
+
+    expect(mockElectron.windowButtonVisibility).toEqual([true, false, false]);
+  });
+
+  it('window:setButtonsVisible is a no-op when the sender window is already gone', async () => {
+    const handler = registerAndFindHandler('window:setButtonsVisible');
+    mockElectron.senderWindow = null;
+
+    await expect(handler({ sender: {} } as never, true)).resolves.toBeUndefined();
+    expect(mockElectron.windowButtonVisibility).toEqual([]);
   });
 
   it('creates the main BrowserWindow with Node disabled, isolated sandbox, and preload bundle path', () => {
@@ -357,6 +421,17 @@ describe('Electron secure scaffold', () => {
     expect(mockSessionsRepository.query).toHaveBeenCalledWith(filter);
   });
 
+  it('models:query reads through ModelsRepository with renderer filter args', async () => {
+    mockModelsRepository.query.mockReturnValue({ items: [{ model: 'gpt-5.6-sol' }] });
+    const filter = { fromEpochMs: 1_000, toEpochMs: 2_000, sortBy: 'tokens' };
+    const modelsHandler = registerAndFindHandler('models:query');
+
+    await expect(modelsHandler({} as never, filter)).resolves.toEqual({ items: [{ model: 'gpt-5.6-sol' }] });
+
+    expect(mockModelsRepository.constructor).toHaveBeenCalledWith(mockDatabase.instance);
+    expect(mockModelsRepository.query).toHaveBeenCalledWith(filter);
+  });
+
   it('index:status reads through IndexStatusRepository without renderer-supplied arguments', async () => {
     const indexStatusHandler = registerAndFindHandler('index:status');
 
@@ -390,5 +465,64 @@ describe('Electron secure scaffold', () => {
     expect(mockSwiftClient.notifySwift).not.toHaveBeenCalled();
     expect(send).toHaveBeenNthCalledWith(1, 'index:scanProgress', progress);
     expect(send).toHaveBeenNthCalledWith(2, 'dashboard:invalidate');
+  });
+
+  /// 捕获 subscribeEvents 的回调，供测试手动注入 Swift 事件行。
+  function captureSwiftEventCallback() {
+    let onEvent: ((event: { kind: string; [key: string]: string }) => void) | undefined;
+    mockSwiftClient.subscribeEvents.mockImplementation(
+      (callback: (event: { kind: string; [key: string]: string }) => void) => {
+        onEvent = callback;
+        return () => {};
+      }
+    );
+    const send = vi.fn();
+    vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([{ webContents: { send } } as never]);
+    registerIpcHandlers();
+    expect(onEvent).toBeDefined();
+    return { emit: (event: Record<string, string>) => onEvent?.(event as never), send };
+  }
+
+  it('heartbeat/blocked session events flip card state only, without a full dashboard refetch', () => {
+    // 心跳来自 PostToolUse，活跃对话约 2 秒一发；若每发都 invalidate，
+    // renderer 会每 2 秒整页重取（用户实测：页面持续刷新 + CPU 高）。
+    const { emit, send } = captureSwiftEventCallback();
+
+    emit({ kind: 'agent.sessionEvent', agent: 'claudeCode', event: 'heartbeat', sessionId: 's-1' });
+    emit({ kind: 'agent.sessionEvent', agent: 'codex', event: 'blocked', sessionId: 's-2' });
+
+    expect(send).toHaveBeenCalledWith('session:stateChanged', {
+      sourceKind: 'claude_jsonl',
+      sessionKey: 's-1',
+      event: 'heartbeat'
+    });
+    expect(send).toHaveBeenCalledWith('session:stateChanged', {
+      sourceKind: 'codex_jsonl',
+      sessionKey: 's-2',
+      event: 'blocked'
+    });
+    expect(send).not.toHaveBeenCalledWith('dashboard:invalidate');
+  });
+
+  it('start/stop session events and data.changed still trigger the dashboard refetch', () => {
+    // start 必须整页重取：新会话尚无索引行，占位卡要靠重新查询 sessionRail 才出现。
+    const { emit, send } = captureSwiftEventCallback();
+
+    emit({ kind: 'agent.sessionEvent', agent: 'claudeCode', event: 'start', sessionId: 's-1' });
+    expect(send).toHaveBeenCalledWith('session:stateChanged', {
+      sourceKind: 'claude_jsonl',
+      sessionKey: 's-1',
+      event: 'start'
+    });
+    expect(send).toHaveBeenCalledWith('dashboard:invalidate');
+
+    send.mockClear();
+    emit({ kind: 'agent.sessionEvent', agent: 'claudeCode', event: 'stop', sessionId: 's-1' });
+    expect(send).toHaveBeenCalledWith('dashboard:invalidate');
+
+    send.mockClear();
+    emit({ kind: 'data.changed' });
+    expect(send).toHaveBeenCalledWith('dashboard:invalidate');
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });

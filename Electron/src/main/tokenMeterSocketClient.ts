@@ -69,6 +69,80 @@ export function notifySwift(
   });
 }
 
+export interface SwiftEventLine {
+  kind: string;
+  [key: string]: string;
+}
+
+/**
+ * 订阅 Swift 端的事件推送（agent.sessionEvent / data.changed）：长连接收行，
+ * 断线按 2s→30s 指数退避重连。返回停止函数。订阅确认 ack（IPCResponse 形状，
+ * 无 kind 字段）与坏行都静默跳过。
+ */
+export function subscribeEvents(
+  onEvent: (event: SwiftEventLine) => void,
+  options: TokenMeterSocketOptions = {}
+): () => void {
+  const port = options.port ?? 47731;
+  let stopped = false;
+  let socket: net.Socket | null = null;
+  let retryDelayMs = 2_000;
+  let retryTimer: NodeJS.Timeout | null = null;
+
+  const scheduleReconnect = () => {
+    if (stopped || retryTimer) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      retryDelayMs = Math.min(retryDelayMs * 2, 30_000);
+      connect();
+    }, retryDelayMs);
+  };
+
+  const connect = () => {
+    if (stopped) return;
+    let buffer = '';
+    socket = net.createConnection({ host: '127.0.0.1', port });
+    socket.on('connect', () => {
+      retryDelayMs = 2_000;
+      socket?.write(`${JSON.stringify({ id: randomUUID(), method: 'events.subscribe' })}\n`);
+    });
+    socket.on('data', (data) => {
+      buffer += data.toString('utf8');
+      if (buffer.length > MAX_STREAM_BUFFER_BYTES) {
+        socket?.destroy();
+        return;
+      }
+      let newlineIndex = buffer.indexOf('\n');
+      while (newlineIndex >= 0) {
+        const line = buffer.slice(0, newlineIndex).trim();
+        buffer = buffer.slice(newlineIndex + 1);
+        if (line) {
+          try {
+            const parsed = JSON.parse(line) as SwiftEventLine;
+            if (parsed.kind) onEvent(parsed);
+          } catch {
+            // 坏行静默跳过——推送流的健壮性优先于告警。
+          }
+        }
+        newlineIndex = buffer.indexOf('\n');
+      }
+    });
+    socket.on('error', () => {});
+    socket.on('close', () => {
+      socket = null;
+      scheduleReconnect();
+    });
+  };
+
+  connect();
+
+  return () => {
+    stopped = true;
+    if (retryTimer) clearTimeout(retryTimer);
+    socket?.destroy();
+  };
+}
+
 export interface ScanProgressEvent {
   kind: 'scan.progress';
   filesTotal: number;

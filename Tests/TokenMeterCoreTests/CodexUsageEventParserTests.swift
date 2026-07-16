@@ -138,9 +138,9 @@ final class CodexUsageEventParserTests: XCTestCase {
         XCTAssertTrue(session.events.isEmpty, "纯状态汇报事件必须跳过，不得凭空造出 24505 个 token")
     }
 
-    func testCodexEventsCarrySyntheticDedupeKey() throws {
-        // Codex 的 token_count 无 message/request id，改用 timestamp + 原始四元组
-        // （input/cached/output/reasoning，减法之前的日志原值）合成去重指纹。
+    func testDedupeKeyFallsBackToTimestampWhenTotalsMissing() throws {
+        // 没有 total_token_usage 的事件退回旧指纹：timestamp + 原始四元组。
+        // （真实数据里 token_count 都带 total；这是防御性回退。）
         let lines = [
             line(meta, offset: 0),
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"output_tokens":1}}}}"#, offset: 1)
@@ -154,9 +154,53 @@ final class CodexUsageEventParserTests: XCTestCase {
         XCTAssertEqual(
             event.dedupeKey,
             "\(event.observedEpochMilliseconds)\u{1F}10\u{1F}0\u{1F}1\u{1F}0",
-            "指纹 = 毫秒时间戳 + 原始 input/cached/output/reasoning"
+            "回退指纹 = 毫秒时间戳 + 原始 input/cached/output/reasoning"
         )
         XCTAssertEqual(event.sourceOffset, 1)
+    }
+
+    func testReplayedRowsWithRewrittenTimestampShareTheDedupeKey() throws {
+        // Codex resume/fork 会把整段历史重放进新 rollout 文件：payload（含
+        // total_token_usage）逐字节相同，但外层 timestamp 会被刷成 resume 那一刻。
+        // 实测 2026-07-13：一个会话被 resume 6 次 → 历史被计 7 遍、虚增 18 亿 token。
+        // 指纹必须锚在 total 四元组上（重放不变量），不能锚在 timestamp 上。
+        let original = #"{"type":"event_msg","timestamp":"2026-07-13T10:06:20.704Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":20065,"cached_input_tokens":9984,"output_tokens":334,"reasoning_output_tokens":181,"total_tokens":20399},"last_token_usage":{"input_tokens":20065,"cached_input_tokens":9984,"output_tokens":334,"reasoning_output_tokens":181,"total_tokens":20399}}}}"#
+        let replayed = original.replacingOccurrences(of: "2026-07-13T10:06:20.704Z", with: "2026-07-13T10:08:00.899Z")
+
+        let (sessionA, _) = try CodexUsageEventParser.parse(
+            lines: [line(meta, offset: 0), line(original, offset: 1)],
+            sourceURL: URL(fileURLWithPath: "/tmp/a.jsonl"), resuming: nil
+        )
+        let (sessionB, _) = try CodexUsageEventParser.parse(
+            lines: [line(meta, offset: 0), line(replayed, offset: 1)],
+            sourceURL: URL(fileURLWithPath: "/tmp/b.jsonl"), resuming: nil
+        )
+
+        XCTAssertNotNil(sessionA.events[0].dedupeKey)
+        XCTAssertEqual(
+            sessionA.events[0].dedupeKey, sessionB.events[0].dedupeKey,
+            "重放行（payload 相同、timestamp 被改写）必须撞上同一指纹，否则每 resume 一次历史就被重计一遍"
+        )
+    }
+
+    func testDistinctRealEventsInOneSessionGetDistinctDedupeKeys() throws {
+        // 同一会话里两个真实事件：累计 total 严格递增（入库前提是 Δinput>0 或
+        // Δoutput>0），所以 total 四元组必不同——真实用量不会被误去重。
+        let lines = [
+            line(meta, offset: 0),
+            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":20},"last_token_usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":20}}}}"#, offset: 1),
+            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":150,"cached_input_tokens":60,"output_tokens":30},"last_token_usage":{"input_tokens":50,"cached_input_tokens":20,"output_tokens":10}}}}"#, offset: 2)
+        ]
+
+        let (session, _) = try CodexUsageEventParser.parse(
+            lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
+        )
+
+        XCTAssertEqual(session.events.count, 2)
+        XCTAssertNotEqual(
+            session.events[0].dedupeKey, session.events[1].dedupeKey,
+            "同一时间戳下的两个真实事件也必须有不同指纹（total 递增保证）"
+        )
     }
 
     func testFlagsSubagentSessionFromParentThreadId() throws {

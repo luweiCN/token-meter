@@ -75,7 +75,8 @@ public final class SettingsStore {
             menuBarPrimaryProviderId: primaryProviderId?.isEmpty == true ? nil : primaryProviderId,
             autoRefreshSeconds: autoRefreshSeconds,
             enabledAgentKinds: enabledAgentKinds,
-            providerOverrides: providerOverrides
+            providerOverrides: providerOverrides,
+            quotaUsedThresholdPercent: Int(try settingInt("notifications.quotaUsedThresholdPercent") ?? 0)
         )
     }
 

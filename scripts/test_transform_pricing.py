@@ -11,6 +11,7 @@ import re
 import unittest
 
 from transform_pricing import (
+    EFFORT_SUFFIXES,
     PROVIDER_PREFIXES,
     apply_overrides,
     canonical,
@@ -24,27 +25,47 @@ from transform_pricing import (
 class CrossLanguageContractTests(unittest.TestCase):
     """Python 的 canonical 与 Swift 的 ModelNameNormalizer 是两份独立实现。
 
-    没有共享真相源：给 Swift 加一个前缀而忘了 Python，撞名检测会静默漏报，
-    而运行时的计价以 Swift 为准。这个测试直接从 Swift 源码里把列表抠出来对账。
+    职责已分化（用户裁定）：Swift 用量侧对任意 `provider/` 前缀一律取最后一段；
+    Python 定价键侧保留白名单，防第三方托管价冒充官方价。跨语言约束因此是
+    单向子集：白名单内每个前缀剥出的定价键，必须与 Swift 通用规则对同样输入
+    的结果一致，否则用量键查不到官方价。档位后缀两边仍是同一张表，继续对账。
     """
 
-    def test_provider_prefixes_match_swift(self):
-        swift_file = (
-            pathlib.Path(__file__).resolve().parent.parent
-            / "Sources" / "TokenMeterCore" / "ModelNameNormalizer.swift"
+    SWIFT_FILE = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "Sources" / "TokenMeterCore" / "ModelNameNormalizer.swift"
+    )
+
+    def test_swift_uses_generic_last_segment_rule(self):
+        # 白名单前缀表已从 Swift 删除；若有人加回去（重回双表对齐时代），
+        # 这里要求恢复原先的逐项对账。
+        source = self.SWIFT_FILE.read_text(encoding="utf-8")
+        self.assertNotIn(
+            "providerPrefixes",
+            source,
+            "Swift 出现了前缀白名单：请恢复 Python/Swift 前缀表的逐项对账",
         )
-        source = swift_file.read_text(encoding="utf-8")
+        self.assertIn("lastIndex(of: \"/\")", source, "在 Swift 源码里找不到取最后一段的通用剥离")
 
-        block = re.search(r"providerPrefixes\s*=\s*\[(.*?)\]", source, re.S)
-        self.assertIsNotNone(block, "在 Swift 源码里找不到 providerPrefixes")
+    def test_whitelisted_prefixes_are_subset_of_swift_general_rule(self):
+        # Swift 通用规则对 prefix/model 恒取最后一段；Python 白名单剥出的键
+        # 必须与之一致（即剥干净、不残留斜杠），官方价才能被用量键命中。
+        for prefix in PROVIDER_PREFIXES:
+            self.assertEqual(
+                canonical(prefix + "claude-x"),
+                "claude-x",
+                f"前缀 {prefix} 剥离后与 Swift 通用规则不一致",
+            )
 
-        # 只取每行开头的字符串字面量，避开行尾注释里可能出现的引号
-        swift_prefixes = tuple(re.findall(r'^\s*"([^"]+)"', block.group(1), re.M))
-
+    def test_effort_suffixes_match_swift(self):
+        source = self.SWIFT_FILE.read_text(encoding="utf-8")
+        block = re.search(r"effortSuffixes\s*=\s*\[(.*?)\]", source, re.S)
+        self.assertIsNotNone(block, "在 Swift 源码里找不到 effortSuffixes")
+        swift_suffixes = tuple(re.findall(r'"([^"]+)"', block.group(1)))
         self.assertEqual(
-            swift_prefixes,
-            PROVIDER_PREFIXES,
-            "Swift 与 Python 的 provider 前缀表已经漂移",
+            swift_suffixes,
+            EFFORT_SUFFIXES,
+            "Swift 与 Python 的档位后缀表已经漂移",
         )
 
 

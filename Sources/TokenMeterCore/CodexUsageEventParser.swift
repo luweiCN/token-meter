@@ -63,15 +63,21 @@ public final class CodexUsageEventParser: UsageEventParser {
             }
 
             let delta: RawTokenTotals
+            let totals: RawTokenTotals?
             if let last = JSONDictionary.dictionary(info, "last_token_usage") {
                 delta = RawTokenTotals(last)
                 if let total = JSONDictionary.dictionary(info, "total_token_usage") {
-                    cumulative = RawTokenTotals(total).asCumulative
+                    let current = RawTokenTotals(total)
+                    cumulative = current.asCumulative
+                    totals = current
+                } else {
+                    totals = nil
                 }
             } else if let total = JSONDictionary.dictionary(info, "total_token_usage") {
                 let current = RawTokenTotals(total)
                 delta = current.subtracting(cumulative)
                 cumulative = current.asCumulative
+                totals = current
             } else {
                 return
             }
@@ -81,14 +87,25 @@ public final class CodexUsageEventParser: UsageEventParser {
             // 在这些事件上也一动没动。把 total_tokens 当成 output 会凭空造 token。
             guard delta.inputTokens > 0 || delta.outputTokens > 0 else { return }
 
-            // Codex 的 token_count 没有 message/request id，用 timestamp + 原始四元组
-            // （input/cached/output/reasoning，取减法之前的日志原值）合成去重指纹：
-            // 它标识的是"哪一行日志"，而非归一化后的数字。
-            //   - 同一 session 跨两个 scan root（归档是移动、非复制的镜像）→ 同 session_id 同 key，
-            //     由 UNIQUE(session_id, dedupe_key) + writer 的 query-then-compare 挡住重复计数。
+            // Codex 的 token_count 没有 message/request id，去重指纹锚在
+            // total_token_usage 的原始四元组（input/cached/output/reasoning）上：
+            //   - resume/fork 会把整段历史重放进新 rollout 文件，payload 逐字节相同、
+            //     但外层 timestamp 被刷成 resume 那一刻（实测 2026-07-13：一个会话被
+            //     resume 6 次 → 历史重计 7 遍、单日虚增 18 亿 token）。timestamp 在
+            //     重放下不是不变量，total 四元组才是 → 同 session 的重放行同 key，
+            //     由 UNIQUE(session_id, dedupe_key) + writer 的 query-then-compare 挡住。
+            //   - 同一会话内的真实新事件：能入库就意味着 Δinput>0 或 Δoutput>0，
+            //     累计四元组严格递增，key 必不同——真实用量不会被误去重。
             //   - 同一文件内被写两遍的重复行 → 同 key，由 UsageEventDeduplicator 先合成一条。
+            // 没有 total 的事件（防御性回退，实测数据都带 total）退回旧指纹：
+            // timestamp + last 四元组。
             let observedMilliseconds = Int64((observedAt.timeIntervalSince1970 * 1000).rounded())
-            let dedupeKey = "\(observedMilliseconds)\u{1F}\(delta.inputTokens)\u{1F}\(delta.cachedInputTokens)\u{1F}\(delta.outputTokens)\u{1F}\(delta.reasoningTokens)"
+            let dedupeKey: String
+            if let totals {
+                dedupeKey = "\(totals.inputTokens)\u{1F}\(totals.cachedInputTokens)\u{1F}\(totals.outputTokens)\u{1F}\(totals.reasoningTokens)"
+            } else {
+                dedupeKey = "\(observedMilliseconds)\u{1F}\(delta.inputTokens)\u{1F}\(delta.cachedInputTokens)\u{1F}\(delta.outputTokens)\u{1F}\(delta.reasoningTokens)"
+            }
 
             eventSeq += 1
             events.append(

@@ -39,6 +39,7 @@ const codexSnapshot: SettingsSnapshot = {
   version: 7,
   menuBarPrimaryProviderId: 'codex',
   autoRefreshSeconds: 300,
+  quotaUsedThresholdPercent: 0,
   enabledAgentKinds: ['claudeCode', 'codex'],
   providerOverrides: [
     {

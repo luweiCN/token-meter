@@ -72,7 +72,8 @@ final class ZhipuUsageProviderTests: XCTestCase {
         let provider = ZhipuUsageProvider(
             config: config,
             urlSession: session,
-            environment: ["ZHIPU_API_KEY": "bad-key"]
+            environment: ["ZHIPU_API_KEY": "bad-key"],
+            keychainToken: { _ in nil }   // 隔离本机钥匙串里的真实 Key
         )
 
         let snapshot = await provider.fetchUsage()
@@ -120,12 +121,52 @@ final class ZhipuUsageProviderTests: XCTestCase {
         let provider = ZhipuUsageProvider(
             config: config,
             urlSession: session,
-            environment: ["ZHIPU_API_KEY": "  \"good-key\"  "]
+            environment: ["ZHIPU_API_KEY": "  \"good-key\"  "],
+            keychainToken: { _ in nil }
         )
 
         _ = await provider.fetchUsage()
 
         XCTAssertEqual(seenAuthorizationHeaders, ["good-key"])
+    }
+
+    func testKeychainTokenTakesPriorityOverEnvironment() async throws {
+        // 应用内填的 Key（钥匙串）是显式意图，必须压过环境变量。
+        let config = ProviderConfig(
+            id: "zhipu",
+            type: .zhipu,
+            displayName: "智谱",
+            enabled: true,
+            credential: CredentialConfig(environmentVariable: "ZHIPU_API_KEY"),
+            endpoint: "https://bigmodel.cn/api/monitor/usage/quota/limit",
+            manualUsage: nil
+        )
+
+        let sessionConfig = URLSessionConfiguration.ephemeral
+        sessionConfig.protocolClasses = [MockURLProtocol.self]
+        let session = URLSession(configuration: sessionConfig)
+
+        var seenAuthorizationHeaders: [String] = []
+        MockURLProtocol.handler = { request in
+            seenAuthorizationHeaders.append(request.value(forHTTPHeaderField: "Authorization") ?? "")
+            return HTTPResponse(
+                statusCode: 200,
+                body: """
+                { "code": 200, "msg": "操作成功", "data": { "limits": [ { "type": "TOKENS_LIMIT", "unit": 3, "percentage": 1 } ] }, "success": true }
+                """
+            )
+        }
+
+        let provider = ZhipuUsageProvider(
+            config: config,
+            urlSession: session,
+            environment: ["ZHIPU_API_KEY": "env-key"],
+            keychainToken: { providerId in providerId == "zhipu" ? "keychain-key" : nil }
+        )
+
+        _ = await provider.fetchUsage()
+
+        XCTAssertEqual(seenAuthorizationHeaders, ["keychain-key"])
     }
 }
 

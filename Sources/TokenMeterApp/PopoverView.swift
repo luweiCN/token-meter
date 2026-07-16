@@ -143,12 +143,9 @@ enum MenuBarProviderName {
 }
 
 enum MenuBarNumberFormat {
+    /// 与菜单栏标题共用同一实现（UsageFormatter.compactTokens），两处数字永远同格式。
     static func tokens(_ value: Int64) -> String {
-        let v = Double(value)
-        if v >= 1_000_000_000 { return String(format: "%.1fB", v / 1_000_000_000) }
-        if v >= 1_000_000 { return String(format: "%.1fM", v / 1_000_000) }
-        if v >= 1_000 { return String(format: "%.1fK", v / 1_000) }
-        return String(Int(v))
+        UsageFormatter.compactTokens(value)
     }
 
     static func usd(_ micros: Int64) -> String {
@@ -162,6 +159,9 @@ struct PopoverView: View {
     @ObservedObject var store: ProviderStore
     @State private var measuredContentHeight: CGFloat = 0
     @AppStorage("menubarTheme") private var themeName = "dark"
+    /// 手风琴展开态（用户裁定：默认第一家展开、任意时刻至多一家）。
+    /// nil = 未点过 → 展开第一家；空串 = 手动全收起。
+    @State private var expandedProviderId: String?
     let initialPanelHeight: CGFloat
     let maxPanelHeight: CGFloat
     let onPreferredHeightChange: (CGFloat) -> Void
@@ -170,6 +170,10 @@ struct PopoverView: View {
 
     private var theme: MBTheme { themeName == "light" ? .light : .dark }
 
+    private var resolvedExpandedProviderId: String? {
+        expandedProviderId ?? store.displayProviderSnapshots.first?.providerId
+    }
+
     /// 吸顶区与底栏的高度是【实测】的（readHeight），不是估计值——写死的估计值
     /// 偏小时，VStack 总高超出面板，底部按钮的 padding 会被整个裁掉且毫无征兆。
     @State private var headerHeight: CGFloat = 192
@@ -177,19 +181,14 @@ struct PopoverView: View {
 
     private var chromeMeasured: CGFloat { headerHeight + footHeight }
 
-    /// 弹窗打开期间面板高度【锁定】：首次内容测量到位后定格，之后展开/收起
-    /// 一律由滚动区内部消化——没有 resize 就没有任何可跳动的东西（原生菜单栏
-    /// 面板同款行为）。每次打开都重建视图，锁定值随之按当次内容重算。
-    @State private var lockedHeight: CGFloat?
-
+    /// 面板高度跟随内容（用户裁定，取代先前「打开期间锁定」）：默认内容完整
+    /// 展示、不出滚动条；展开手风琴/模型列表时面板继续长高，顶到
+    /// maxPanelHeight（屏幕可用高度）才交给滚动条消化。
     private var panelHeight: CGFloat {
-        if let lockedHeight { return lockedHeight }
         guard measuredContentHeight > 20 else {
             return min(maxPanelHeight, initialPanelHeight)
         }
-        // 自然高度再拔 10%（用户裁定）：全折叠的矮态不至于太局促；
-        // 展开态本就会被 maxPanelHeight 钳住，不受影响。
-        return min(maxPanelHeight, (chromeMeasured + measuredContentHeight) * 1.1)
+        return min(maxPanelHeight, chromeMeasured + measuredContentHeight)
     }
 
     var body: some View {
@@ -207,7 +206,10 @@ struct PopoverView: View {
                     theme.surface.opacity(0.72)
                 }
             )
-            .readHeight { headerHeight = $0 }
+            .readHeight { height in
+                headerHeight = height
+                onPreferredHeightChange(panelHeight)
+            }
             .shadow(color: .black.opacity(0.45), radius: 10, y: 4)
             .zIndex(1)
 
@@ -219,20 +221,35 @@ struct PopoverView: View {
                     Color.clear.frame(height: 6)
 
                     if !store.todaySummary.perProvider.isEmpty {
-                        VStack(spacing: 0) {
-                            ForEach(store.todaySummary.perProvider, id: \.providerId) { row in
-                                ProviderRow(row: row)
+                        SectionBlock(title: "Agent") {
+                            VStack(spacing: 0) {
+                                ForEach(store.todaySummary.perProvider, id: \.providerId) { row in
+                                    ProviderRow(row: row)
+                                }
                             }
                         }
-                        .padding(EdgeInsets(top: 6, leading: 16, bottom: 8, trailing: 16))
                         PanelDivider()
                     }
 
-                    if !store.providerSnapshots.isEmpty {
+                    if !store.todaySummary.perModel.isEmpty {
+                        SectionBlock(title: "模型") {
+                            ModelListBlock(models: store.todaySummary.perModel)
+                        }
+                        PanelDivider()
+                    }
+
+                    if !store.displayProviderSnapshots.isEmpty {
                         SectionBlock(title: "订阅额度") {
                             VStack(spacing: 8) {
-                                ForEach(store.providerSnapshots, id: \.providerId) { snapshot in
-                                    QuotaGroupView(snapshot: snapshot) {
+                                ForEach(store.displayProviderSnapshots, id: \.providerId) { snapshot in
+                                    QuotaGroupView(
+                                        snapshot: snapshot,
+                                        isExpanded: resolvedExpandedProviderId == snapshot.providerId,
+                                        onToggleExpanded: {
+                                            expandedProviderId = resolvedExpandedProviderId == snapshot.providerId
+                                                ? "" : snapshot.providerId
+                                        }
+                                    ) {
                                         Task { await store.refresh() }
                                     }
                                 }
@@ -244,7 +261,10 @@ struct PopoverView: View {
                         UnknownNote(count: store.todaySummary.unknownEvents)
                     }
 
-                    Color.clear.frame(height: 12)
+                    // 尾部不再垫高（用户裁定：面板要比精确贴合再紧一点）。
+                    // 底部留白由末区块自带的 12 底边距提供。今日模型行数变化会让
+                    // 面板高度自然波动（精确贴合内容），别用垫条去补内容行数的增减。
+                    Color.clear.frame(height: 0)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(theme.bg)
@@ -252,15 +272,7 @@ struct PopoverView: View {
                 .readHeight { height in
                     if abs(measuredContentHeight - height) > 0.5 {
                         measuredContentHeight = height
-                    }
-                    if lockedHeight == nil, height > 20 {
-                        // 延一拍锁定：等 header/foot 的首轮测量一并回填后再定格。
-                        DispatchQueue.main.async {
-                            if lockedHeight == nil {
-                                lockedHeight = min(maxPanelHeight, (chromeMeasured + measuredContentHeight) * 1.1)
-                                onPreferredHeightChange(lockedHeight ?? panelHeight)
-                            }
-                        }
+                        onPreferredHeightChange(panelHeight)
                     }
                 }
             }
@@ -275,7 +287,10 @@ struct PopoverView: View {
                 )
             }
             .background(theme.surface)
-            .readHeight { footHeight = $0 }
+            .readHeight { height in
+                footHeight = height
+                onPreferredHeightChange(panelHeight)
+            }
         }
         .frame(width: 378, height: panelHeight, alignment: .top)
         .background(theme.surface)
@@ -391,6 +406,26 @@ private struct BrandMark: View {
 
 // MARK: - .today：32px 大数字 + 今日金额/会话
 
+/// 数字文本变化时逐位滚动（numericText），系统「减弱动态效果」开启则直接替换。
+/// 只做文本过渡、不碰布局尺寸——弹窗高度的平滑过渡由 NSPopover 原生动画负责
+/// （见 QuotaGroupView.summaryRow 的注释），两边不打架。
+private struct RollingNumberModifier<Value: Equatable>: ViewModifier {
+    let value: Value
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .contentTransition(reduceMotion ? .identity : .numericText())
+            .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: value)
+    }
+}
+
+private extension View {
+    func rollingNumber<Value: Equatable>(value: Value) -> some View {
+        modifier(RollingNumberModifier(value: value))
+    }
+}
+
 private struct TodayBlock: View {
     let summary: MenuBarTodaySummary
     @Environment(\.mbTheme) private var theme
@@ -402,6 +437,7 @@ private struct TodayBlock: View {
                     .font(.system(size: 32, weight: .bold))
                     .foregroundStyle(theme.fg)
                     .monospacedDigit()
+                    .rollingNumber(value: summary.tokens)
                 Text("tokens")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(theme.fg2)
@@ -415,6 +451,7 @@ private struct TodayBlock: View {
                 .font(.system(size: 11.5))
                 .foregroundStyle(theme.muted)
                 .monospacedDigit()
+                .rollingNumber(value: "\(summary.costUsdMicros)|\(summary.sessions)")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
@@ -583,12 +620,89 @@ private struct ProviderRow: View {
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(theme.fg)
                 .monospacedDigit()
+                .rollingNumber(value: row.tokens)
 
             Text("\(MenuBarNumberFormat.usd(row.costUsdMicros)) · \(row.sessions) 会话")
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(theme.muted)
                 .monospacedDigit()
                 .fixedSize()
+                .rollingNumber(value: "\(row.costUsdMicros)|\(row.sessions)")
+        }
+        .padding(.vertical, 5)
+    }
+}
+
+// MARK: - .sec 模型：今日按模型 Top5，可展开全部
+
+/// 今日按模型列表：默认只露用量前 5，超出时尾部一行「展开全部」。
+/// 面板高度在打开期间锁定（见 lockedHeight），展开增高由滚动区内部消化，
+/// 与订阅额度手风琴同款行为。弹窗每次打开重建视图 → 每次都回到收起态。
+private struct ModelListBlock: View {
+    let models: [MenuBarTodaySummary.ModelToday]
+    @Environment(\.mbTheme) private var theme
+    @State private var expanded = false
+
+    private static let visibleCount = 5
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(expanded ? models : Array(models.prefix(Self.visibleCount)), id: \.model) { row in
+                ModelRow(row: row)
+            }
+
+            if models.count > Self.visibleCount {
+                Button {
+                    expanded.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(expanded ? "收起" : "展开全部 \(models.count) 个模型")
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .semibold))
+                            .rotationEffect(.degrees(expanded ? -90 : 90))
+                            .animation(.easeOut(duration: 0.15), value: expanded)
+                    }
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(theme.muted)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+            }
+        }
+    }
+}
+
+/// 模型一行：mono 模型名（与主窗口热力图日详情同款）+ tokens + 金额。
+/// 不显示会话数——按模型数会话会重复计（一个会话可用多个模型，既有裁定）。
+private struct ModelRow: View {
+    let row: MenuBarTodaySummary.ModelToday
+    @Environment(\.mbTheme) private var theme
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Text(row.model)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(theme.fg)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Spacer(minLength: 8)
+
+            Text(MenuBarNumberFormat.tokens(row.tokens))
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(theme.fg)
+                .monospacedDigit()
+                .rollingNumber(value: row.tokens)
+
+            Text(MenuBarNumberFormat.usd(row.costUsdMicros))
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(theme.muted)
+                .monospacedDigit()
+                .fixedSize()
+                .rollingNumber(value: row.costUsdMicros)
         }
         .padding(.vertical, 5)
     }
@@ -600,16 +714,26 @@ private struct ProviderRow: View {
 struct QuotaDisplayModel {
     struct Ring {
         let label: String
+        /// 剩余百分比（与折叠行 summary、tmux 段同语义：数值越大额度越充裕）。
         let percent: Double
         let resetText: String?
-        let isWarn: Bool
+        /// 时间进度感知的警戒色（tmux 同款 pace 逻辑）：用量明显跑赢时间进度才
+        /// 黄/红；快到重置时剩得少也算绿。见 UsageMetricToneResolver。
+        let tone: UsageMetricTone
     }
 
     struct Bar {
         let label: String
+        /// 剩余百分比（同 Ring）。
         let percent: Double?
         let note: String?
-        let isWarn: Bool
+        let tone: UsageMetricTone
+    }
+
+    /// 折叠行摘要的一段（「5h 64%」）：文案与环同源的 tone，收起时也能一眼看出警戒。
+    struct SummarySegment {
+        let text: String
+        let tone: UsageMetricTone
     }
 
     let badge: String
@@ -617,6 +741,7 @@ struct QuotaDisplayModel {
     let isWarn: Bool
     let staleMinutes: Int?
     let summaryText: String
+    let summarySegments: [SummarySegment]
     let alertMessage: String?
     let alertTime: String?
     let rings: [Ring]
@@ -627,7 +752,18 @@ struct QuotaDisplayModel {
         name = snapshot.displayName
         badge = Self.badgeText(snapshot.displayName)
 
-        let metrics = snapshot.groups.flatMap(\.items)
+        // 摊平时带上组名：多组时代（Codex 主额度 + Spark 模型额度、Claude 的
+        // Fable 等 scoped 额度）只写「7d」分不清是谁的额度；主组（组名与
+        // provider 同名）保持只用窗口标签。
+        let labeledMetrics = snapshot.groups.flatMap { group in
+            group.items.map { metric -> (label: String, metric: UsageMetric, isPrimary: Bool) in
+                let window = Self.shortWindowLabel(metric)
+                let isPrimary = group.title == snapshot.displayName
+                let label = isPrimary ? window : "\(group.title) \(window)"
+                return (label, metric, isPrimary)
+            }
+        }
+        let metrics = labeledMetrics.map(\.metric)
         let warnStatuses: [UsageStatus] = [.warning, .error]
         isWarn = snapshot.status == .warning || snapshot.status == .error
             || metrics.contains { warnStatuses.contains($0.status) || ($0.usedPercent ?? 0) >= 99.5 }
@@ -635,29 +771,44 @@ struct QuotaDisplayModel {
         let staleSeconds = now.timeIntervalSince(snapshot.fetchedAt)
         staleMinutes = staleSeconds >= 600 ? Int(staleSeconds / 60) : nil
 
-        // 环：前两个带百分比的指标（各 provider 的 5h/7d 主窗口）；其余进水平条。
-        let percentMetrics = metrics.filter { $0.usedPercent != nil }
-        let ringMetrics = Array(percentMetrics.prefix(2))
-        rings = ringMetrics.map { m in
+        // 环＝主组（组名与 provider 同名）的主窗口，至多两只；其余——主组的第三个
+        // 起（如智谱 MCP）和全部模型级次要组（Spark/Fable）——一律水平条，次要额度
+        // 不和主额度平起平坐。展示值统一为【剩余】：此前环里是已用（22%）、折叠行
+        // 与 tmux 段是剩余（78%），一屏两种语义。
+        let percentMetrics = labeledMetrics.filter { $0.metric.usedPercent != nil }
+        var ringMetrics = Array(percentMetrics.filter(\.isPrimary).prefix(2))
+        if ringMetrics.isEmpty {
+            ringMetrics = Array(percentMetrics.prefix(2))
+        }
+        let ringIds = Set(ringMetrics.map(\.metric.id))
+        // 状态异常/用尽直接红；其余交给时间进度感知的 pace 逻辑。
+        func metricTone(_ metric: UsageMetric) -> UsageMetricTone {
+            if warnStatuses.contains(metric.status) || (metric.usedPercent ?? 0) >= 99.5 {
+                return .bad
+            }
+            return UsageMetricToneResolver.tone(for: metric)
+        }
+        rings = ringMetrics.map { entry in
             Ring(
-                label: Self.shortWindowLabel(m),
-                percent: min(100, m.usedPercent ?? 0),
-                resetText: m.resetText,
-                isWarn: warnStatuses.contains(m.status) || (m.usedPercent ?? 0) >= 99.5
+                label: entry.label,
+                percent: Self.remainingPercent(entry.metric),
+                resetText: entry.metric.resetText,
+                tone: metricTone(entry.metric)
             )
         }
-        bars = percentMetrics.dropFirst(2).map { m in
+        bars = percentMetrics.filter { !ringIds.contains($0.metric.id) }.map { entry in
             Bar(
-                label: m.label,
-                percent: min(100, m.usedPercent ?? 0),
-                note: m.detail ?? m.resetText,
-                isWarn: warnStatuses.contains(m.status) || (m.usedPercent ?? 0) >= 99.5
+                label: entry.label,
+                percent: Self.remainingPercent(entry.metric),
+                note: entry.metric.detail ?? entry.metric.resetText,
+                tone: metricTone(entry.metric)
             )
         }
 
-        summaryText = ringMetrics
-            .map { "\(Self.shortWindowLabel($0)) \(Int((min(100, $0.usedPercent ?? 0)).rounded()))%" }
-            .joined(separator: " · ")
+        summarySegments = rings.map {
+            SummarySegment(text: "\($0.label) \(Int($0.percent.rounded()))%", tone: $0.tone)
+        }
+        summaryText = summarySegments.map(\.text).joined(separator: " · ")
 
         if isWarn, let message = snapshot.message, !message.isEmpty {
             alertMessage = message
@@ -682,6 +833,10 @@ struct QuotaDisplayModel {
         return String(first)
     }
 
+    static func remainingPercent(_ metric: UsageMetric) -> Double {
+        min(100, max(0, metric.remainingPercent ?? (100 - (metric.usedPercent ?? 0))))
+    }
+
     /// 窗口标签压缩为稿上的「5h / 7d」形态；识别不了就用原 label。
     static func shortWindowLabel(_ metric: UsageMetric) -> String {
         if let minutes = metric.windowDurationMinutes {
@@ -695,25 +850,31 @@ struct QuotaDisplayModel {
 
 private struct QuotaGroupView: View {
     let snapshot: ProviderUsageSnapshot
+    /// 展开态由列表层受控（手风琴：至多一家展开），不再各组自持。
+    let isExpanded: Bool
+    let onToggleExpanded: () -> Void
     let onRetry: () -> Void
     @Environment(\.mbTheme) private var theme
-    @State private var expanded: Bool
     private let model: QuotaDisplayModel
 
-    init(snapshot: ProviderUsageSnapshot, onRetry: @escaping () -> Void) {
+    init(
+        snapshot: ProviderUsageSnapshot,
+        isExpanded: Bool,
+        onToggleExpanded: @escaping () -> Void,
+        onRetry: @escaping () -> Void
+    ) {
         self.snapshot = snapshot
+        self.isExpanded = isExpanded
+        self.onToggleExpanded = onToggleExpanded
         self.onRetry = onRetry
-        let model = QuotaDisplayModel(snapshot: snapshot)
-        self.model = model
-        // 稿：有警示的组默认展开，其余折叠。
-        _expanded = State(initialValue: model.isWarn)
+        self.model = QuotaDisplayModel(snapshot: snapshot)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             summaryRow
 
-            if expanded {
+            if isExpanded {
                 VStack(alignment: .leading, spacing: 0) {
                     PanelDivider()
 
@@ -758,9 +919,7 @@ private struct QuotaGroupView: View {
     private var summaryRow: some View {
         // 内容即时插拔，不做 SwiftUI 高度动画——面板高度的平滑过渡由 NSPopover 的
         // contentSize 原生动画负责，两边同时动画会互相打架（内容先压扁再弹开）。
-        Button {
-            expanded.toggle()
-        } label: {
+        Button(action: onToggleExpanded) {
             HStack(spacing: 8) {
                 Text(model.badge)
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
@@ -773,34 +932,33 @@ private struct QuotaGroupView: View {
                     .foregroundStyle(theme.fg)
                     .lineLimit(1)
 
-                if let minutes = model.staleMinutes {
-                    Text("\(Self.staleBadgeText(minutes)) 未更新")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(theme.danger)
-                        .padding(EdgeInsets(top: 1, leading: 7, bottom: 1, trailing: 7))
-                        .background(Capsule().fill(theme.tintDanger))
-                }
-
-                if model.isWarn {
+                // 数据过期只给一个警告三角：文字胶囊（「14m 未更新」）会把 provider
+                // 名和右侧概要挤出省略号；具体过期多久展开后的 StaleCard 里有。
+                if model.isWarn || model.staleMinutes != nil {
                     WarnTriangle()
                         .frame(width: 14, height: 14)
                 }
 
                 Spacer(minLength: 8)
 
-                Text(model.summaryText)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(theme.muted)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .opacity(expanded ? 0 : 1)
+                // 摘要各段跟随环的 tone（tmux 同款：健康绿/超速黄/用尽红），
+                // 展开与收起都显示——展开后它就是标题行的速览。
+                model.summarySegments.enumerated().reduce(Text("")) { acc, pair in
+                    acc
+                        + Text(pair.offset > 0 ? " · " : "").foregroundColor(theme.muted)
+                        + Text(pair.element.text)
+                            .foregroundColor(summaryToneColor(pair.element.tone, theme: theme))
+                }
+                .font(.system(size: 10, design: .monospaced))
+                .monospacedDigit()
+                .lineLimit(1)
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(theme.muted)
                     .frame(width: 14, height: 14)
-                    .rotationEffect(.degrees(expanded ? 90 : 0))
-                    .animation(.easeOut(duration: 0.15), value: expanded)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .animation(.easeOut(duration: 0.15), value: isExpanded)
             }
             .padding(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
             .contentShape(Rectangle())
@@ -809,12 +967,6 @@ private struct QuotaGroupView: View {
         .focusable(false)
     }
 
-    /// 红标里的紧凑时长（稿风格 m/h/d）：11,585m → 8d。
-    static func staleBadgeText(_ minutes: Int) -> String {
-        if minutes < 60 { return "\(minutes)m" }
-        if minutes < 24 * 60 { return "\(minutes / 60)h" }
-        return "\(minutes / (24 * 60))d"
-    }
 }
 
 /// 稿 .gwarn：警告三角。
@@ -936,9 +1088,45 @@ private struct StaleCard: View {
 
 // MARK: - 环形主额度（.qring：44×44，r19 stroke4，-90° 起笔）
 
+/// tone → 主题色。ok 保持 accent（设计语言里的"正常"色），muted（数据不足）同。
+private func toneStroke(_ tone: UsageMetricTone, theme: MBTheme) -> Color {
+    switch tone {
+    case .warning: return theme.warn
+    case .bad: return theme.danger
+    case .ok, .muted: return theme.accent
+    }
+}
+
+private func toneText(_ tone: UsageMetricTone, theme: MBTheme) -> Color {
+    switch tone {
+    case .warning: return theme.warn
+    case .bad: return theme.danger
+    case .ok, .muted: return theme.fg
+    }
+}
+
+/// 折叠行摘要的分段色（tmux 同款语义）：健康绿、超速黄、用尽/严重超速红；
+/// 无法判定 pace 的（缺窗口/重置时间）保持 muted。
+private func summaryToneColor(_ tone: UsageMetricTone, theme: MBTheme) -> Color {
+    switch tone {
+    case .ok: return theme.ok
+    case .warning: return theme.warn
+    case .bad: return theme.danger
+    case .muted: return theme.muted
+    }
+}
+
 private struct QRingCard: View {
     let ring: QuotaDisplayModel.Ring
     @Environment(\.mbTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// 打开弹窗/展开分组时环从 0 充盈到实际占比；数据刷新时随 percent 平滑过渡。
+    /// 只动 trim 不动 frame（44×44 固定），不触碰 NSPopover 的高度协调。
+    @State private var appeared = false
+
+    private var fraction: CGFloat {
+        CGFloat(min(100, max(0, ring.percent))) / 100
+    }
 
     var body: some View {
         HStack(spacing: 9) {
@@ -946,18 +1134,27 @@ private struct QRingCard: View {
                 Circle()
                     .stroke(theme.surface2, lineWidth: 4)
                 Circle()
-                    .trim(from: 0, to: CGFloat(min(100, max(0, ring.percent))) / 100)
+                    .trim(from: 0, to: appeared ? fraction : 0)
                     .stroke(
-                        ring.isWarn ? theme.warn : theme.accent,
+                        toneStroke(ring.tone, theme: theme),
                         style: StrokeStyle(lineWidth: 4, lineCap: .round)
                     )
                     .rotationEffect(.degrees(-90))
+                    .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: ring.percent)
                 Text("\(Int(ring.percent.rounded()))%")
                     .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                    .foregroundStyle(ring.isWarn ? theme.warn : theme.fg)
+                    .foregroundStyle(toneText(ring.tone, theme: theme))
                     .monospacedDigit()
+                    .rollingNumber(value: Int(ring.percent.rounded()))
             }
             .frame(width: 44, height: 44)
+            .onAppear {
+                if reduceMotion {
+                    appeared = true
+                } else {
+                    withAnimation(.smooth(duration: 0.55)) { appeared = true }
+                }
+            }
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(ring.label)
@@ -987,6 +1184,10 @@ private struct QRingCard: View {
 private struct BarRowCard: View {
     let bar: QuotaDisplayModel.Bar
     @Environment(\.mbTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// 打开弹窗/展开分组时条从 0 充盈到实际占比；刷新时随 percent 平滑过渡。
+    /// 只动填充宽度，轨道高度固定 4，不触碰 NSPopover 的高度协调。
+    @State private var appeared = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -998,8 +1199,9 @@ private struct BarRowCard: View {
                 if let percent = bar.percent {
                     Text("\(Int(percent.rounded()))%")
                         .font(.system(size: 11.5, weight: .bold, design: .monospaced))
-                        .foregroundStyle(bar.isWarn ? theme.warn : theme.fg)
+                        .foregroundStyle(toneText(bar.tone, theme: theme))
                         .monospacedDigit()
+                        .rollingNumber(value: Int(percent.rounded()))
                 }
                 Spacer(minLength: 8)
                 if let note = bar.note {
@@ -1015,11 +1217,19 @@ private struct BarRowCard: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(theme.surface2)
                     Capsule()
-                        .fill(bar.isWarn ? theme.warn : theme.accent)
-                        .frame(width: proxy.size.width * CGFloat(min(100, max(0, bar.percent ?? 0))) / 100)
+                        .fill(toneStroke(bar.tone, theme: theme))
+                        .frame(width: appeared ? proxy.size.width * CGFloat(min(100, max(0, bar.percent ?? 0))) / 100 : 0)
+                        .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: bar.percent)
                 }
             }
             .frame(height: 4)
+            .onAppear {
+                if reduceMotion {
+                    appeared = true
+                } else {
+                    withAnimation(.smooth(duration: 0.55)) { appeared = true }
+                }
+            }
         }
         .padding(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
         .background(
@@ -1274,21 +1484,16 @@ private struct NotificationPermissionControl: View {
 }
 
 private extension View {
+    /// 高度实测。必须用 onGeometryChange——曾用 GeometryReader+PreferenceKey，
+    /// 在 NSPopover 的 NSHostingController 里 preference 只在首轮探测布局投递一次
+    /// （content 恒 0、header 报 0 后再无更新），实测链路整体失效，面板高度
+    /// 常年跑在打开瞬间的估值上（诊断日志 2026-07-15，用户观感「高度乱跳」）。
     func readHeight(_ onChange: @escaping (CGFloat) -> Void) -> some View {
-        background(
-            GeometryReader { proxy in
-                Color.clear.preference(key: ViewHeightPreferenceKey.self, value: proxy.size.height)
-            }
-        )
-        .onPreferenceChange(ViewHeightPreferenceKey.self, perform: onChange)
-    }
-}
-
-private struct ViewHeightPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+        onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height
+        } action: { height in
+            onChange(height)
+        }
     }
 }
 

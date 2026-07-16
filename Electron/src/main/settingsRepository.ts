@@ -15,12 +15,20 @@ export interface SettingsSnapshot {
   autoRefreshSeconds: number;
   enabledAgentKinds: string[];
   providerOverrides: ProviderConfigOverride[];
+  /// 额度用量告警阈值（usedPercent 达到即通知）。0 = 关闭，有效值 50~100。
+  quotaUsedThresholdPercent: number;
 }
 
 export interface SettingsPatch {
   menuBarPrimaryProviderId?: string;
   autoRefreshSeconds?: number;
   enabledAgentKinds?: string[];
+  /// providerId → 显示名；空串表示清除自定义、回落到默认名。
+  providerDisplayNames?: Record<string, string>;
+  /// providerId → 启停。关 = 菜单栏弹窗隐藏该供应商且不再刷新其额度。
+  providerEnabled?: Record<string, boolean>;
+  /// 0 = 关闭告警，50~100 = 用量达该百分比时通知（Swift 侧刷新额度时检测）。
+  quotaUsedThresholdPercent?: number;
 }
 
 const LOCAL_AGENT_KIND_ALLOWED: Record<string, true> = {
@@ -59,7 +67,8 @@ export class SettingsRepository {
       menuBarPrimaryProviderId: this.settingString('menuBar.primaryProviderId'),
       autoRefreshSeconds: this.settingInt('scan.autoRefreshSeconds') ?? 300,
       enabledAgentKinds: this.settingStringArray('filters.enabledAgentKinds'),
-      providerOverrides: this.providerOverrides()
+      providerOverrides: this.providerOverrides(),
+      quotaUsedThresholdPercent: this.settingInt('notifications.quotaUsedThresholdPercent') ?? 0
     };
   }
 
@@ -69,6 +78,9 @@ export class SettingsRepository {
       throw new Error('settings patch must change at least one setting');
     }
 
+    // immediate：开局即取写锁、等待遵循 busy_timeout。默认的 deferred 事务
+    // 先读后写，中途升级写锁撞上 Swift 的写事务（每 60s 的扫描落库）时
+    // SQLite 直接报 BUSY 不等待——「database is locked」正是这么来的。
     const transaction = this.db.transaction(() => {
       const current = this.get();
       if (current.version !== expectedVersion) {
@@ -85,11 +97,40 @@ export class SettingsRepository {
       if (validatedPatch.enabledAgentKinds !== undefined) {
         this.setSetting('filters.enabledAgentKinds', JSON.stringify(validatedPatch.enabledAgentKinds), 'json', nextVersion);
       }
+      if (validatedPatch.quotaUsedThresholdPercent !== undefined) {
+        this.setSetting('notifications.quotaUsedThresholdPercent', String(validatedPatch.quotaUsedThresholdPercent), 'int', nextVersion);
+      }
+      if (validatedPatch.providerDisplayNames !== undefined) {
+        const upsert = this.db.prepare(
+          `INSERT INTO provider_config_overrides (provider_id, display_name, updated_at)
+           VALUES (?, ?, datetime('now'))
+           ON CONFLICT(provider_id) DO UPDATE SET display_name = excluded.display_name, updated_at = excluded.updated_at`
+        );
+        for (const [providerId, displayName] of Object.entries(validatedPatch.providerDisplayNames)) {
+          const trimmed = displayName.trim();
+          upsert.run(providerId, trimmed === '' ? null : trimmed);
+        }
+      }
+      if (validatedPatch.providerEnabled !== undefined) {
+        const upsert = this.db.prepare(
+          `INSERT INTO provider_config_overrides (provider_id, enabled, updated_at)
+           VALUES (?, ?, datetime('now'))
+           ON CONFLICT(provider_id) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at`
+        );
+        for (const [providerId, enabled] of Object.entries(validatedPatch.providerEnabled)) {
+          upsert.run(providerId, enabled ? 1 : 0);
+        }
+      }
+      if (validatedPatch.providerDisplayNames !== undefined || validatedPatch.providerEnabled !== undefined) {
+        // overrides 不在 settings 表里，写一个哨兵键推进 version——否则乐观锁
+        // 版本不前进，Swift 端 settingsChanged(version) 的对账会判为落后而失败。
+        this.setSetting('providers.overridesUpdatedAt', JSON.stringify(new Date().toISOString()), 'string', nextVersion);
+      }
 
       return { requestedVersion: nextVersion, status: 'pending' };
     });
 
-    return transaction();
+    return transaction.immediate();
   }
 
   private settingString(key: string): string | undefined {
@@ -182,12 +223,46 @@ function validateSettingsPatch(patch: unknown): SettingsPatch {
     validated.autoRefreshSeconds = candidate.autoRefreshSeconds as number;
   }
 
+  if ('providerDisplayNames' in candidate) {
+    const names = candidate.providerDisplayNames;
+    if (typeof names !== 'object' || names === null || Array.isArray(names)) {
+      throw new Error('providerDisplayNames must be an object');
+    }
+    for (const [providerId, displayName] of Object.entries(names)) {
+      if (typeof displayName !== 'string' || displayName.length > 60) {
+        throw new Error(`invalid display name for provider: ${providerId}`);
+      }
+    }
+    validated.providerDisplayNames = names as Record<string, string>;
+  }
+
   if ('enabledAgentKinds' in candidate) {
     if (!Array.isArray(candidate.enabledAgentKinds) || !candidate.enabledAgentKinds.every((item) => typeof item === 'string')) {
       throw new Error('enabledAgentKinds must be an array of strings');
     }
     validateEnabledAgentKinds(candidate.enabledAgentKinds);
     validated.enabledAgentKinds = candidate.enabledAgentKinds;
+  }
+
+  if ('quotaUsedThresholdPercent' in candidate) {
+    const value = candidate.quotaUsedThresholdPercent;
+    if (!Number.isInteger(value) || (value !== 0 && ((value as number) < 50 || (value as number) > 100))) {
+      throw new Error('quotaUsedThresholdPercent must be 0 (off) or an integer between 50 and 100');
+    }
+    validated.quotaUsedThresholdPercent = value as number;
+  }
+
+  if ('providerEnabled' in candidate) {
+    const entries = candidate.providerEnabled;
+    if (typeof entries !== 'object' || entries === null || Array.isArray(entries)) {
+      throw new Error('providerEnabled must be an object');
+    }
+    for (const [providerId, enabled] of Object.entries(entries)) {
+      if (typeof enabled !== 'boolean') {
+        throw new Error(`invalid enabled flag for provider: ${providerId}`);
+      }
+    }
+    validated.providerEnabled = entries as Record<string, boolean>;
   }
 
   return validated;
@@ -204,6 +279,9 @@ function hasPatchChanges(patch: SettingsPatch) {
   return (
     patch.menuBarPrimaryProviderId !== undefined ||
     patch.autoRefreshSeconds !== undefined ||
-    patch.enabledAgentKinds !== undefined
+    patch.enabledAgentKinds !== undefined ||
+    patch.providerDisplayNames !== undefined ||
+    patch.providerEnabled !== undefined ||
+    patch.quotaUsedThresholdPercent !== undefined
   );
 }

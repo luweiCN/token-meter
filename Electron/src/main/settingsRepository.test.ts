@@ -64,6 +64,21 @@ describe('SettingsRepository', () => {
     return { db, repo: new SettingsRepository(db) };
   }
 
+  it('saves provider display names into overrides and bumps the settings version', () => {
+    const { repo } = openRepo();
+
+    const result = repo.update({ providerDisplayNames: { zhipu: 'GLM' } }, 3);
+    expect(result).toEqual({ requestedVersion: 4, status: 'pending' });
+
+    const snapshot = repo.get();
+    expect(snapshot.version).toBe(4);
+    expect(snapshot.providerOverrides.find((o) => o.providerId === 'zhipu')?.displayName).toBe('GLM');
+
+    // 空串 = 清除自定义显示名，回落默认。
+    repo.update({ providerDisplayNames: { zhipu: '' } }, 4);
+    expect(repo.get().providerOverrides.find((o) => o.providerId === 'zhipu')?.displayName).toBeUndefined();
+  });
+
   it('reads the Swift-compatible settings snapshot and provider overrides from SQLite', () => {
     const { repo } = openRepo();
 
@@ -71,6 +86,7 @@ describe('SettingsRepository', () => {
       version: 3,
       menuBarPrimaryProviderId: 'codex',
       autoRefreshSeconds: 300,
+      quotaUsedThresholdPercent: 0,
       enabledAgentKinds: ['claudeCode', 'codex'],
       providerOverrides: [
         {
@@ -178,5 +194,37 @@ describe('SettingsRepository', () => {
     expect(() => repo.update({ enabledAgentKinds: ['claudeCode', 'cursor'] }, 3)).toThrow(/enabledAgentKinds|cursor|unsupported/i);
 
     expect(settingRows(db)).toEqual(before);
+  });
+
+  it('stores provider enable flags into overrides and bumps the settings version', () => {
+    const { repo } = openRepo();
+
+    const result = repo.update({ providerEnabled: { zhipu: false } }, 3);
+
+    expect(result).toEqual({ requestedVersion: 4, status: 'pending' });
+    const zhipu = repo.get().providerOverrides.find((o) => o.providerId === 'zhipu');
+    expect(zhipu?.enabled).toBe(false);
+    expect(repo.get().version).toBe(4);
+
+    repo.update({ providerEnabled: { zhipu: true } }, 4);
+    expect(repo.get().providerOverrides.find((o) => o.providerId === 'zhipu')?.enabled).toBe(true);
+
+    expect(() => repo.update({ providerEnabled: { zhipu: 'yes' } } as never, 5)).toThrow(/enabled/i);
+  });
+
+  it('stores the quota alert threshold, defaults it to 0, and validates its range', () => {
+    const { repo } = openRepo();
+    expect(repo.get().quotaUsedThresholdPercent).toBe(0);   // 未设置 = 告警关闭
+
+    const result = repo.update({ quotaUsedThresholdPercent: 85 }, 3);
+    expect(result.status).toBe('pending');
+    expect(repo.get().quotaUsedThresholdPercent).toBe(85);
+
+    repo.update({ quotaUsedThresholdPercent: 0 }, 4);       // 0 = 关闭，合法
+    expect(repo.get().quotaUsedThresholdPercent).toBe(0);
+
+    expect(() => repo.update({ quotaUsedThresholdPercent: 30 }, 5)).toThrow(/quotaUsedThresholdPercent/);
+    expect(() => repo.update({ quotaUsedThresholdPercent: 101 }, 5)).toThrow(/quotaUsedThresholdPercent/);
+    expect(() => repo.update({ quotaUsedThresholdPercent: 85.5 }, 5)).toThrow(/quotaUsedThresholdPercent/);
   });
 });

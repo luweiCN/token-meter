@@ -35,10 +35,10 @@ final class MenuBarTodaySummaryTests: XCTestCase {
         return formatter.string(from: now)
     }
 
-    private func seedDaily(_ provider: String, tokens: Int64, cost: Int64, unknown: Int64 = 0, date: String? = nil) throws {
+    private func seedDaily(_ provider: String, tokens: Int64, cost: Int64, unknown: Int64 = 0, date: String? = nil, model: String = "m") throws {
         try database.execute(
             "INSERT INTO daily_rollup(usage_date, provider_id, source_kind, model_canonical, tokens_input, cost_usd_micros, cost_unknown_events) VALUES (?,?,?,?,?,?,?)",
-            [.text(date ?? todayString()), .text(provider), .text("k"), .text("m"), .int(tokens), .int(cost), .int(unknown)]
+            [.text(date ?? todayString()), .text(provider), .text("k"), .text(model), .int(tokens), .int(cost), .int(unknown)]
         )
     }
 
@@ -71,6 +71,23 @@ final class MenuBarTodaySummaryTests: XCTestCase {
         XCTAssertEqual(summary.perProvider.map(\.providerId), ["claude-code", "codex"])   // tokens 降序
         XCTAssertEqual(summary.perProvider[0].sessions, 1)
         XCTAssertEqual(summary.perProvider[1].sessions, 0)
+    }
+
+    func testAggregatesTodayPerModelSortedByTokens() throws {
+        // 口径与 Electron 热力图日详情（dayModelBreakdown）一致：
+        // 今日、按 model_canonical 聚合（跨 provider 合并）、tokens 降序。
+        try seedDaily("claude-code", tokens: 100, cost: 5000, model: "claude-sonnet-5")
+        try seedDaily("codex", tokens: 300, cost: 9000, model: "gpt-5.6-sol")
+        try seedDaily("claude-code", tokens: 50, cost: 100, model: "gpt-5.6-sol")
+        try seedDaily("claude-code", tokens: 999, cost: 9, date: "2000-01-01", model: "stale")   // 非今日不计
+
+        let summary = MenuBarTodaySummaryRepository.load(from: database, now: now)
+
+        XCTAssertEqual(summary.perModel.map(\.model), ["gpt-5.6-sol", "claude-sonnet-5"])
+        XCTAssertEqual(summary.perModel[0].tokens, 350)
+        XCTAssertEqual(summary.perModel[0].costUsdMicros, 9100)
+        XCTAssertEqual(summary.perModel[1].tokens, 100)
+        XCTAssertEqual(summary.perModel[1].costUsdMicros, 5000)
     }
 
     func testReturnsEmptyWhenTablesAreMissing() throws {

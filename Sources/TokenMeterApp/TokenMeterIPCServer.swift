@@ -30,6 +30,7 @@ final class TokenMeterIPCServer {
     private let queue = DispatchQueue(label: "TokenMeterIPCServer", qos: .utility)
     private let maximumRequestBytes = 64 * 1024
     private(set) var boundPort: UInt16?
+    private let eventBroadcaster = IPCEventBroadcaster()
 
     init(store: ProviderStore) {
         self.store = store
@@ -122,6 +123,16 @@ final class TokenMeterIPCServer {
             return
         }
 
+        // 订阅连接同样不走「答完即关」：回一行确认后长期保持，
+        // 此后所有事件行（agent.sessionEvent / data.changed）都推给它。
+        if request.method == "events.subscribe" {
+            let ack = IPCResponse(id: request.id, ok: true, result: ["status": "subscribed"], error: nil)
+            var payload = (try? JSONEncoder().encode(ack)) ?? Data()
+            payload.append(UInt8(ascii: "\n"))
+            eventBroadcaster.add(connection, ack: payload)
+            return
+        }
+
         Task { @MainActor in
             let response = await self.response(for: request)
             var payload = (try? JSONEncoder().encode(response)) ?? Data()
@@ -129,6 +140,15 @@ final class TokenMeterIPCServer {
             connection.send(content: payload, completion: .contentProcessed { _ in
                 connection.cancel()
             })
+        }
+    }
+
+    private static func notificationStateText(_ state: UsageNotificationAuthorizationState) -> String {
+        switch state {
+        case .authorized: return "authorized"
+        case .denied: return "denied"
+        case .notDetermined: return "notDetermined"
+        case .unknown: return "unknown"
         }
     }
 
@@ -188,9 +208,138 @@ final class TokenMeterIPCServer {
                     error: nil
                 )
             }
+        case "credentials.set":
+            let params = request.params ?? [:]
+            guard let providerId = params["providerId"], !providerId.isEmpty else {
+                return IPCResponse(id: request.id, ok: false, result: nil, error: "invalid provider id")
+            }
+            do {
+                // token 空串 = 清除。钥匙串归 Swift app 管，Electron 永远拿不到明文。
+                try KeychainCredentialStore.setToken(params["token"], for: providerId)
+                return IPCResponse(
+                    id: request.id,
+                    ok: true,
+                    result: ["hasToken": KeychainCredentialStore.hasToken(for: providerId) ? "true" : "false"],
+                    error: nil
+                )
+            } catch {
+                return IPCResponse(id: request.id, ok: false, result: nil, error: "keychain write failed")
+            }
+        case "credentials.state":
+            let params = request.params ?? [:]
+            guard let providerId = params["providerId"], !providerId.isEmpty else {
+                return IPCResponse(id: request.id, ok: false, result: nil, error: "invalid provider id")
+            }
+            return IPCResponse(
+                id: request.id,
+                ok: true,
+                result: ["hasToken": KeychainCredentialStore.hasToken(for: providerId) ? "true" : "false"],
+                error: nil
+            )
+        case "agents.detect":
+            // 探测同步阻塞（--version 最多 5s × 4），detached 到后台，不冻结菜单栏。
+            let statuses = await Task.detached { AgentBinaryDetector.detect() }.value
+            let payload = (try? JSONEncoder().encode(statuses))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+            return IPCResponse(id: request.id, ok: true, result: ["agents": payload], error: nil)
+        case "notifications.state":
+            await store.refreshNotificationAuthorizationState()
+            return IPCResponse(
+                id: request.id,
+                ok: true,
+                result: ["state": Self.notificationStateText(store.notificationAuthorizationState)],
+                error: nil
+            )
+        case "notifications.requestAuthorization":
+            await store.requestNotificationAuthorization()
+            return IPCResponse(
+                id: request.id,
+                ok: true,
+                result: ["state": Self.notificationStateText(store.notificationAuthorizationState)],
+                error: nil
+            )
+        case "agent.sessionEvent":
+            let params = request.params ?? [:]
+            guard let event = AgentSessionEvent(
+                agentKind: params["agent"] ?? "",
+                sessionId: params["sessionId"] ?? "",
+                kind: params["event"] ?? "",
+                cwd: params["cwd"],
+                ownerPid: params["ownerPid"]
+            ) else {
+                return IPCResponse(id: request.id, ok: false, result: nil, error: "invalid session event")
+            }
+            do {
+                try store.applyAgentSessionEvent(event)
+            } catch {
+                return IPCResponse(id: request.id, ok: false, result: nil, error: "session event persist failed")
+            }
+            eventBroadcaster.broadcast(IPCEventBroadcaster.encodeLine(kind: "agent.sessionEvent", extra: [
+                "agent": event.agentKind,
+                "event": event.kind.rawValue,
+                "sessionId": event.sessionId
+            ]))
+            return IPCResponse(id: request.id, ok: true, result: ["status": "ok"], error: nil)
         default:
             return IPCResponse(id: request.id, ok: false, result: nil, error: "unknown method")
         }
+    }
+
+    /// 定时扫描完成后由 AppDelegate 调用：广播 data.changed，订阅方
+    /// （Electron 主进程）据此让页面重取。hooks 事件不再触发扫描——
+    /// 心跳（PostToolUse，活跃对话约 2 秒一发）曾让全量扫描以冷却周期
+    /// 背靠背循环（每轮几万次文件 stat），多会话时 CPU 常态跑高。
+    /// 状态实时由 live_sessions + agent.sessionEvent 广播承担，
+    /// 用量数字跟随定时器节奏（autoRefreshSeconds）。
+    func broadcastDataChanged() {
+        eventBroadcaster.broadcast(IPCEventBroadcaster.encodeLine(kind: "data.changed"))
+    }
+}
+
+/// 订阅连接的推送器。增删与 send 都走同一串行队列；send 失败（对端断开）
+/// 即移除该连接。仿 RescanStreamWriter 的 @unchecked Sendable 论证：可变的
+/// connections 只在私有串行 queue 上读写，NWConnection.send 本身线程安全。
+private final class IPCEventBroadcaster: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "TokenMeterIPCServer.events")
+    private var connections: [ObjectIdentifier: NWConnection] = [:]
+
+    func add(_ connection: NWConnection, ack: Data) {
+        queue.async { [self] in
+            let key = ObjectIdentifier(connection)
+            connections[key] = connection
+            connection.send(content: ack, completion: .contentProcessed { [self] error in
+                if error != nil {
+                    queue.async { self.remove(key) }
+                }
+            })
+        }
+    }
+
+    func broadcast(_ payload: Data) {
+        queue.async { [self] in
+            for (key, connection) in connections {
+                connection.send(content: payload, completion: .contentProcessed { [self] error in
+                    if error != nil {
+                        queue.async { self.remove(key) }
+                    }
+                })
+            }
+        }
+    }
+
+    private func remove(_ key: ObjectIdentifier) {
+        connections[key]?.cancel()
+        connections.removeValue(forKey: key)
+    }
+
+    static func encodeLine(kind: String, extra: [String: String] = [:]) -> Data {
+        var object: [String: String] = ["kind": kind]
+        for (key, value) in extra {
+            object[key] = value
+        }
+        var data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
+        data.append(UInt8(ascii: "\n"))
+        return data
     }
 }
 

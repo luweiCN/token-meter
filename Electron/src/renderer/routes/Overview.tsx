@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { ModelRank, OverviewKpis, OverviewPayload, ScanProgress } from '../api.js';
 import { AgentTrendChart, type AgentTrendMetric } from '../charts/AgentTrendChart.js';
@@ -40,7 +40,7 @@ const HEATMAP_METRICS: Array<{ metric: HeatmapMetric; label: string }> = [
   { metric: 'events', label: '事件' }
 ];
 
-/// 服务商显示名（菜单栏与趋势图例同款）。名单外回落到原始 id。
+/// 服务商显示名（菜单栏与趋势图例同款）。设置里的供应商别名优先，名单外回落到原始 id。
 const PROVIDER_LABEL: Record<string, string> = {
   'claude-code': 'Claude Code',
   codex: 'Codex CLI',
@@ -48,9 +48,9 @@ const PROVIDER_LABEL: Record<string, string> = {
   opencode: 'OpenCode'
 };
 
-function providerLabel(id: string | null): string {
+function providerLabel(id: string | null, names: Record<string, string>): string {
   if (id === null) return '混合';
-  return PROVIDER_LABEL[id] ?? id;
+  return names[id] ?? PROVIDER_LABEL[id] ?? id;
 }
 
 /// 模型排行展示前 8 名，其余聚合成一行「其他 N 个模型」。
@@ -65,19 +65,68 @@ export function Overview({ intervalMs = 60_000 }: { intervalMs?: number }) {
   const [progress, setProgress] = useState<ScanProgress | null>(null);
   const [reindexError, setReindexError] = useState<string | null>(null);
 
+  const [providerNames, setProviderNames] = useState<Record<string, string>>({});
+
   const load = useCallback(async () => {
     try {
       setState({ kind: 'loaded', payload: await window.tokenMeter.overview.query() });
     } catch (unknownError: unknown) {
       setState({ kind: 'failed', message: unknownError instanceof Error ? unknownError.message : '概览加载失败' });
     }
+    // 供应商别名顺路刷新（图例/排行的显示名）。失败不拖垮概览，保留上次的映射。
+    try {
+      const settings = await window.tokenMeter.settings.get();
+      const names: Record<string, string> = {};
+      for (const o of settings.providerOverrides) {
+        if (o.displayName) names[o.providerId] = o.displayName;
+      }
+      setProviderNames(names);
+    } catch {
+      /* 别名读取失败无碍主数据 */
+    }
   }, []);
 
   // 轮询兜底 + 窗口隐藏暂停 + 单飞去重；返回的 refreshNow 给事件驱动与手动按钮共用。
   const refreshNow = useAutoRefresh(load, { intervalMs });
 
+  // 手动刷新的可感知反馈：查询本身只要几十毫秒，loading 至少停留 350ms，
+  // 否则一闪而过反而像页面抖了一下。
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshClick = () => {
+    setRefreshing(true);
+    void Promise.allSettled([refreshNow(), new Promise((r) => setTimeout(r, 350))])
+      .then(() => setRefreshing(false));
+  };
+
   // 事件驱动：Swift 扫描完成 → dashboard:invalidate → 走单飞守卫重取。
   useEffect(() => window.tokenMeter.overview.onInvalidate(() => refreshNow()), [refreshNow]);
+
+  // hooks 事件的局部更新：把匹配卡片的状态就地翻转（事件到 UI 约百毫秒）。
+  // heartbeat/blocked 只走这条局部路径；start/stop 才伴随整页重取（新会话
+  // 占位卡靠重取出现），用量数字跟随定时扫描完成的 data.changed 节奏。
+  useEffect(
+    () =>
+      window.tokenMeter.overview.onSessionEvent((e) => {
+        setState((current) => {
+          if (current.kind !== 'loaded' || current.payload.dataState !== 'ready') return current;
+          const rail = current.payload.sessionRail;
+          const index = rail.findIndex(
+            (row) => row.sourceKind === e.sourceKind && row.sourceSessionKey === e.sessionKey
+          );
+          if (index < 0) return current;
+          const row = rail[index];
+          const patched =
+            e.event === 'stop'
+              ? { ...row, isLive: false, isBlocked: false }
+              : { ...row, isLive: true, isBlocked: e.event === 'blocked' };
+          if (patched.isLive === row.isLive && patched.isBlocked === row.isBlocked) return current;
+          const nextRail = [...rail];
+          nextRail[index] = patched;
+          return { kind: 'loaded', payload: { ...current.payload, sessionRail: nextRail } };
+        });
+      }),
+    []
+  );
 
   // 全量重扫的流式进度（index:scanProgress）；重扫完成会发 dashboard:invalidate，页面自动回到 ready。
   useEffect(
@@ -111,12 +160,13 @@ export function Overview({ intervalMs = 60_000 }: { intervalMs?: number }) {
         <h1>总览</h1>
         {ready ? <span className="sub">{headSubtitle(ready.kpis, ready.today)}</span> : null}
         <div className="spacer" />
-        <button className="btn" type="button" onClick={() => refreshNow()}>
-          刷新
+        <button className="btn refresh-btn" type="button" disabled={refreshing} onClick={refreshClick}>
+          {refreshing ? <span className="refresh-spin" aria-hidden="true" /> : null}
+          {refreshing ? '刷新中' : '刷新'}
         </button>
       </div>
 
-      {state.kind === 'loading' ? <p className="muted" role="status">正在加载概览…</p> : null}
+      {state.kind === 'loading' ? <OverviewSkeleton /> : null}
       {state.kind === 'failed' ? <p className="status-error" role="status">概览加载失败：{state.message}</p> : null}
 
       {state.kind === 'loaded' && state.payload.dataState === 'never-used' ? <EmptyNeverUsed /> : null}
@@ -131,7 +181,7 @@ export function Overview({ intervalMs = 60_000 }: { intervalMs?: number }) {
       ) : null}
 
       {ready ? (
-        <>
+        <div className="ov-body">
           <StatTiles kpis={ready.kpis} />
 
           <div className="card" aria-label="实时会话">
@@ -180,7 +230,7 @@ export function Overview({ intervalMs = 60_000 }: { intervalMs?: number }) {
                 ))}
               </div>
             </div>
-            <AgentTrendChart data={ready.agentTrend[trendGranularity]} metric={trendMetric} />
+            <AgentTrendChart data={ready.agentTrend[trendGranularity]} metric={trendMetric} providerNames={providerNames} />
             {trendMetric === 'costUsdMicros' && ready.kpis.totalCostUnknownEvents > 0 ? (
               <p className="note">
                 趋势金额不含价格未知事件（累计 {formatCount(ready.kpis.totalCostUnknownEvents)} 条）
@@ -224,9 +274,9 @@ export function Overview({ intervalMs = 60_000 }: { intervalMs?: number }) {
                 <div className="desc">按累计 token 降序 · 归一化模型标识</div>
               </div>
             </div>
-            <ModelRankingTable rows={ready.modelRanking} />
+            <ModelRankingTable rows={ready.modelRanking} providerNames={providerNames} />
           </div>
-        </>
+        </div>
       ) : null}
     </section>
   );
@@ -238,39 +288,43 @@ function headSubtitle(kpis: OverviewKpis, today: string): string {
   return `自 ${kpis.firstDate} 起 · ${formatCount(days)} 天 · ${formatCount(kpis.totalEvents)} 条用量事件`;
 }
 
-/// 设计稿的四指标卡：累计成本 / 累计 Token / 本月成本 / 今日。
+/// 设计稿的四指标卡，Token 永远排在花费前面（用户裁定：token 首位、花费第二位）：
+/// 累计 Token / 累计成本 / 本月成本 / 今日（今日大数字也是 token，金额落到小字）。
 /// 价格未知的黄点标注走 .unk（每个显示成本的地方都要能表达「其中 N 条未知」）。
+/// 四指标卡：总计 / 当月 / 本周 / 今日——主数字都是 token，副行是花费（+会话数）。
 function StatTiles({ kpis }: { kpis: OverviewKpis }) {
-  const monthLabel = `${new Date().getMonth() + 1}/1 至今`;
   return (
     <div className="stats" aria-label="累计指标">
       <div className="stat">
-        <div className="lb">累计成本</div>
-        <div className="v"><AnimatedNumber value={kpis.totalCostUsdMicros} format={formatUsdMicros} /></div>
-        {kpis.totalCostUnknownEvents > 0 ? (
-          <div className="sb unk">其中 {formatUnknownCostNote(kpis.totalCostUnknownEvents)}</div>
-        ) : null}
-      </div>
-      <div className="stat">
-        <div className="lb">累计 Token</div>
+        <div className="lb">总计 Token</div>
         <div className="v"><AnimatedNumber value={kpis.totalTokens} format={formatTokens} /></div>
-        <div className="sb">
-          {formatCount(kpis.totalEvents)} 条事件 · {formatCount(kpis.totalSessions)} 会话
+        <div className={kpis.totalCostUnknownEvents > 0 ? 'sb unk' : 'sb'}>
+          {formatCount(kpis.totalSessions)} 会话 · {formatUsdMicros(kpis.totalCostUsdMicros)}
+          {kpis.totalCostUnknownEvents > 0 ? '†' : ''}
         </div>
       </div>
       <div className="stat">
-        <div className="lb">本月成本</div>
-        <div className="v"><AnimatedNumber value={kpis.monthCostUsdMicros} format={formatUsdMicros} /></div>
+        <div className="lb">当月</div>
+        <div className="v"><AnimatedNumber value={kpis.monthTokens} format={formatTokens} /></div>
         <div className={kpis.monthCostUnknownEvents > 0 ? 'sb unk' : 'sb'}>
-          {monthLabel}
-          {kpis.monthCostUnknownEvents > 0 ? ` · 其中 ${formatCount(kpis.monthCostUnknownEvents)} 条未知` : ''}
+          {formatUsdMicros(kpis.monthCostUsdMicros)}
+          {kpis.monthCostUnknownEvents > 0 ? ` · ${formatCount(kpis.monthCostUnknownEvents)} 条未知` : ''}
+        </div>
+      </div>
+      <div className="stat">
+        <div className="lb">本周</div>
+        <div className="v"><AnimatedNumber value={kpis.weekTokens} format={formatTokens} /></div>
+        <div className={kpis.weekCostUnknownEvents > 0 ? 'sb unk' : 'sb'}>
+          {formatUsdMicros(kpis.weekCostUsdMicros)}
+          {kpis.weekCostUnknownEvents > 0 ? ` · ${formatCount(kpis.weekCostUnknownEvents)} 条未知` : ''}
         </div>
       </div>
       <div className="stat">
         <div className="lb">今日</div>
-        <div className="v"><AnimatedNumber value={kpis.todayCostUsdMicros} format={formatUsdMicros} /></div>
+        {/* 单日数字锁在 M 单位（不升 B），百万级变化才看得见。 */}
+        <div className="v"><AnimatedNumber value={kpis.todayTokens} format={(n) => formatTokens(n, true)} /></div>
         <div className={kpis.todayCostUnknownEvents > 0 ? 'sb unk' : 'sb'}>
-          {formatTokens(kpis.todayTokens)} tokens · {formatCount(kpis.todaySessions)} 会话
+          {formatUsdMicros(kpis.todayCostUsdMicros)} · {formatCount(kpis.todaySessions)} 会话
           {kpis.todayCostUnknownEvents > 0 ? ` · ${formatCount(kpis.todayCostUnknownEvents)} 条未知` : ''}
         </div>
       </div>
@@ -278,14 +332,56 @@ function StatTiles({ kpis }: { kpis: OverviewKpis }) {
   );
 }
 
-/// KPI 大数字刷新时的过渡入口：见 useAnimatedNumber 关于为什么首次挂载不动画。
+/// KPI 大数字刷新时的过渡入口：数值插值见 useAnimatedNumber（首次挂载不动画）。
+/// 变化瞬间叠一次颜色脉冲（.v-pulse），让「数字变了」这件事不用盯着对比也能察觉。
 function AnimatedNumber({ value, format }: { value: number; format: (n: number) => string }) {
-  return <>{format(useAnimatedNumber(value))}</>;
+  const display = useAnimatedNumber(value);
+  const [pulsing, setPulsing] = useState(false);
+  const prevValue = useRef(value);
+
+  useEffect(() => {
+    if (prevValue.current !== value) {
+      prevValue.current = value;
+      setPulsing(true);
+    }
+  }, [value]);
+
+  return (
+    <span className={pulsing ? 'v-pulse' : undefined} onAnimationEnd={() => setPulsing(false)}>
+      {format(display)}
+    </span>
+  );
+}
+
+/// 加载骨架：按真实页面结构摆占位（四张 KPI 卡 + 两张图表卡），微光扫过示意
+/// 加载中；数据就绪后真内容以同布局淡入接替（.ov-body），不闪跳。
+function OverviewSkeleton() {
+  return (
+    <div className="skl" role="status" aria-label="正在加载概览">
+      <div className="stats" aria-hidden="true">
+        {[0, 1, 2, 3].map((i) => (
+          <div className="stat" key={i}>
+            <span className="skl-line" style={{ width: '42%' }} />
+            <span className="skl-line skl-line--big" style={{ width: '72%' }} />
+            <span className="skl-line" style={{ width: '55%' }} />
+          </div>
+        ))}
+      </div>
+      <div className="card" aria-hidden="true">
+        <span className="skl-line" style={{ width: 128 }} />
+        <span className="skl-block" style={{ height: 96 }} />
+      </div>
+      <div className="card" aria-hidden="true">
+        <span className="skl-line" style={{ width: 128 }} />
+        <span className="skl-block" style={{ height: 200 }} />
+      </div>
+    </div>
+  );
 }
 
 /// 设计稿的模型排行表：模型 / 服务商 / Token（横条+数值）/ 占比 / 成本 / 备注。
 /// 前 8 名单列，其余聚合为「其他 N 个模型」（服务商列显示「混合」）。
-function ModelRankingTable({ rows }: { rows: ModelRank[] }) {
+function ModelRankingTable({ rows, providerNames }: { rows: ModelRank[]; providerNames: Record<string, string> }) {
   if (rows.length === 0) return <p className="muted">还没有模型用量。</p>;
 
   const totalTokens = rows.reduce((sum, r) => sum + r.tokens, 0);
@@ -310,7 +406,7 @@ function ModelRankingTable({ rows }: { rows: ModelRank[] }) {
     return (
       <tr key={r.model}>
         <td>{isRest ? <span className="muted">{r.model}</span> : <span className="mname">{r.model}</span>}</td>
-        <td>{isRest ? '混合' : providerLabel(r.providerId)}</td>
+        <td>{isRest ? '混合' : providerLabel(r.providerId, providerNames)}</td>
         <td>
           <div className="mbar">
             <div className="bar"><i style={{ width: `${Math.round((r.tokens / maxTokens) * 100)}%` }} /></div>

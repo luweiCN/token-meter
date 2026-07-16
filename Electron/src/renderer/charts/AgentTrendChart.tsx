@@ -18,8 +18,9 @@ function metricValue(row: { tokens: number; costUsdMicros: number; sessions: num
   return row[metric];
 }
 
-function formatMetric(value: number, metric: AgentTrendMetric): string {
-  if (metric === 'tokens') return formatTokens(value);
+/// dailyScale：day 粒度的桶是单日数字，token 锁 M 单位（不升 B）。
+function formatMetric(value: number, metric: AgentTrendMetric, dailyScale = false): string {
+  if (metric === 'tokens') return formatTokens(value, dailyScale);
   if (metric === 'costUsdMicros') return formatUsdMicros(value);
   return formatCount(value);
 }
@@ -38,10 +39,14 @@ function xLabelText(bucket: string): string {
 
 /// 设计稿 8c 的直方图：SVG 堆叠柱 + 右缘 y 刻度 + x 标签 + tooltip（.tip）。
 /// 数据量小（≤30 桶 × ≤5 系列），纯 SVG 一次渲染，不引入图表库。
-export function AgentTrendChart({ data, metric }: { data: AgentTrendSeries; metric: AgentTrendMetric }) {
+export function AgentTrendChart({
+  data, metric, providerNames = {}
+}: { data: AgentTrendSeries; metric: AgentTrendMetric; providerNames?: Record<string, string> }) {
   const [tip, setTip] = useState<{ bucket: string; x: number; y: number } | null>(null);
 
   const { buckets } = data;
+  // day 粒度的桶与 tooltip 都是单日数字 → token 锁 M 单位；图例合计是范围总和，仍可用 B。
+  const dailyBuckets = data.granularity === 'day';
   const byBucket = useMemo(() => {
     const m = new Map<string, Map<string, { tokens: number; costUsdMicros: number; sessions: number }>>();
     for (const row of data.rows) {
@@ -56,12 +61,14 @@ export function AgentTrendChart({ data, metric }: { data: AgentTrendSeries; metr
   }, [data.rows]);
 
   /// 实际出现过的系列，按 s1-s4 固定顺序；未知 provider 合并进「其他」。
+  /// 系列名先看设置里的供应商别名（providerNames），再落到内置名。
   const seriesDefs = useMemo(() => {
     const present = new Set(data.rows.map(r => r.providerId));
-    const known = KNOWN_PROVIDERS.filter(p => present.has(p.id));
+    const known = KNOWN_PROVIDERS.filter(p => present.has(p.id))
+      .map(p => ({ ...p, label: providerNames[p.id] ?? p.label }));
     const hasOther = [...present].some(id => !KNOWN_PROVIDERS.some(p => p.id === id));
     return hasOther ? [...known, OTHER] : known;
-  }, [data.rows]);
+  }, [data.rows, providerNames]);
 
   const stackOf = (bucket: string): Array<{ def: typeof OTHER; value: number }> => {
     const inner = byBucket.get(bucket);
@@ -100,6 +107,7 @@ export function AgentTrendChart({ data, metric }: { data: AgentTrendSeries; metr
   };
 
   const tipStack = tip ? stackOf(tip.bucket) : [];
+  const tipTotal = tipStack.reduce((sum, s) => sum + s.value, 0);
 
   return (
     <div className="chart-wrap" onMouseLeave={() => setTip(null)}>
@@ -113,11 +121,13 @@ export function AgentTrendChart({ data, metric }: { data: AgentTrendSeries; metr
           let y = H;
           const segs = stackOf(bucket);
           return (
-            <g key={bucket}
+            <g key={bucket} className="trend-col"
+              style={{ animationDelay: `${i * 15}ms` }}
               onMouseMove={e => onMove(e, bucket)}
-              onMouseEnter={e => onMove(e, bucket)}>
-              {/* 整槽的透明命中区，空桶也能 hover 出 tooltip */}
-              <rect x={i * slot} y="0" width={slot} height={H} fill="transparent" />
+              onMouseEnter={e => onMove(e, bucket)}
+              onMouseLeave={() => setTip(null)}>
+              {/* 命中区就是柱段矩形本身：悬停柱子才出 tooltip，
+                  空桶和柱子上方的留白都不触发（移出柱子立即收起）。 */}
               {segs.map(({ def, value }) => {
                 const h = (value / max) * (H - 10);
                 y -= h;
@@ -132,10 +142,10 @@ export function AgentTrendChart({ data, metric }: { data: AgentTrendSeries; metr
       </svg>
 
       <div className="yticks" aria-hidden="true">
-        <span>{formatMetric(max, metric)}</span>
-        <span>{formatMetric(max * 2 / 3, metric)}</span>
-        <span>{formatMetric(max / 3, metric)}</span>
-        <span>{formatMetric(0, metric)}</span>
+        <span>{formatMetric(max, metric, dailyBuckets)}</span>
+        <span>{formatMetric(max * 2 / 3, metric, dailyBuckets)}</span>
+        <span>{formatMetric(max / 3, metric, dailyBuckets)}</span>
+        <span>{formatMetric(0, metric, dailyBuckets)}</span>
       </div>
 
       <div className="xlabels" aria-hidden="true">
@@ -153,17 +163,35 @@ export function AgentTrendChart({ data, metric }: { data: AgentTrendSeries; metr
         ))}
       </div>
 
-      {tip && tipStack.length > 0 ? (
-        <div className="tip" style={{ display: 'block', left: tip.x + 12, top: tip.y + 12 }}>
+      {tip && tipStack.length > 0 ? (() => {
+        // 贴近窗口右缘时翻到鼠标左侧：translateX(-100%) 让浮层右缘贴在
+        // 鼠标左侧 12px。阈值按 .tip 的 max-width（320px，见 styles.css）
+        // 保守估计，窄内容时早翻无伤。
+        const flipLeft = tip.x + 12 + 320 + 8 > window.innerWidth;
+        return (
+        <div
+          className="tip"
+          style={{
+            display: 'block',
+            left: flipLeft ? tip.x - 12 : tip.x + 12,
+            top: tip.y + 12,
+            transform: flipLeft ? 'translateX(-100%)' : 'none'
+          }}
+        >
           <b>{tip.bucket}</b>
           {tipStack.map(({ def, value }) => (
             <div className="row" key={def.id}>
               <span><i style={{ background: def.cssVar }} />{def.label}</span>
-              <span className="num">{formatMetric(value, metric)}</span>
+              <span className="num">{formatMetric(value, metric, dailyBuckets)}</span>
             </div>
           ))}
+          <div className="row total">
+            <span>合计</span>
+            <span className="num">{formatMetric(tipTotal, metric, dailyBuckets)}</span>
+          </div>
         </div>
-      ) : null}
+        );
+      })() : null}
     </div>
   );
 }

@@ -1,13 +1,14 @@
 import { useSyncExternalStore } from 'react';
 
 export type { SettingsApplyRequest, SettingsSnapshot } from '../api.js';
-import type { SettingsApplyRequest, SettingsSnapshot } from '../api.js';
+import type { SettingsApplyRequest, SettingsPatch, SettingsSnapshot } from '../api.js';
 
 const initialSnapshot: SettingsSnapshot = {
   version: 0,
   autoRefreshSeconds: 300,
   enabledAgentKinds: [],
-  providerOverrides: []
+  providerOverrides: [],
+  quotaUsedThresholdPercent: 0
 };
 
 let snapshot = initialSnapshot;
@@ -20,8 +21,18 @@ export const settingsStore = {
   },
 
   async updatePrimaryProvider(providerId: string): Promise<SettingsApplyRequest> {
+    return this.applyPatch({ menuBarPrimaryProviderId: providerId });
+  },
+
+  /// 开关某个 coding agent：Swift 端收到 settingsChanged 后按 enabledAgentKinds
+  /// 对账 hooks 装卸，统计过滤走同一份名单。
+  async updateEnabledAgentKinds(kinds: string[]): Promise<SettingsApplyRequest> {
+    return this.applyPatch({ enabledAgentKinds: kinds });
+  },
+
+  async applyPatch(patch: SettingsPatch): Promise<SettingsApplyRequest> {
     try {
-      const result = await window.tokenMeter.settings.update({ menuBarPrimaryProviderId: providerId }, snapshot.version);
+      const result = await window.tokenMeter.settings.update(patch, snapshot.version);
       try {
         await this.load();
       } catch (error) {

@@ -8,7 +8,6 @@ import { SessionsRepository } from './sessionsRepository.js';
 const T1 = Date.parse('2026-07-03T09:30:00Z');
 const T2 = Date.parse('2026-07-03T12:00:00Z');
 const T3 = Date.parse('2026-07-03T11:00:00Z');
-const iso = (ms: number) => new Date(ms).toISOString();
 
 // v2 fixture. sessionsRepository.query() is now driven by session_rollup: only sessions
 // that produced usage events appear, and per-session totals + model come from the rollup,
@@ -52,7 +51,16 @@ function createSessionsDb() {
       event_count INTEGER,
       source_revision TEXT NOT NULL,
       raw_meta_json TEXT,
+      root_session_key TEXT,
+      subagent_label TEXT,
       UNIQUE(source_kind, source_session_key)
+    );
+
+    CREATE TABLE usage_events (
+      id INTEGER PRIMARY KEY,
+      session_id INTEGER NOT NULL,
+      source_file_id INTEGER NOT NULL DEFAULT 1,
+      is_sidechain INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE session_rollup (
@@ -122,24 +130,13 @@ describe('SessionsRepository', () => {
     return new SessionsRepository(db);
   }
 
-  it('query lists only sessions with usage events, joins rollup totals and primary model, and orders by latest event time', () => {
+  it('query lists only main sessions with usage events, joins rollup totals, ordered by start desc', () => {
     const result = openRepo().query({ limit: 10, offset: 0 });
 
     expect(result.total).toBe(3);
+    // 默认排序 start desc：first_event_epoch_ms 递减 → T2(12:00) > T3(11:00) > T1(9:30)。
     expect(result.items).toEqual([
-      expect.objectContaining({
-        id: 2,
-        sessionKey: 'codex-new',
-        sourceKind: 'codex_jsonl',
-        providerId: 'codex',
-        projectId: 10,
-        projectDisplayName: 'Token Meter',
-        modelName: 'gpt-5',
-        latestObservedAt: iso(T2),
-        updatedAt: '2026-07-03T10:00:00Z',
-        tokensTotal: 55,
-        costUsdMicros: 50000
-      }),
+      expect.objectContaining({ id: 2, sessionKey: 'codex-new', tokensTotal: 55 }),
       expect.objectContaining({
         id: 3,
         sessionKey: 'claude-one',
@@ -148,27 +145,63 @@ describe('SessionsRepository', () => {
         projectId: null,
         projectDisplayName: null,
         modelName: 'claude-sonnet',
-        latestObservedAt: iso(T3),
-        updatedAt: '2026-07-03T11:00:00Z',
+        firstEventEpochMs: T3 - 60000,
+        lastEventEpochMs: T3,
         tokensTotal: 77,
-        costUsdMicros: 70000
+        costUsdMicros: 70000,
+        eventsCount: 11,
+        subagentCount: 0
       }),
-      expect.objectContaining({
-        id: 1,
-        sessionKey: 'codex-old',
-        sourceKind: 'codex_jsonl',
-        providerId: 'codex',
-        projectId: 10,
-        modelName: 'gpt-5',
-        latestObservedAt: iso(T1),
-        updatedAt: '2026-07-03T09:00:00Z',
-        tokensTotal: 35,
-        costUsdMicros: 30000
-      })
+      expect.objectContaining({ id: 1, sessionKey: 'codex-old', tokensTotal: 35 })
     ]);
     const keys = result.items.map((item) => item.sessionKey);
     expect(keys).not.toContain('deleted-session');
     expect(keys).not.toContain('codex-noevents');
+  });
+
+  it('folds sub-agent sessions into their root row instead of listing them', () => {
+    const repo = openRepo();
+    const db = openedDbs[openedDbs.length - 1];
+    // 子会话指向 codex-new（root_session_key = 主会话的 source_session_key）。
+    db.exec(`
+      INSERT INTO agent_sessions(id, source_kind, source_session_key, scan_root_id, project_id, provider_id, source_revision, root_session_key, status)
+      VALUES (6, 'codex_jsonl', 'codex-sub', 1, 10, 'codex', 'rev-f', 'codex-new', 'active');
+      INSERT INTO session_rollup(session_id, first_event_epoch_ms, last_event_epoch_ms, events_count, tokens_total, cost_usd_micros, primary_model)
+      VALUES (6, ${T2}, ${T2 + 30000}, 2, 45, 10000, 'sub-model');
+    `);
+
+    const result = repo.query({ limit: 10, offset: 0 });
+
+    expect(result.total).toBe(3);   // 子会话不单独成行
+    const parent = result.items.find((s) => s.sessionKey === 'codex-new')!;
+    expect(parent.tokensTotal).toBe(100);        // 55 + 45 合计
+    expect(parent.costUsdMicros).toBe(60000);    // 50000 + 10000
+    expect(parent.subagentCount).toBe(1);
+    expect(parent.lastEventEpochMs).toBe(T2 + 30000);   // 归并后的最近活动
+  });
+
+  it('filters by projects (multi), local date range, and title/model search, and sorts by tokens', () => {
+    const repo = openRepo();
+
+    expect(repo.query({ projectIds: [10] }).total).toBe(2);           // codex 两条属于项目 10
+    expect(repo.query({ projectIds: [10, 999] }).total).toBe(2);      // 多选 = IN 集合
+    expect(repo.query({ projectIds: [999] }).total).toBe(0);
+    expect(repo.query({ search: 'Latest' }).items.map((s) => s.id)).toEqual([2]);   // 标题子串
+    expect(repo.query({ search: 'claude-son' }).items.map((s) => s.id)).toEqual([3]); // 模型子串
+
+    const localDay = new Date(T2).toISOString().slice(0, 10);         // T2 所在 UTC 日（本地解析亦覆盖该日）
+    expect(repo.query({ dateFrom: localDay, dateTo: localDay }).total).toBeGreaterThan(0);
+    expect(repo.query({ dateFrom: '2030-01-01', dateTo: '2030-01-02' }).total).toBe(0);
+
+    const byTokens = repo.query({ sortBy: 'tokens', sortDir: 'desc' }).items.map((s) => s.tokensTotal);
+    expect(byTokens).toEqual([...byTokens].sort((a, b) => b - a));
+  });
+
+  it('lists filterable projects with their main-session counts', () => {
+    const projects = openRepo().projects();
+    expect(projects).toEqual([
+      { id: 10, displayName: 'Token Meter', sessionsCount: 2 }
+    ]);
   });
 
   it('query filters by provider, paginates, and never exposes raw prompt-like metadata', () => {
@@ -200,7 +233,10 @@ describe('SessionsRepository', () => {
       { name: 'fractional limit', filter: { limit: 1.5, offset: 0 } },
       { name: 'negative offset', filter: { limit: 10, offset: -1 } },
       { name: 'fractional offset', filter: { limit: 10, offset: 0.5 } },
-      { name: 'array provider id', filter: { providerId: ['codex'], limit: 10, offset: 0 } }
+      { name: 'array provider id', filter: { providerId: ['codex'], limit: 10, offset: 0 } },
+      { name: 'non-array projectIds', filter: { projectIds: 10 } },
+      { name: 'fractional project id', filter: { projectIds: [1.5] } },
+      { name: 'bad date format', filter: { dateFrom: '2026/07/01' } }
     ];
 
     for (const { name, filter } of invalidFilters) {

@@ -1,6 +1,24 @@
 import Foundation
 
 public enum UsageFormatter {
+    /// 菜单栏主标题：今日已用 token 总量（K/M/B 缩写），取代旧的「服务商 剩余%」。
+    /// 0（一天刚开始，或库为空/未迁移时 summary 为 empty）回落到产品名，
+    /// 免得菜单栏挂一个没有上下文的孤零零 "0"。
+    public static func menuBarTitle(todayTokens: Int64) -> String {
+        guard todayTokens > 0 else { return "TokenMeter" }
+        return compactTokens(todayTokens)
+    }
+
+    /// token 数缩写（775 / 3.4K / 512.4M / 2398.5M），菜单栏标题与弹窗大数字共用。
+    /// 这两处显示的都是【今日】用量——单日数字永远停在 M 单位：升到 1 位小数的 B
+    /// 会把百万级变化吞掉，十亿级也就四位数 M，完全排得下。
+    public static func compactTokens(_ value: Int64) -> String {
+        let v = Double(value)
+        if v >= 1_000_000 { return String(format: "%.1fM", v / 1_000_000) }
+        if v >= 1_000 { return String(format: "%.1fK", v / 1_000) }
+        return String(Int(v))
+    }
+
     public static func menuBarTitle(for snapshots: [ProviderUsageSnapshot], primaryProviderId: String?) -> String {
         guard !snapshots.isEmpty else {
             return "TokenMeter"

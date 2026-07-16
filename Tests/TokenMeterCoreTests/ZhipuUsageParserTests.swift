@@ -161,7 +161,9 @@ final class ZhipuUsageParserTests: XCTestCase {
 
         XCTAssertEqual(snapshot.status, .ok)
         XCTAssertEqual(snapshot.groups.count, 1)
-        XCTAssertEqual(snapshot.groups[0].title, "智谱 Coding Plan")
+        // 组名与 displayName 同名 → 弹窗按主组处理，标签只留 5h/7d/MCP，
+        // 不再拼出「智谱 Coding Plan 5h」这种超宽标签。
+        XCTAssertEqual(snapshot.groups[0].title, "智谱")
         XCTAssertEqual(snapshot.groups[0].items.map(\.label), ["5h", "7d", "MCP"])
         XCTAssertEqual(snapshot.groups[0].items.map(\.remainingPercent), [74, 14, 97])
         XCTAssertEqual(snapshot.groups[0].items[0].windowDurationMinutes, 300)

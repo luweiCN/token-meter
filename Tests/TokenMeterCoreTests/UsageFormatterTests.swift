@@ -2,6 +2,20 @@ import XCTest
 @testable import TokenMeterCore
 
 final class UsageFormatterTests: XCTestCase {
+    func testMenuBarTitleShowsTodayTokensCompactly() {
+        // 菜单栏主标题 = 今日 token 总量的 K/M 缩写（用户裁定：不显示「服务商 剩余%」）。
+        // 单日数字永远停在 M——1 位小数的 B 会把百万级变化吞掉（用户裁定）。
+        XCTAssertEqual(UsageFormatter.menuBarTitle(todayTokens: 775), "775")
+        XCTAssertEqual(UsageFormatter.menuBarTitle(todayTokens: 3_400), "3.4K")
+        XCTAssertEqual(UsageFormatter.menuBarTitle(todayTokens: 521_319_916), "521.3M")
+        XCTAssertEqual(UsageFormatter.menuBarTitle(todayTokens: 2_398_499_879), "2398.5M")
+    }
+
+    func testMenuBarTitleFallsBackToProductNameWhenNoTokensToday() {
+        // 0（刚过午夜/库为空）不显示孤零零的 "0"，回落到产品名。
+        XCTAssertEqual(UsageFormatter.menuBarTitle(todayTokens: 0), "TokenMeter")
+    }
+
     func testMenuBarTitleUsesPrimaryProvider() {
         let snapshots = [
             UsageSnapshot(

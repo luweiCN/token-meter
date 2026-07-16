@@ -26,6 +26,10 @@ const LIVE_WINDOW_MS = 2 * 60_000;
 
 export interface ActivityRow {
   sessionId: number;
+  /// 会话的源标识（source_kind + agent 侧原始会话 key）：hooks 事件只带原始 key，
+  /// renderer 的局部状态更新（session:stateChanged）靠这两个字段匹配到卡片。
+  sourceKind: string;
+  sourceSessionKey: string;
   providerId: string;
   projectName: string;
   primaryModel: string | null;
@@ -37,6 +41,9 @@ export interface ActivityRow {
   costUnknownEvents: number;
   msSinceLastEvent: number;
   isLive: boolean;
+  /// hooks 上报的「阻塞」：agent 停下来等用户（权限确认 / 提问 / 等输入）。
+  /// 只有 hooks 上报的 running 会话才可能为 true——mtime 推断没有这个概念。
+  isBlocked: boolean;
   subagentCount: number;
 }
 
@@ -51,11 +58,13 @@ export interface SubagentRow {
   lastEventMs: number;
 }
 
-type ActivityQueryRow = Omit<ActivityRow, 'msSinceLastEvent' | 'isLive' | 'models'>
-  & { lastEventEpochMs: number; models: string | null };
+type ActivityQueryRow = Omit<ActivityRow, 'msSinceLastEvent' | 'isLive' | 'isBlocked' | 'models'>
+  & { lastEventEpochMs: number; models: string | null; liveState?: string | null; liveBlocked?: number | null };
 
 const ACTIVITY_SELECT =
   `SELECT sr.session_id AS sessionId,
+          s.source_kind AS sourceKind,
+          s.source_session_key AS sourceSessionKey,
           coalesce(s.provider_id, s.source_kind) AS providerId,
           coalesce(p.display_name, '未知项目') AS projectName,
           sr.primary_model AS primaryModel,
@@ -75,8 +84,13 @@ export interface OverviewKpis {
   todaySessions: number;
   todayCostUsdMicros: number;
   todayCostUnknownEvents: number;
+  monthTokens: number;
   monthCostUsdMicros: number;
   monthCostUnknownEvents: number;
+  /// 本周（周一起，与趋势图的周分桶同一日历）。
+  weekTokens: number;
+  weekCostUsdMicros: number;
+  weekCostUnknownEvents: number;
   /// 累计指标（OpenDesign 稿的四指标卡与页头副标题）。
   totalTokens: number;
   totalCostUsdMicros: number;
@@ -126,6 +140,16 @@ export interface DayModelRow {
   model: string;
   tokens: number;
   costUsdMicros: number;
+  sessions: number;
+  events: number;
+}
+
+export interface DayProjectRow {
+  project: string;
+  tokens: number;
+  costUsdMicros: number;
+  sessions: number;
+  events: number;
 }
 
 export interface ModelRank {
@@ -262,6 +286,8 @@ export class OverviewRepository {
     const now = this.now();
     const rows = this.db.prepare(
       `SELECT sr.session_id AS sessionId,
+              s.source_kind AS sourceKind,
+              s.source_session_key AS sourceSessionKey,
               coalesce(s.provider_id, s.source_kind) AS providerId,
               coalesce(p.display_name, '未知项目') AS projectName,
               sr.primary_model AS primaryModel,
@@ -272,7 +298,9 @@ export class OverviewRepository {
               coalesce(sr.cost_usd_micros, 0) + coalesce(sub.cost, 0) AS costUsdMicros,
               sr.cost_unknown_events AS costUnknownEvents,
               max(sr.last_event_epoch_ms, coalesce(sub.last_event, 0)) AS lastEventEpochMs,
-              coalesce(sub.cnt, 0) + coalesce(sc.cnt, 0) AS subagentCount
+              coalesce(sub.cnt, 0) + coalesce(sc.cnt, 0) AS subagentCount,
+              live.lstate AS liveState,
+              live.lblocked AS liveBlocked
          FROM session_rollup sr
          JOIN agent_sessions s ON s.id = sr.session_id
     LEFT JOIN projects p ON p.id = s.project_id
@@ -295,25 +323,114 @@ export class OverviewRepository {
             WHERE e.is_sidechain = 1
          GROUP BY e.session_id
          ) sc ON sc.sid = sr.session_id
+    LEFT JOIN (
+           -- hooks 上报的会话状态（live_sessions 由 Swift 写入）。有上报记录的
+           -- 会话完全以上报为准——SessionEnd 一到立即熄灭，不受 mtime 时间窗
+           -- 干扰。心跳停摆 5 分钟的记录掉出关联、回退推断：Codex 没有
+           -- SessionEnd 事件、退出无从上报，只能靠停摆兜底（PostToolUse 心跳
+           -- 保证活跃长任务不会误灭）。
+           SELECT ls.session_id AS lsid,
+                  ls.state AS lstate,
+                  ls.blocked AS lblocked,
+                  CASE ls.agent_kind
+                    WHEN 'claudeCode' THEN 'claude_jsonl'
+                    WHEN 'codex' THEN 'codex_jsonl'
+                    WHEN 'omp' THEN 'omp_jsonl'
+                    WHEN 'opencode' THEN 'opencode_sqlite'
+                  END AS lkind
+             FROM live_sessions ls
+            WHERE ls.last_seen_at >= datetime('now', '-5 minutes')
+         ) live ON live.lsid = s.source_session_key AND live.lkind = s.source_kind
         WHERE s.status != 'deleted' AND s.root_session_key IS NULL
      ORDER BY (max(sr.last_event_epoch_ms, coalesce(sub.last_event, 0)) > ?) DESC,
               max(sr.last_event_epoch_ms, coalesce(sub.last_event, 0)) DESC
         LIMIT ?`
     ).all(now - LIVE_WINDOW_MS, limit) as ActivityQueryRow[];
-    return rows.map(r => this.toActivityRow(r, now));
+    const indexed = rows.map(r => this.toActivityRow(r, now));
+
+    // 新会话占位卡：hooks 的 start 事件到达（live_sessions 已写）但扫描尚未把
+    // JSONL 索引进来——刚开的会话在首轮响应落盘前根本没有 usage 数据可扫，
+    // 立刻扫描也扫不出。用事件自带的 cwd 先立一张 0 token 的卡，索引落库后
+    // NOT EXISTS 不再命中、被真实卡无缝替换；stop/同进程互斥置 ended 即消失。
+    const placeholders = this.placeholderSessions(now);
+    if (placeholders.length === 0) return indexed;
+    return [...placeholders, ...indexed]
+      .sort((a, b) =>
+        (b.isLive ? 1 : 0) - (a.isLive ? 1 : 0)
+        || (a.msSinceLastEvent - b.msSinceLastEvent))
+      .slice(0, limit);
+  }
+
+  private placeholderSessions(now: number): ActivityRow[] {
+    const rows = this.db.prepare(
+      `SELECT ls.session_id AS sessionKey,
+              ls.cwd AS cwd,
+              ls.blocked AS blocked,
+              CAST(strftime('%s', ls.started_at) AS INTEGER) * 1000 AS startedEpochMs,
+              CAST(strftime('%s', ls.last_seen_at) AS INTEGER) * 1000 AS lastSeenEpochMs,
+              CASE ls.agent_kind
+                WHEN 'claudeCode' THEN 'claude_jsonl'
+                WHEN 'codex' THEN 'codex_jsonl'
+                WHEN 'omp' THEN 'omp_jsonl'
+                WHEN 'opencode' THEN 'opencode_sqlite'
+              END AS sourceKind
+         FROM live_sessions ls
+        WHERE ls.state = 'running'
+          AND ls.last_seen_at >= datetime('now', '-5 minutes')
+          AND NOT EXISTS (
+                SELECT 1 FROM agent_sessions s
+                 WHERE s.source_session_key = ls.session_id
+                   AND s.status != 'deleted'
+                   AND s.source_kind = CASE ls.agent_kind
+                         WHEN 'claudeCode' THEN 'claude_jsonl'
+                         WHEN 'codex' THEN 'codex_jsonl'
+                         WHEN 'omp' THEN 'omp_jsonl'
+                         WHEN 'opencode' THEN 'opencode_sqlite'
+                       END)
+     ORDER BY ls.last_seen_at DESC`
+    ).all() as Array<{
+      sessionKey: string; cwd: string | null; blocked: number;
+      startedEpochMs: number; lastSeenEpochMs: number; sourceKind: string | null;
+    }>;
+
+    return rows.flatMap((r) => {
+      if (!r.sourceKind) return [];
+      const dirName = r.cwd?.split('/').filter(Boolean).pop();
+      return [{
+        sessionId: 0,   // 尚无库 id；渲染层的 key 用 sourceKind:sourceSessionKey
+        sourceKind: r.sourceKind,
+        sourceSessionKey: r.sessionKey,
+        providerId: r.sourceKind,
+        projectName: dirName ?? '新会话',
+        primaryModel: null,
+        models: [],
+        tokensTotal: 0,
+        firstEventEpochMs: r.startedEpochMs,
+        costUsdMicros: 0,
+        costUnknownEvents: 0,
+        msSinceLastEvent: Math.max(0, now - r.lastSeenEpochMs),
+        isLive: true,
+        isBlocked: r.blocked === 1,
+        subagentCount: 0
+      }];
+    });
   }
 
   private toActivityRow(r: ActivityQueryRow, now: number): ActivityRow {
     const msSinceLastEvent = now - r.lastEventEpochMs;
-    const { lastEventEpochMs, models, ...rest } = r;
+    const { lastEventEpochMs, models, liveState, liveBlocked, ...rest } = r;
     // recentActivity 走 ACTIVITY_SELECT 不带 subagentCount/models → 兜默认；sessionRail 归并查询带真实值。
     // models 从 group_concat 的逗号串拆成数组（主会话自己用过的所有模型，排除子代理）。
+    // isLive：有 hooks 上报记录的会话完全以上报为准（ended 立即熄灭）；
+    // 没有记录（未装 hooks 的 agent、装 hooks 前已开启的会话）回退时间窗推断。
+    // isBlocked 只可能来自 hooks 上报（blocked 事件），且仅对 running 会话有意义。
     return {
       ...rest,
       models: models ? models.split(',') : [],
       subagentCount: r.subagentCount ?? 0,
       msSinceLastEvent,
-      isLive: msSinceLastEvent < LIVE_WINDOW_MS
+      isLive: liveState != null ? liveState === 'running' : msSinceLastEvent < LIVE_WINDOW_MS,
+      isBlocked: liveState === 'running' && liveBlocked === 1
     };
   }
 
@@ -377,10 +494,22 @@ export class OverviewRepository {
     ).get(today) as { cost: number; unknown: number };
 
     const monthRow = this.db.prepare(
-      `SELECT coalesce(sum(cost_usd_micros), 0) AS cost,
+      `SELECT coalesce(sum(tokens_input + tokens_output + tokens_cache_read
+                           + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
+              coalesce(sum(cost_usd_micros), 0) AS cost,
               coalesce(sum(cost_unknown_events), 0) AS unknown
          FROM daily_rollup WHERE usage_date LIKE ?`
-    ).get(`${monthPrefix}-%`) as { cost: number; unknown: number };
+    ).get(`${monthPrefix}-%`) as { tokens: number; cost: number; unknown: number };
+
+    // 本周＝周一起（date 的 weekday 修饰符与 trendByDate 的周分桶同一日历）。
+    const weekStart = (this.db.prepare(`SELECT date(?, 'weekday 0', '-6 days') AS d`).get(today) as { d: string }).d;
+    const weekRow = this.db.prepare(
+      `SELECT coalesce(sum(tokens_input + tokens_output + tokens_cache_read
+                           + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
+              coalesce(sum(cost_usd_micros), 0) AS cost,
+              coalesce(sum(cost_unknown_events), 0) AS unknown
+         FROM daily_rollup WHERE usage_date >= ?`
+    ).get(weekStart) as { tokens: number; cost: number; unknown: number };
 
     // 累计口径全部从 daily_rollup 聚合（行数按 天×provider×模型 计，很小）；
     // 会话数只数主会话，与今日会话数同一口径。
@@ -417,8 +546,12 @@ export class OverviewRepository {
       todaySessions,
       todayCostUsdMicros: todayRow.cost,
       todayCostUnknownEvents: todayRow.unknown,
+      monthTokens: monthRow.tokens,
       monthCostUsdMicros: monthRow.cost,
       monthCostUnknownEvents: monthRow.unknown,
+      weekTokens: weekRow.tokens,
+      weekCostUsdMicros: weekRow.cost,
+      weekCostUnknownEvents: weekRow.unknown,
       totalTokens: totalRow.tokens,
       totalCostUsdMicros: totalRow.cost,
       totalCostUnknownEvents: totalRow.unknown,
@@ -437,10 +570,12 @@ export class OverviewRepository {
     return fillGaps(rows, from, to, g);
   }
 
-  /// 按 agent 分组的趋势。tokens/花费从 daily_rollup 聚合；会话数必须回
-  /// usage_events 数 distinct——rollup 的 sessions_count 按模型分行，求和会重复
-  /// （同 kpis 的教训）。distinct 键取「归并后的主会话」：子代理会话通过
-  /// coalesce(root_session_key, source_session_key) 折回主会话，口径与 sessionRail 一致。
+  /// 按 agent 分组的趋势。tokens/花费从 daily_rollup 聚合；会话数从
+  /// daily_active_sessions 数 distinct 主会话（daily_rollup 的 sessions_count
+  /// 按模型分行，求和会重复——同 kpis 的教训）。distinct 键是「归并后的主会话」：
+  /// 子代理会话已在 RollupBuilder 里折回主会话，口径与 sessionRail 一致。
+  /// 曾直接对 usage_events 的 date(...,'localtime') 全表扫描：24 万行 × 三个粒度
+  /// 实测 710ms，同步查询把 Electron 主进程冻住——绝不能回退到扫明细表。
   agentTrend(from: string, to: string, g: 'day' | 'week' | 'month'): AgentTrendSeries {
     if (!isAllowed(from, to, g)) {
       throw new Error(`granularity ${g} is not allowed for ${from}..${to}`);
@@ -452,11 +587,6 @@ export class OverviewRepository {
       g === 'week' ? `date(usage_date, 'weekday 0', '-6 days')`
       : g === 'month' ? `strftime('%Y-%m', usage_date)`
       : `usage_date`;
-    const eventDay = `date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime')`;
-    const eventBucket =
-      g === 'week' ? `date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime', 'weekday 0', '-6 days')`
-      : g === 'month' ? `strftime('%Y-%m', e.observed_epoch_ms / 1000, 'unixepoch', 'localtime')`
-      : eventDay;
 
     const usage = this.db.prepare(
       `SELECT ${rollupBucket} AS bucket,
@@ -470,12 +600,11 @@ export class OverviewRepository {
     ).all(from, to) as Array<Omit<AgentTrendRow, 'sessions'>>;
 
     const sessions = this.db.prepare(
-      `SELECT ${eventBucket} AS bucket,
-              s.provider_id AS providerId,
-              count(DISTINCT s.source_kind || ':' || coalesce(s.root_session_key, s.source_session_key)) AS sessions
-         FROM usage_events e
-         JOIN agent_sessions s ON s.id = e.session_id
-        WHERE ${eventDay} BETWEEN ? AND ?
+      `SELECT ${rollupBucket} AS bucket,
+              provider_id AS providerId,
+              count(DISTINCT root_session_key) AS sessions
+         FROM daily_active_sessions
+        WHERE usage_date BETWEEN ? AND ?
      GROUP BY bucket, providerId`
     ).all(from, to) as Array<{ bucket: string; providerId: string; sessions: number }>;
 
@@ -538,15 +667,15 @@ export class OverviewRepository {
     ).all(from, to) as TrendBucket[];
   }
 
-  /// 一格一天。`sessions` 走 usage_events 的 count(distinct session_id)，
-  /// 【不能】对 daily_rollup.sessions_count 求和——同一会话当天用两个模型会占两行
-  /// （RollupBuilder.swift L44-49）。热力图不补空洞：没数据的那天就是 level 0，
+  /// 一格一天。`sessions` 对 daily_active_sessions.sessions_count 按天求和——每个原始
+  /// session_id 只属于一个主会话键、天内只被数一次，求和恰好等于当天 distinct
+  /// session_id。【不能】对 daily_rollup.sessions_count 求和——同一会话当天用两个模型
+  /// 会占两行（RollupBuilder.swift）。热力图不补空洞：没数据的那天就是 level 0，
   /// 由组件按日历网格摆放，无需 repository 造零行。
   ///
-  /// sessions 曾用「按 d.usage_date 相关的子查询」逐天现算，371 天 × usage_events
-  /// 全表扫描一遍——生产库 26 万行事件时实测单次查询 6 秒多，同步卡住 Electron 主进程，
-  /// 点一下刷新整个应用能卡住好几秒。改成子查询先按天一次性 GROUP BY 聚合、
-  /// 再 LEFT JOIN 回来，usage_events 只扫一遍：同一份生产数据从 6113ms 降到 160ms。
+  /// sessions 曾对 usage_events 现算 distinct：371 天范围最初逐天相关子查询 6113ms，
+  /// 改成单遍 GROUP BY 后仍 156ms（date(...,'localtime') 无法建索引，全表扫描），
+  /// 同步查询冻结 Electron 主进程——现在读物化表，绝不能回退到扫明细表。
   heatmap(from: string, to: string): HeatmapDay[] {
     return this.db.prepare(
       `SELECT d.usage_date AS date,
@@ -557,10 +686,9 @@ export class OverviewRepository {
               coalesce(sum(d.events_count), 0) AS events
          FROM daily_rollup d
          LEFT JOIN (
-              SELECT date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime') AS usage_date,
-                     count(DISTINCT e.session_id) AS sessions
-                FROM usage_events e
-               WHERE date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime') BETWEEN ? AND ?
+              SELECT usage_date, sum(sessions_count) AS sessions
+                FROM daily_active_sessions
+               WHERE usage_date BETWEEN ? AND ?
             GROUP BY usage_date
          ) s ON s.usage_date = d.usage_date
         WHERE d.usage_date BETWEEN ? AND ?
@@ -570,16 +698,38 @@ export class OverviewRepository {
 
   /// 热力图日详情浮层（OpenDesign 稿 day-pop）：当日按模型的 token/花费分行。
   dayModelBreakdown(date: string): DayModelRow[] {
+    // sessions 取 sessions_count 直加：单日单模型的行间（provider/project 维度）
+    // 不共享会话，口径与 heatmap 顶部汇总一致。
     return this.db.prepare(
       `SELECT model_canonical AS model,
               coalesce(sum(tokens_input + tokens_output + tokens_cache_read
                            + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
-              coalesce(sum(cost_usd_micros), 0) AS costUsdMicros
+              coalesce(sum(cost_usd_micros), 0) AS costUsdMicros,
+              coalesce(sum(sessions_count), 0) AS sessions,
+              coalesce(sum(events_count), 0) AS events
          FROM daily_rollup
         WHERE usage_date = ?
      GROUP BY model_canonical
      ORDER BY tokens DESC`
     ).all(date) as DayModelRow[];
+  }
+
+  /// 热力图日详情切到「会话/事件」时的明细维度：按项目。会话天然属于一个项目，
+  /// 而「按模型数会话」没有意义（一个会话可以用多个模型，加总会重复计）。
+  dayProjectBreakdown(date: string): DayProjectRow[] {
+    return this.db.prepare(
+      `SELECT coalesce(p.display_name, '未归属项目') AS project,
+              coalesce(sum(d.tokens_input + d.tokens_output + d.tokens_cache_read
+                           + d.tokens_cache_write_5m + d.tokens_cache_write_1h), 0) AS tokens,
+              coalesce(sum(d.cost_usd_micros), 0) AS costUsdMicros,
+              coalesce(sum(d.sessions_count), 0) AS sessions,
+              coalesce(sum(d.events_count), 0) AS events
+         FROM daily_rollup d
+    LEFT JOIN projects p ON p.id = d.project_id
+        WHERE d.usage_date = ?
+     GROUP BY d.project_id
+     ORDER BY events DESC`
+    ).all(date) as DayProjectRow[];
   }
 
   /// `sortBy` 是联合类型，orderBy 由它派生——不拼接用户输入的排序列。

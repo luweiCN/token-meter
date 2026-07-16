@@ -1,0 +1,82 @@
+/* ── Tailwind v4 + shadcn/ui 基建 ──────────────────────────────────────
+   选择性导入,两条铁律:
+   1. 不引 preflight —— 全局 reset 会重排现有手写 CSS 页面;
+      shadcn 组件自带完整 utility 类,不依赖 preflight。
+   2. utilities 不放 cascade layer —— styles.css 是未分层样式且含元素级
+      全局选择器(button/select/h1…),未分层永远压过 @layer 内的规则;
+      不分层后 utility class(0,1,0)按 specificity 稳赢元素选择器(0,0,1)。 */
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css";
+@import "tw-animate-css";
+
+/* dark 变体跟随现有 <html data-theme> 机制(theme.ts),不吃 media query。 */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* shadcn 语义色 ← styles.css 品牌 token(inline:utility 直接内联 var() 引用,
+   深浅切换由 data-theme 上品牌 token 的值切换自动带动,无需重复定义两套)。
+   注意 shadcn 的「muted/accent」是背景语义,与 styles.css 同名文字色 token
+   不是一回事——这里只做 --color-* 命名空间的映射,绝不动品牌 token 本身。 */
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--fg);
+  --color-popover: var(--surface-solid);
+  --color-popover-foreground: var(--fg);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--on-accent);
+  --color-secondary: var(--surface2);
+  --color-secondary-foreground: var(--fg);
+  --color-muted: var(--surface2);
+  --color-muted-foreground: var(--muted);
+  --color-accent: var(--surface-hover);
+  --color-accent-foreground: var(--text-bright);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: #ffffff;
+  --color-border: var(--border);
+  --color-input: var(--border-strong);
+  --color-ring: var(--focus);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 0.5rem;
+}
+
+/* ── 作用域 preflight ────────────────────────────────────────────────
+   跳过全局 preflight 的代价:浏览器 UA 的 button 默认外观(灰底、outset
+   粗边框)会从 shadcn 的 ghost/outline 变体里露出来——这些变体不设背景
+   utility,没有竞争者,UA 样式就生效了(实测:日历弹层满屏系统灰按钮)。
+   只对 shadcn 组件(data-slot 标记)及其内部表单元素做零 specificity
+   (:where)重置:任何作者样式都能覆盖它,现有手写页面完全不受影响。 */
+:where(button[data-slot], [data-slot] button) {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+:where(input[data-slot], [data-slot] input:not([type='time'])) {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+}
+:where(input[type='time'][data-slot], [data-slot] input[type='time']) {
+  /* time 输入保留原生控件绘制(appearance 置 none 会打碎时刻分段编辑),
+     只抹掉 UA 的底色边框。 */
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}

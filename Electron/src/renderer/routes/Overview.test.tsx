@@ -13,16 +13,21 @@ interface TokenMeterApi {
     query: Mock<() => Promise<OverviewPayload>>;
     dayModelBreakdown: Mock<(date: string) => Promise<unknown[]>>;
     onInvalidate: Mock<(cb: () => void) => () => void>;
+    onSessionEvent: Mock<(cb: (event: unknown) => void) => () => void>;
   };
   index: {
     startFullReindex: Mock<() => Promise<unknown>>;
     onScanProgress: Mock<(cb: (p: ScanProgress) => void) => () => void>;
+  };
+  settings: {
+    get: Mock<() => Promise<{ providerOverrides: Array<{ providerId: string; displayName?: string }> }>>;
   };
 }
 
 let api: TokenMeterApi;
 let scanProgressCb: ((p: ScanProgress) => void) | null = null;
 let invalidateCb: (() => void) | null = null;
+let sessionEventCb: ((event: unknown) => void) | null = null;
 
 function trendSeries(granularity: 'day' | 'week' | 'month') {
   return {
@@ -46,8 +51,12 @@ const readyPayload: OverviewPayload = {
     todaySessions: 3,
     todayCostUsdMicros: 1_500_000,
     todayCostUnknownEvents: 4,
+    monthTokens: 8_200_000,
     monthCostUsdMicros: 9_000_000,
     monthCostUnknownEvents: 4,
+    weekTokens: 2_100_000,
+    weekCostUsdMicros: 2_400_000,
+    weekCostUnknownEvents: 0,
     totalTokens: 28_400_000,
     totalCostUsdMicros: 31_247_000_000,
     totalCostUnknownEvents: 4,
@@ -71,6 +80,8 @@ const readyPayload: OverviewPayload = {
   sessionRail: [
     {
       sessionId: 1,
+      sourceKind: 'claude_jsonl',
+      sourceSessionKey: 'sess-1',
       providerId: 'claude-code',
       projectName: 'token-meter',
       primaryModel: 'claude-fable-5',
@@ -80,6 +91,7 @@ const readyPayload: OverviewPayload = {
       costUnknownEvents: 0,
       msSinceLastEvent: 30_000,
       isLive: true,
+      isBlocked: false,
       subagentCount: 0,
       models: ['claude-fable-5']
     }
@@ -89,6 +101,7 @@ const readyPayload: OverviewPayload = {
 function install(): TokenMeterApi {
   scanProgressCb = null;
   invalidateCb = null;
+  sessionEventCb = null;
   const value: TokenMeterApi = {
     overview: {
       query: vi.fn<() => Promise<OverviewPayload>>(),
@@ -98,6 +111,10 @@ function install(): TokenMeterApi {
       onInvalidate: vi.fn((cb: () => void) => {
         invalidateCb = cb;
         return () => { invalidateCb = null; };
+      }),
+      onSessionEvent: vi.fn((cb: (event: unknown) => void) => {
+        sessionEventCb = cb;
+        return () => { sessionEventCb = null; };
       })
     },
     index: {
@@ -106,6 +123,9 @@ function install(): TokenMeterApi {
         scanProgressCb = cb;
         return () => { scanProgressCb = null; };
       })
+    },
+    settings: {
+      get: vi.fn().mockResolvedValue({ providerOverrides: [] })
     }
   };
   Object.defineProperty(window, 'tokenMeter', { configurable: true, value });
@@ -124,6 +144,51 @@ afterEach(() => {
 
 describe('Overview (ready)', () => {
   beforeEach(() => { api.overview.query.mockResolvedValue(readyPayload); });
+
+  it('flips a session card state in place when a hooks event arrives, without re-querying', async () => {
+    const { act } = await import('@testing-library/react');
+    render(<Overview />);
+    // fixture 会话是 isLive（「运行中」），等首屏渲染完成。
+    await waitFor(() => expect(screen.getByText('运行中')).toBeTruthy());
+    const queriesBefore = api.overview.query.mock.calls.length;
+
+    // blocked 事件 → 卡片就地变「阻塞」，不触发新查询。
+    act(() => sessionEventCb?.({ sourceKind: 'claude_jsonl', sessionKey: 'sess-1', event: 'blocked' }));
+    expect(screen.getByText('阻塞')).toBeTruthy();
+
+    // stop 事件 → 熄灭。最近 30 秒有活动的非 live 会话按时间推断显示「等待输入」
+    //（与随后全量刷新的口径一致），15 分钟后才是「已结束」。
+    act(() => sessionEventCb?.({ sourceKind: 'claude_jsonl', sessionKey: 'sess-1', event: 'stop' }));
+    expect(screen.getByText('等待输入')).toBeTruthy();
+    expect(screen.queryByText('运行中')).toBeNull();
+
+    // 对不上的会话（新会话）不动任何卡片、也不查询——等全量刷新自然出现。
+    act(() => sessionEventCb?.({ sourceKind: 'codex_jsonl', sessionKey: 'unknown', event: 'start' }));
+    expect(api.overview.query.mock.calls.length).toBe(queriesBefore);
+  });
+
+  it('renders provider aliases from settings in the model ranking', async () => {
+    api.settings.get.mockResolvedValue({
+      providerOverrides: [{ providerId: 'claude-code', displayName: '克劳德' }]
+    });
+    render(<Overview />);
+    // 排行的 provider 列与趋势图例都应显示别名而不是内置名。
+    await waitFor(() => expect(screen.getAllByText('克劳德').length).toBeGreaterThan(0));
+    expect(screen.queryByText('Claude Code')).toBeNull();
+  });
+
+  it('shows the loading skeleton first, then swaps in the real content', async () => {
+    let resolveQuery: (payload: OverviewPayload) => void = () => {};
+    api.overview.query.mockReturnValueOnce(new Promise<OverviewPayload>((resolve) => { resolveQuery = resolve; }));
+    const { container } = render(<Overview />);
+
+    expect(screen.getByLabelText('正在加载概览')).toBeTruthy();
+    expect(container.querySelectorAll('.skl .stat')).toHaveLength(4);
+
+    resolveQuery(readyPayload);
+    await screen.findByText('28.40M');
+    expect(container.querySelector('.skl')).toBeNull();
+  });
 
   it('fetches once on mount and renders stat tiles, trend chart, heatmap, ranking and live cards', async () => {
     render(<Overview />);
@@ -154,23 +219,27 @@ describe('Overview (ready)', () => {
 
   it('surfaces unknown-cost events so a zero cost is not mistaken for a free one', async () => {
     render(<Overview />);
-    // 「部分未知」必须在每一处成本旁都能表达——累计成本卡与模型排行都各出现一次。
-    await waitFor(() => { expect(screen.getAllByText(/4 条事件价格未知/).length).toBeGreaterThanOrEqual(2); });
+    // 「部分未知」必须在成本旁可见：模型排行有完整文案，总计卡以 † 标注，
+    // 当月/今日卡显示未知条数。
+    await waitFor(() => { expect(screen.getAllByText(/4 条事件价格未知/).length).toBeGreaterThanOrEqual(1); });
+    expect(screen.getAllByText(/4 条未知/).length).toBeGreaterThanOrEqual(2);   // 当月 + 今日
+    expect(screen.getByText(/†/)).toBeTruthy();                                  // 总计卡
   });
 
-  it('pins a card with that day\'s totals in place on a heatmap click, without navigating away', async () => {
+  it('shows one hover card with the day totals plus its model breakdown', async () => {
     render(<Overview />);
     await screen.findByText('token-meter');
 
     const cell = document.querySelector('.year-heatmap__cell[data-date="2026-07-10"]') as HTMLElement;
     expect(cell).toBeTruthy();
-    fireEvent.click(cell);
+    fireEvent.mouseOver(cell);
 
-    // 总览页原地留着——不再跳到别的路由。
-    expect(screen.getByRole('heading', { level: 1, name: '总览' })).toBeTruthy();
+    // 唯一的浮层卡：汇总在上，按模型明细异步补在下面。
     const card = screen.getByRole('tooltip');
     expect(card.textContent).toContain('2026-07-10');
     expect(card.textContent).toContain('220'); // heatmap fixture 里那天的 tokens
+    await waitFor(() => expect(card.textContent).toContain('claude-fable-5'));
+    expect(api.overview.dayModelBreakdown).toHaveBeenCalledWith('2026-07-10');
   });
 
   it('refreshes on demand when the manual refresh button is clicked', async () => {

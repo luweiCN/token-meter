@@ -131,6 +131,13 @@ public struct CodexUsageProvider: UsageProvider {
             let resetCredits = try? await CodexResetCreditsClient.default.fetch()
             return snapshot.withResetCredits(resetCredits)
         } catch {
+            if !Self.codexExecutableExists() {
+                return providerErrorSnapshot(
+                    providerId: id,
+                    displayName: displayName,
+                    message: "未检测到 Codex 命令行（桌面版 App 不含 CLI），额度读取需要安装 Codex CLI"
+                )
+            }
             return providerErrorSnapshot(
                 providerId: id,
                 displayName: displayName,
@@ -145,8 +152,15 @@ public struct CodexUsageProvider: UsageProvider {
     // 靠 `env node` 按名字查找，PATH 里没有就直接失败——显式拼一条更完整
     // 的 PATH 传给子进程，不依赖父进程继承到的贫瘠环境。
     static func executableSearchPath(homeDirectory: String = NSHomeDirectory()) -> String {
+        searchDirectories(homeDirectory: homeDirectory).joined(separator: ":")
+    }
+
+    static func searchDirectories(homeDirectory: String = NSHomeDirectory()) -> [String] {
         [
             URL(fileURLWithPath: homeDirectory).appendingPathComponent(".local/bin").path,
+            // standalone 安装器的固定装点（~/.local/bin/codex 只是指向它的链接）：
+            // 用户 PATH 没配好、或只装了桌面版但装过 standalone 时，靠它兜底。
+            URL(fileURLWithPath: homeDirectory).appendingPathComponent(".codex/packages/standalone/current/bin").path,
             URL(fileURLWithPath: homeDirectory).appendingPathComponent(".volta/bin").path,
             "/opt/homebrew/bin",
             "/usr/local/bin",
@@ -154,7 +168,15 @@ public struct CodexUsageProvider: UsageProvider {
             "/bin",
             "/usr/sbin",
             "/sbin"
-        ].joined(separator: ":")
+        ]
+    }
+
+    /// codex 命令行在所有候选目录里都找不到时，额度取数必然失败——给用户一句
+    /// 说得清原因的话（桌面版 App 不含 CLI，这是最常见的困惑来源）。
+    static func codexExecutableExists(homeDirectory: String = NSHomeDirectory()) -> Bool {
+        searchDirectories(homeDirectory: homeDirectory).contains { directory in
+            FileManager.default.isExecutableFile(atPath: "\(directory)/codex")
+        }
     }
 
     private static let nodeScript = """
@@ -208,6 +230,20 @@ public struct ClaudeCodeUsageProvider: UsageProvider {
         self.urlSession = urlSession
     }
 
+    /// 与本机 Claude Code 同版本的 UA：oauth/usage 会拒绝过旧的客户端版本号
+    /// （硬编码 2.1.168 时实测持续 429，同一 token 换真实版本立刻 200）。
+    /// ~/.local/bin/claude 是指向版本目录的符号链接，目标的末段就是版本号。
+    static func clientVersion(homeDirectory: String = NSHomeDirectory()) -> String {
+        let linkPath = "\(homeDirectory)/.local/bin/claude"
+        if let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: linkPath) {
+            let version = (destination as NSString).lastPathComponent
+            if !version.isEmpty, version.allSatisfy({ $0.isNumber || $0 == "." }) {
+                return version
+            }
+        }
+        return "2.1.207"
+    }
+
     public func fetchUsage() async -> UsageSnapshot {
         await fetchProviderUsage().legacySnapshot
     }
@@ -229,7 +265,7 @@ public struct ClaudeCodeUsageProvider: UsageProvider {
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
             request.setValue("true", forHTTPHeaderField: "anthropic-dangerous-direct-browser-access")
             request.setValue("cli", forHTTPHeaderField: "x-app")
-            request.setValue("claude-cli/2.1.168 (external, cli)", forHTTPHeaderField: "User-Agent")
+            request.setValue("claude-cli/\(Self.clientVersion()) (external, cli)", forHTTPHeaderField: "User-Agent")
 
             let (data, response) = try await urlSession.data(for: request)
             if let httpResponse = response as? HTTPURLResponse,
@@ -264,17 +300,20 @@ public struct ZhipuUsageProvider: UsageProvider {
     private let config: ProviderConfig
     private let urlSession: URLSession
     private let environment: [String: String]
+    private let keychainToken: (String) -> String?
 
     public init(
         config: ProviderConfig,
         urlSession: URLSession = .shared,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        keychainToken: @escaping (String) -> String? = { KeychainCredentialStore.token(for: $0) }
     ) {
         self.config = config
         self.id = config.id
         self.displayName = config.displayName
         self.urlSession = urlSession
         self.environment = environment
+        self.keychainToken = keychainToken
     }
 
     public func fetchUsage() async -> UsageSnapshot {
@@ -286,7 +325,8 @@ public struct ZhipuUsageProvider: UsageProvider {
             return providerErrorSnapshot(providerId: id, displayName: displayName, message: "智谱 endpoint 缺失")
         }
 
-        guard let token = environmentCredentialToken(config.credential, environment: environment) else {
+        // 应用内填的 Key（钥匙串）优先——那是用户的显式意图；没填才回落环境变量。
+        guard let token = keychainToken(id) ?? environmentCredentialToken(config.credential, environment: environment) else {
             return providerErrorSnapshot(providerId: id, displayName: displayName, message: "缺少智谱 API Key")
         }
 
@@ -864,8 +904,8 @@ public enum CodexUsageParser {
                     ?? (key == "codex" ? "Codex" : readableIdentifier(key))
 
                 let items = [
-                    codexMetric(bucket["primary"], id: "\(key)-5h", label: "5h"),
-                    codexMetric(bucket["secondary"], id: "\(key)-7d", label: "7d")
+                    codexMetric(bucket["primary"], id: "\(key)-primary"),
+                    codexMetric(bucket["secondary"], id: "\(key)-secondary")
                 ].compactMap { $0 }
 
                 guard !items.isEmpty else {
@@ -903,7 +943,17 @@ public enum CodexUsageParser {
         )
     }
 
-    private static func codexMetric(_ value: Any?, id: String, label: String) -> UsageMetric? {
+    /// 窗口标签由数据驱动（300 → 5h、10080 → 7d、1440 → 1d）：上游增删或改窗口
+    /// 时长都不用改代码。以前硬编码 primary=5h、secondary=7d，Codex 取消 5h
+    /// 窗口（primary 直接变成周窗口）后，周额度被错标成了「5h」。
+    static func windowLabel(minutes: Int?) -> String {
+        guard let minutes, minutes > 0 else { return "额度" }
+        if minutes % (24 * 60) == 0 { return "\(minutes / (24 * 60))d" }
+        if minutes % 60 == 0 { return "\(minutes / 60)h" }
+        return "\(minutes)m"
+    }
+
+    private static func codexMetric(_ value: Any?, id: String) -> UsageMetric? {
         guard let dictionary = value as? [String: Any],
               let used = TokenMeterCoreNumber.number(from: dictionary["usedPercent"]) else {
             return nil
@@ -914,7 +964,7 @@ public enum CodexUsageParser {
 
         return UsageMetric(
             id: id,
-            label: label,
+            label: windowLabel(minutes: windowDurationMinutes),
             kind: .quota,
             usedPercent: clampPercent(used),
             remainingPercent: clampPercent(100 - used),
@@ -1445,7 +1495,9 @@ public enum ZhipuUsageParser {
             groups: [
                 UsageGroup(
                     id: "zhipu-coding-plan",
-                    title: "智谱 Coding Plan",
+                    // 与 displayName 同名 → 弹窗按「主组」处理，标签只留 5h/7d/MCP。
+                    // 曾写作「智谱 Coding Plan」，拼上窗口后（智谱 Coding Plan 5h）超宽。
+                    title: displayName,
                     subtitle: nil,
                     items: metrics
                 )
@@ -1612,7 +1664,42 @@ private func environmentCredentialToken(_ credential: CredentialConfig?, environ
         return nil
     }
 
-    return normalizedCredentialToken(environment[name])
+    if let value = normalizedCredentialToken(environment[name]) {
+        return value
+    }
+
+    // LaunchAgent 拉起的进程看不到用户在 shell 配置里 export 的变量——
+    // 起一次用户登录 shell 查询作回退（智谱额度因此断了十天）。
+    return normalizedCredentialToken(LoginShellEnvironment.value(for: name))
+}
+
+/// 从用户登录 shell 读环境变量。每个变量只查一次（成败都缓存）：失败的查询带
+/// 5s 超时，不缓存的话每轮刷新都会白等一次；代价是用户新配了 key 需重启 app。
+enum LoginShellEnvironment {
+    nonisolated(unsafe) private static var cache: [String: String?] = [:]
+    private static let lock = NSLock()
+
+    static func value(for name: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = cache[name] {
+            return cached
+        }
+
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        // fish 与 POSIX shell 的取值语法不同，各给一条最朴素的输出命令。
+        let printCommand = shell.hasSuffix("fish") ? "echo -n $\(name)" : "printf %s \"$\(name)\""
+        let value = (try? runProcess(
+            executable: shell,
+            arguments: ["-l", "-c", printCommand],
+            timeout: 5
+        )).flatMap { String(data: $0, encoding: .utf8) }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let result = (value?.isEmpty == false) ? value : nil
+        cache[name] = result
+        return result
+    }
 }
 
 private func credentialTokens(_ credential: CredentialConfig?, environment: [String: String]) -> [String] {
@@ -1715,7 +1802,7 @@ private func providerErrorSnapshot(providerId: String, displayName: String, mess
     )
 }
 
-private func runProcess(
+func runProcess(
     executable: String,
     arguments: [String],
     environmentOverrides: [String: String] = [:],

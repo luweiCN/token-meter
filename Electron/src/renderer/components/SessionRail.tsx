@@ -3,19 +3,20 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ActivityRow, SubagentRow } from '../api.js';
 import { formatDurationShort, formatRelative, formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
 
-/// 实时会话卡（OpenDesign 稿 8b）三态：
+/// 实时会话卡（OpenDesign 稿 8b）四态：
+///   blocked —— hooks 上报「agent 停下来等用户」（权限确认 / 提问，琥珀色脉冲点）
 ///   running —— 2 分钟内有新事件（repository 的 isLive，脉冲绿点）
 ///   idle    —— 2~15 分钟（「等待输入」，黄点）；15 分钟只是稿上 6m=idle/18m=done 的中点取整
 ///   done    —— 更久（「已结束」，灰点）
-/// 三态都只陈述磁盘事实，不声称进程状态（spec §7.2.1）。
+/// blocked 来自 hooks 事件流，其余三态只陈述磁盘事实（spec §7.2.1）。
 const IDLE_WINDOW_MS = 15 * 60_000;
 
-function cardState(s: ActivityRow): 'running' | 'idle' | 'done' {
-  if (s.isLive) return 'running';
+function cardState(s: ActivityRow): 'blocked' | 'running' | 'idle' | 'done' {
+  if (s.isLive) return s.isBlocked ? 'blocked' : 'running';
   return s.msSinceLastEvent < IDLE_WINDOW_MS ? 'idle' : 'done';
 }
 
-const STATE_LABEL = { running: '运行中', idle: '等待输入', done: '已结束' } as const;
+const STATE_LABEL = { blocked: '阻塞', running: '运行中', idle: '等待输入', done: '已结束' } as const;
 
 /// 实时会话网格：一张 lcard 一个主会话，token/成本是【含子代理的合计】。
 /// 会话标题不展示——97% 的会话（Codex SDK 批量调用）源日志里就没有标题。
@@ -38,7 +39,8 @@ export function SessionRail({ sessions, now }: { sessions: ActivityRow[]; now: n
           const unknownNote = formatUnknownCostNote(s.costUnknownEvents);
           const model = s.models[0] ?? s.primaryModel;
           return (
-            <div key={s.sessionId} className="lcard" data-state={state}>
+            // key 用源标识：新会话占位卡还没有库 id（sessionId=0），sessionId 会撞。
+            <div key={`${s.sourceKind}:${s.sourceSessionKey}`} className="lcard" data-state={state}>
               <div className="lc-top">
                 <i className="dot" aria-hidden="true" />
                 <span className="proj" title={s.projectName}>{s.projectName}</span>
@@ -142,6 +144,9 @@ function SubagentModal({
     }
   };
 
+  // 横条基准取全量最大值（不随筛选变），筛掉行时其余行的条长不跳。
+  const maxTokens = Math.max(1, ...rows.map(r => r.tokens));
+
   const shown = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     const kept = needle ? rows.filter(r => r.label.toLowerCase().includes(needle)) : rows;
@@ -168,23 +173,29 @@ function SubagentModal({
           <button type="button" className="close" aria-label="关闭" onClick={close}>×</button>
         </header>
         <div className="tools">
-          <input
-            className="subagent-modal__filter"
-            placeholder="按名称筛选"
-            value={filter}
-            onChange={e => setFilter(e.target.value)}
-          />
-          <div className="subagent-modal__sort" role="group" aria-label="排序">
+          <div className="filter-box">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.8-3.8" />
+            </svg>
+            <input
+              placeholder="按名称筛选"
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+            />
+          </div>
+          <div className="seg" role="group" aria-label="排序">
             {SORTS.map(s => (
               <button
                 key={s.key}
                 type="button"
-                className={`subagent-modal__sort-btn${sortBy === s.key ? ' is-active' : ''}`}
+                className={sortBy === s.key ? 'on' : ''}
                 aria-pressed={sortBy === s.key}
                 onClick={() => onSort(s.key)}
               >
                 {s.label}
-                {sortBy === s.key ? <span className="subagent-modal__sort-dir" aria-hidden="true">{sortDir === 'desc' ? '↓' : '↑'}</span> : null}
+                {sortBy === s.key ? <span aria-hidden="true"> {sortDir === 'desc' ? '↓' : '↑'}</span> : null}
               </button>
             ))}
           </div>
@@ -193,15 +204,33 @@ function SubagentModal({
           {shown.length === 0 ? (
             <p className="muted subagent-modal__empty">没有匹配的子代理。</p>
           ) : (
-            shown.map((r, i) => (
-              <div key={i} className="subagent-modal__row">
-                <span className="subagent-modal__idx">{i + 1}</span>
-                <span className="subagent-modal__label" title={r.label}>{r.label}</span>
-                <span className="subagent-modal__time">{formatRelative(now - r.lastEventMs)}</span>
-                <span className="subagent-modal__tokens">{formatTokens(r.tokens)} tokens</span>
-                <span className="subagent-modal__cost">{formatUsdMicros(r.costUsdMicros)}</span>
-              </div>
-            ))
+            <table>
+              <thead>
+                <tr>
+                  <th className="r">#</th>
+                  <th>名称</th>
+                  <th>Token</th>
+                  <th className="r">成本</th>
+                  <th className="r">时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((r, i) => (
+                  <tr key={i}>
+                    <td className="r num">{i + 1}</td>
+                    <td><span className="mname" title={r.label}>{r.label}</span></td>
+                    <td>
+                      <div className="mbar">
+                        <div className="bar"><i style={{ width: `${Math.round((r.tokens / maxTokens) * 100)}%` }} /></div>
+                        <span className="num">{formatTokens(r.tokens)}</span>
+                      </div>
+                    </td>
+                    <td className="r num">{formatUsdMicros(r.costUsdMicros)}</td>
+                    <td className="r num">{formatRelative(now - r.lastEventMs)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       </div>

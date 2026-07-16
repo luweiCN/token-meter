@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 
 import { AppShell } from './App.js';
+import { dismissToast } from './components/toast.js';
 import type { SettingsSnapshot } from './stores/settingsStore.js';
 
 interface SettingsPatch {
@@ -31,6 +32,9 @@ interface IndexStatusResult {
     lastScanFinishedAt: string | null;
     lastSuccessfulCursor: string | null;
     lastError: string | null;
+    fileCount: number;
+    totalSizeBytes: number;
+    eventsCount: number;
   }>;
   runs: Array<{
     id: number;
@@ -89,11 +93,35 @@ interface TokenMeterApi {
   overview: {
     query: Mock<() => Promise<{ dataState: string }>>;
     onInvalidate: Mock<(callback: () => void) => () => void>;
+    onSessionEvent: Mock<(callback: (event: unknown) => void) => () => void>;
+  };
+  sessions: {
+    query: Mock<() => Promise<{ items: unknown[]; total: number }>>;
+    projects: Mock<() => Promise<unknown[]>>;
+  };
+  projects: {
+    list: Mock<() => Promise<unknown[]>>;
+    detail: Mock<(projectId: number) => Promise<unknown>>;
   };
   index: {
     status: Mock<() => Promise<IndexStatusResult>>;
+    setRootEnabled: Mock<(id: number, enabled: boolean) => Promise<void>>;
     startFullReindex: Mock<() => Promise<unknown>>;
     onScanProgress: Mock<(callback: (progress: unknown) => void) => () => void>;
+  };
+  agents: {
+    detect: Mock<() => Promise<Array<{ kind: string; found: boolean; path?: string | null; version?: string | null }> | null>>;
+  };
+  credentials: {
+    set: Mock<(providerId: string, token: string) => Promise<boolean>>;
+    state: Mock<(providerId: string) => Promise<boolean | null>>;
+  };
+  notifications: {
+    state: Mock<() => Promise<string>>;
+    requestAuthorization: Mock<() => Promise<string>>;
+  };
+  windowControls: {
+    setButtonsVisible: Mock<(visible: boolean) => Promise<void>>;
   };
 }
 
@@ -101,6 +129,7 @@ const settingsSnapshot: SettingsSnapshot = {
   version: 12,
   menuBarPrimaryProviderId: 'codex',
   autoRefreshSeconds: 300,
+  quotaUsedThresholdPercent: 0,
   enabledAgentKinds: ['claudeCode', 'codex'],
   providerOverrides: [
     {
@@ -122,12 +151,6 @@ const settingsSnapshot: SettingsSnapshot = {
   ]
 };
 
-const updatedSettingsSnapshot: SettingsSnapshot = {
-  ...settingsSnapshot,
-  version: 13,
-  menuBarPrimaryProviderId: 'claude-code'
-};
-
 const indexStatusResult: IndexStatusResult = {
   roots: [
     {
@@ -140,7 +163,10 @@ const indexStatusResult: IndexStatusResult = {
       lastScanStartedAt: '2026-07-03T10:10:00Z',
       lastScanFinishedAt: '2026-07-03T10:10:05Z',
       lastSuccessfulCursor: 'cursor-123',
-      lastError: null
+      lastError: null,
+      fileCount: 4921,
+      totalSizeBytes: 2048_000,
+      eventsCount: 38455
     },
     {
       id: 2,
@@ -152,7 +178,10 @@ const indexStatusResult: IndexStatusResult = {
       lastScanStartedAt: '2026-07-03T09:00:00Z',
       lastScanFinishedAt: '2026-07-03T09:00:01Z',
       lastSuccessfulCursor: null,
-      lastError: 'database operation failed'
+      lastError: 'database operation failed',
+      fileCount: 1584,
+      totalSizeBytes: 512_000,
+      eventsCount: 16447
     }
   ],
   runs: [
@@ -232,12 +261,47 @@ function installTokenMeterApi(): TokenMeterApi {
     },
     overview: {
       query: vi.fn<() => Promise<{ dataState: string }>>(),
-      onInvalidate: vi.fn<(callback: () => void) => () => void>(() => () => {})
+      onInvalidate: vi.fn<(callback: () => void) => () => void>(() => () => {}),
+      onSessionEvent: vi.fn<(callback: (event: unknown) => void) => () => void>(() => () => {})
+    },
+    sessions: {
+      query: vi.fn(async () => ({ items: [], total: 0 })),
+      projects: vi.fn(async () => [])
+    },
+    projects: {
+      list: vi.fn(async () => [
+        {
+          id: 1, displayName: 'token-meter', pathLabel: '~/code/ai/token-meter',
+          sessionsCount: 42, costUsdMicros: 1_300_000, costUnknownEvents: 0,
+          tokensTotal: 999, spark: Array.from({ length: 14 }, () => 0), lastActiveDate: '2026-07-10'
+        }
+      ]),
+      detail: vi.fn(async () => null)
     },
     index: {
       status: vi.fn<() => Promise<IndexStatusResult>>(),
+      setRootEnabled: vi.fn<(id: number, enabled: boolean) => Promise<void>>(async () => {}),
       startFullReindex: vi.fn<() => Promise<unknown>>(),
       onScanProgress: vi.fn<(callback: (progress: unknown) => void) => () => void>(() => () => {})
+    },
+    agents: {
+      detect: vi.fn(async () => [
+        { kind: 'claudeCode', found: true, path: '/usr/local/bin/claude', version: '2.1.207 (Claude Code)' },
+        { kind: 'codex', found: false, path: null, version: null },
+        { kind: 'omp', found: true, path: '/opt/homebrew/bin/omp', version: 'omp/16.4.8' },
+        { kind: 'opencode', found: true, path: '/opt/homebrew/bin/opencode', version: '1.17.18' }
+      ])
+    },
+    credentials: {
+      set: vi.fn<(providerId: string, token: string) => Promise<boolean>>(async (_id, token) => token !== ''),
+      state: vi.fn<(providerId: string) => Promise<boolean | null>>(async () => false)
+    },
+    notifications: {
+      state: vi.fn<() => Promise<string>>(async () => 'notDetermined'),
+      requestAuthorization: vi.fn<() => Promise<string>>(async () => 'authorized')
+    },
+    windowControls: {
+      setButtonsVisible: vi.fn<(visible: boolean) => Promise<void>>(async () => {})
     }
   };
 
@@ -265,6 +329,7 @@ describe('AppShell renderer routes', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    dismissToast();
     Reflect.deleteProperty(window, 'tokenMeter');
   });
 
@@ -274,10 +339,12 @@ describe('AppShell renderer routes', () => {
     const nav = screen.getByRole('navigation');
     expect(within(nav).getByRole('button', { name: '总览' }).getAttribute('aria-current')).toBe('page');
     expect(within(nav).getByRole('button', { name: '会话' }).getAttribute('aria-current')).toBeNull();
-    expect(within(nav).getByRole('button', { name: '索引状态' }).getAttribute('aria-current')).toBeNull();
     expect(within(nav).getByRole('button', { name: '设置' }).getAttribute('aria-current')).toBeNull();
-    // 「项目」「查询」的页面稿未接入：先渲染禁用态占位，不产生路由。
-    expect((within(nav).getByRole('button', { name: '项目' }) as HTMLButtonElement).disabled).toBe(true);
+    // 索引状态已并入设置页数据区，侧栏不再单列。
+    expect(within(nav).queryByRole('button', { name: '索引状态' })).toBeNull();
+    expect((within(nav).getByRole('button', { name: '项目' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((within(nav).getByRole('button', { name: '模型' }) as HTMLButtonElement).disabled).toBe(false);
+    // 「查询」的页面稿未接入：仍是禁用态占位，不产生路由。
     expect((within(nav).getByRole('button', { name: '查询' }) as HTMLButtonElement).disabled).toBe(true);
     expect(document.querySelectorAll('a:not([href])')).toHaveLength(0);
     expectNoEnglishScaffold();
@@ -295,20 +362,20 @@ describe('AppShell renderer routes', () => {
     expectNoEnglishScaffold();
   });
 
-  it('refreshes the index status when the window regains focus', async () => {
-    const user = userEvent.setup();
+  it('refreshes the sidebar index summary when the window regains focus', async () => {
     api.index.status.mockResolvedValueOnce(indexStatusResult).mockResolvedValue(healthyIndexStatusResult);
     render(<AppShell />);
 
-    await user.click(screen.getByRole('button', { name: '索引状态' }));
-    expect(await screen.findByText('扫描 #42 · 部分失败')).toBeTruthy();
+    await waitFor(() => {
+      expect(api.index.status).toHaveBeenCalledTimes(1);
+    });
 
     window.dispatchEvent(new Event('focus'));
 
+    // App 只维护侧栏「上次扫描」摘要；聚焦时重拉一次。
     await waitFor(() => {
       expect(api.index.status.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
-    expect(await screen.findByText('扫描 #43 · 成功')).toBeTruthy();
   });
 
   it('changes the visible route content when sidebar controls are clicked', async () => {
@@ -320,90 +387,90 @@ describe('AppShell renderer routes', () => {
 
     await user.click(screen.getByRole('button', { name: '会话' }));
     expect(screen.getByRole('heading', { level: 1, name: '会话' })).toBeTruthy();
-    expect(screen.getByText(/会话.*用量|筛选用量/)).toBeTruthy();
+    expect(await screen.findByText('全部项目')).toBeTruthy();
+    expect(screen.getByPlaceholderText('搜索会话标题 / 模型')).toBeTruthy();
     expectNoEnglishScaffold();
 
-    await user.click(screen.getByRole('button', { name: '索引状态' }));
-    expect(screen.getByRole('heading', { level: 1, name: '索引状态' })).toBeTruthy();
-    expect(screen.getAllByText(/扫描根|失败文件/).length).toBeGreaterThan(0);
+    await user.click(within(screen.getByRole('navigation')).getByRole('button', { name: '项目' }));
+    expect(screen.getByRole('heading', { level: 1, name: '项目' })).toBeTruthy();
+    // 项目卡：名称 + 脱敏路径 + 会话数。
+    expect(await screen.findByText('token-meter')).toBeTruthy();
+    expect(screen.getByText('~/code/ai/token-meter')).toBeTruthy();
+    expect(screen.getByText('42 会话')).toBeTruthy();
     expectNoEnglishScaffold();
 
     await user.click(screen.getByRole('button', { name: '设置' }));
     expect(screen.getByRole('heading', { level: 1, name: '设置' })).toBeTruthy();
-    expect(screen.getAllByText(/提供商设置|菜单栏优先显示/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/供应商额度接入|Coding Agent 集成/).length).toBeGreaterThan(0);
     expectNoEnglishScaffold();
   });
 
-  it('loads index status from the preload API and renders roots, recent runs, and failed files', async () => {
+  it('renders one source card per scan root inside the data section of the settings page', async () => {
     const user = userEvent.setup();
     render(<AppShell />);
 
-    await user.click(screen.getByRole('button', { name: '索引状态' }));
+    await user.click(screen.getByRole('button', { name: '设置' }));
 
-    await waitFor(() => {
-      expect(api.index.status).toHaveBeenCalledTimes(1);
-    });
-    expect(await screen.findByText('Codex')).toBeTruthy();
-    expect(screen.getByText('~/.codex/records')).toBeTruthy();
-    expect(screen.getByText('OpenCode')).toBeTruthy();
-    expect(screen.getByText('~/.local/share/opencode')).toBeTruthy();
-    expect(screen.getByText(/最近扫描|扫描记录/)).toBeTruthy();
-    expect(screen.getByText('扫描 #42 · 部分失败')).toBeTruthy();
-    expect(screen.getByText('2026-07-03T10:15:00Z')).toBeTruthy();
-    expect(screen.getByText('3 / 8')).toBeTruthy();
-    expect(screen.getByText('1 file failed')).toBeTruthy();
-    expect(screen.getAllByText(/失败文件/).length).toBeGreaterThan(0);
-    expect(screen.getByText('bad/session.jsonl')).toBeTruthy();
-    expect(screen.getAllByText('database operation failed').length).toBeGreaterThan(0);
+    // 每源一张卡：名称 + pill、路径、文件/事件数。
+    expect(await screen.findByText('~/.codex/records')).toBeTruthy();
+    expect(screen.getByText('已完成')).toBeTruthy();
+    expect(screen.getByText('38,455')).toBeTruthy();       // Codex 事件数
+    expect(screen.getByText('已停用')).toBeTruthy();       // enabled=false
+    // 失败文件收进卡片错误行（1 个解析失败 + root 级错误合并展示）。
+    expect(screen.getByText(/1 个文件解析失败/)).toBeTruthy();
+    // 数据区汇总：总事件数 = 两源之和。
+    expect(screen.getByText(/54,902/)).toBeTruthy();
     expectNoEnglishScaffold();
   });
 
-  it('starts a reindex from the index status page and refreshes the displayed status', async () => {
+  it('starts a full rescan from the settings data section and clears the error row after it finishes', async () => {
     const user = userEvent.setup();
     const refreshedStatus: IndexStatusResult = {
       ...indexStatusResult,
       roots: indexStatusResult.roots.map((root) => ({ ...root, lastError: null })),
-      runs: [
-        {
-          ...indexStatusResult.runs[0],
-          id: 43,
-          status: 'ok',
-          errorSummary: null
-        }
-      ],
       failedFiles: []
     };
-    api.index.status.mockResolvedValueOnce(indexStatusResult).mockResolvedValueOnce(refreshedStatus);
+    // App 侧栏摘要 + 设置页各拉一次，完成后设置页再拉 → 用最后一次返回干净状态。
+    api.index.status.mockResolvedValueOnce(indexStatusResult).mockResolvedValueOnce(indexStatusResult).mockResolvedValue(refreshedStatus);
     render(<AppShell />);
 
-    await user.click(screen.getByRole('button', { name: '索引状态' }));
-    await screen.findByText('扫描 #42 · 部分失败');
-    await user.click(screen.getByRole('button', { name: '重新索引' }));
+    await user.click(screen.getByRole('button', { name: '设置' }));
+    await screen.findByText(/1 个文件解析失败/);
+    await user.click(screen.getByRole('button', { name: '重新扫描…' }));
+    await user.click(await screen.findByRole('button', { name: '开始重建' }));
 
     await waitFor(() => {
       expect(api.index.startFullReindex).toHaveBeenCalledTimes(1);
     });
-    await waitFor(() => {
-      expect(api.index.status).toHaveBeenCalledTimes(2);
-    });
-    expect(await screen.findByText('扫描 #43 · 成功')).toBeTruthy();
+    // 重扫后失败清空：错误行消失。
+    await waitFor(() => expect(screen.queryByText(/个文件解析失败/)).toBeNull());
   });
 
-  it('loads settings on the Settings route and persists primary provider changes through the whitelisted API', async () => {
+  it('toggles a coding agent kind through the whitelisted settings API', async () => {
     const user = userEvent.setup();
-    api.settings.get.mockResolvedValueOnce(settingsSnapshot).mockResolvedValueOnce(updatedSettingsSnapshot);
     render(<AppShell />);
 
     await user.click(screen.getByRole('button', { name: '设置' }));
-    const primaryProviderSelect = await screen.findByLabelText('主要提供商');
+    const toggle = await screen.findByRole('button', { name: 'OMP' });
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
 
-    expect(primaryProviderSelect).toHaveProperty('value', 'codex');
-    await user.selectOptions(primaryProviderSelect, 'claude-code');
+    await user.click(toggle);
 
     await waitFor(() => {
-      expect(api.settings.update).toHaveBeenCalledWith({ menuBarPrimaryProviderId: 'claude-code' }, 12);
+      expect(api.settings.update).toHaveBeenCalledWith({ enabledAgentKinds: ['claudeCode', 'codex', 'omp'] }, 12);
     });
-    expectNoEnglishScaffold();
+  });
+
+  it('changes the scan interval through the whitelisted settings API', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+
+    await user.click(screen.getByRole('button', { name: '设置' }));
+    await user.click(await screen.findByRole('button', { name: '30 秒' }));
+
+    await waitFor(() => {
+      expect(api.settings.update).toHaveBeenCalledWith({ autoRefreshSeconds: 30 }, 12);
+    });
   });
 
   it('shows a failed settings status when the whitelisted update rejects', async () => {
@@ -412,8 +479,7 @@ describe('AppShell renderer routes', () => {
     render(<AppShell />);
 
     await user.click(screen.getByRole('button', { name: '设置' }));
-    const primaryProviderSelect = await screen.findByLabelText('主要提供商');
-    await user.selectOptions(primaryProviderSelect, 'claude-code');
+    await user.click(await screen.findByRole('button', { name: 'OMP' }));
 
     await waitFor(() => {
       expect(screen.getByRole('status').textContent).toMatch(/设置保存失败/);
@@ -422,9 +488,115 @@ describe('AppShell renderer routes', () => {
     expectNoEnglishScaffold();
   });
 
+  it('shows detected CLI versions and flags an enabled agent whose CLI is missing', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(screen.getByRole('button', { name: '设置' }));
+
+    // 检测到的 agent 显示版本 + 路径；开着却没 CLI 的（codex）打「未找到命令行」。
+    expect(await screen.findByText(/2\.1\.207/)).toBeTruthy();
+    expect(screen.getByText(/omp\/16\.4\.8/)).toBeTruthy();
+    expect(screen.getByText('未找到命令行')).toBeTruthy();
+    expect(api.agents.detect).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: '重新检测' }));
+    await waitFor(() => expect(api.agents.detect).toHaveBeenCalledTimes(2));
+    expectNoEnglishScaffold();
+  });
+
+  it('toggles a quota provider off via the row switch', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(screen.getByRole('button', { name: '设置' }));
+
+    // fixture 里 zhipu 无 override → 默认启用；点开关 = 停用。
+    await user.click(await screen.findByRole('button', { name: '启用 智谱 GLM' }));
+
+    await waitFor(() => {
+      expect(api.settings.update).toHaveBeenCalledWith({ providerEnabled: { zhipu: false } }, 12);
+    });
+  });
+
+  it('saves an in-app API key to the keychain and can clear it later', async () => {
+    const user = userEvent.setup();
+    api.credentials.state.mockResolvedValue(true);   // 已配置过 → 显示清除按钮
+    render(<AppShell />);
+    await user.click(screen.getByRole('button', { name: '设置' }));
+
+    const keyInput = await screen.findByLabelText('智谱 GLM API Key');
+    await user.type(keyInput, 'sk-test-123');
+    await user.click(screen.getByRole('button', { name: '存入钥匙串' }));
+
+    await waitFor(() => {
+      expect(api.credentials.set).toHaveBeenCalledWith('zhipu', 'sk-test-123');
+    });
+
+    await user.click(screen.getByRole('button', { name: '清除' }));
+    await waitFor(() => {
+      expect(api.credentials.set).toHaveBeenCalledWith('zhipu', '');
+    });
+    expectNoEnglishScaffold();
+  });
+
+  it('toggles a scan root off via the row switch and refreshes the directory list', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(screen.getByRole('button', { name: '设置' }));
+
+    // fixture 里 root 1（Codex）enabled=true：点开关 = 暂停该目录。
+    await user.click(await screen.findByRole('button', { name: 'Codex 目录启用开关' }));
+
+    await waitFor(() => {
+      expect(api.index.setRootEnabled).toHaveBeenCalledWith(1, false);
+    });
+    expect(api.index.status.mock.calls.length).toBeGreaterThan(1);   // 成功后重拉目录列表
+    expectNoEnglishScaffold();
+  });
+
+  it('switches the appearance preference to follow-system', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(screen.getByRole('button', { name: '设置' }));
+
+    await user.click(await screen.findByRole('button', { name: '跟随系统' }));
+
+    expect(localStorage.getItem('tm-theme')).toBe('system');
+    // jsdom 的 matchMedia 由 setup 提供（prefers-color-scheme 不匹配 → light）。
+    expect(document.documentElement.dataset.theme).toMatch(/dark|light/);
+  });
+
+  it('turns the quota alert on with the default threshold and requests notification authorization', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(screen.getByRole('button', { name: '设置' }));
+
+    await user.click(await screen.findByRole('button', { name: '额度告警开关' }));
+
+    await waitFor(() => {
+      expect(api.settings.update).toHaveBeenCalledWith({ quotaUsedThresholdPercent: 85 }, 12);
+    });
+    expect(api.notifications.requestAuthorization).toHaveBeenCalled();
+    expectNoEnglishScaffold();
+  });
+
+  it('turns the quota alert off by writing threshold 0 without touching authorization', async () => {
+    const user = userEvent.setup();
+    api.settings.get.mockResolvedValue({ ...settingsSnapshot, quotaUsedThresholdPercent: 85 });
+    render(<AppShell />);
+    await user.click(screen.getByRole('button', { name: '设置' }));
+
+    await user.click(await screen.findByRole('button', { name: '额度告警开关' }));
+
+    await waitFor(() => {
+      expect(api.settings.update).toHaveBeenCalledWith({ quotaUsedThresholdPercent: 0 }, 12);
+    });
+    expect(api.notifications.requestAuthorization).not.toHaveBeenCalled();
+  });
+
   it('shows a failed settings status when initial settings load rejects', async () => {
     const user = userEvent.setup();
-    api.settings.get.mockRejectedValueOnce(new Error('SQLite unavailable'));
+    // 持续拒绝：Overview 挂载时也会消耗一次 settings.get（别名映射），Once 会被它抢走。
+    api.settings.get.mockRejectedValue(new Error('SQLite unavailable'));
     render(<AppShell />);
 
     await user.click(screen.getByRole('button', { name: '设置' }));

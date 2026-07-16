@@ -35,8 +35,8 @@ beforeEach(() => {
     -- 见 TokenMeterDatabaseSchema.swift 的 idx_daily_rollup_unique。
     CREATE UNIQUE INDEX idx_daily_rollup_unique
       ON daily_rollup(usage_date, provider_id, source_kind, coalesce(project_id,-1), model_canonical);
-    -- usage_events：明细表（spec §4.1）。小时粒度趋势与热力图会话数走它，daily_rollup 只有天。
-    -- Task 2 的 fixture 没建它；trendByHour 与 heatmap 的子查询都读这张表。
+    -- usage_events：明细表（spec §4.1）。小时粒度趋势与 sessionRail 的 models 走它。
+    -- 会话数聚合已物化进 daily_active_sessions，agentTrend/heatmap 不再扫明细。
     CREATE TABLE usage_events (
       id INTEGER PRIMARY KEY,
       session_id INTEGER NOT NULL,
@@ -58,11 +58,28 @@ beforeEach(() => {
       id INTEGER PRIMARY KEY, scan_root_id INTEGER NOT NULL DEFAULT 1,
       relative_path TEXT NOT NULL DEFAULT '', subagent_label TEXT
     );
+    -- 「日 × provider × 主会话」活跃明细（TokenMeterDatabaseSchema.swift 的 derivedTables）。
+    -- agentTrend 数 distinct root_session_key，heatmap 对 sessions_count 求和。
+    CREATE TABLE daily_active_sessions (
+      usage_date TEXT NOT NULL,
+      provider_id TEXT NOT NULL,
+      root_session_key TEXT NOT NULL,
+      sessions_count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (usage_date, provider_id, root_session_key)
+    );
     -- 空状态判据表（TokenMeterDatabaseSchema.swift 的 scan_roots，取本判据用到的列）。
     CREATE TABLE scan_roots (
       id INTEGER PRIMARY KEY, kind TEXT NOT NULL, root_path TEXT NOT NULL,
       display_name TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
       scan_mode TEXT NOT NULL DEFAULT 'incremental', stable_source_key TEXT NOT NULL DEFAULT 'k'
+    );
+    -- hooks 上报的运行中会话（TokenMeterDatabaseSchema.swift 的 runtimeTables）。
+    CREATE TABLE live_sessions (
+      agent_kind TEXT NOT NULL, session_id TEXT NOT NULL, cwd TEXT, owner_pid INTEGER,
+      state TEXT NOT NULL, blocked INTEGER NOT NULL DEFAULT 0,
+      started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (agent_kind, session_id)
     );
   `);
 });
@@ -153,6 +170,71 @@ describe('subagentBreakdown', () => {
 });
 
 describe('sessionRail sub-agent merging', () => {
+  it('trusts hooks-reported state over the mtime window when a live_sessions row exists', () => {
+    // 会话 1：mtime 很新（推断会亮），但 hooks 已报 SessionEnd → 必须熄灭。
+    seedSession(1, 'claude', 'alpha', 10_000, 100);
+    db.prepare(`INSERT INTO live_sessions(agent_kind, session_id, state) VALUES ('claudeCode', 's1', 'ended')`).run();
+    // 会话 2：mtime 很旧（推断不亮），但 hooks 报 running → 点亮。
+    seedSession(2, 'claude', 'beta', 60 * 60_000, 100);
+    db.prepare(`INSERT INTO live_sessions(agent_kind, session_id, state) VALUES ('claudeCode', 's2', 'running')`).run();
+    // 会话 3：无上报记录 → 回退时间窗推断（新 → 亮）。
+    seedSession(3, 'claude', 'gamma', 10_000, 100);
+
+    const rail = new OverviewRepository(db, () => NOW).sessionRail(10);
+    const byProject = new Map(rail.map((r) => [r.projectName, r.isLive]));
+    expect(byProject.get('alpha')).toBe(false);
+    expect(byProject.get('beta')).toBe(true);
+    expect(byProject.get('gamma')).toBe(true);
+  });
+
+  it('creates a placeholder card for a hooks-started session not yet indexed, replaced once indexed', () => {
+    // 场景：SessionStart 刚到（live_sessions 已写），扫描还没把 JSONL 索引进来。
+    db.prepare(`INSERT INTO live_sessions(agent_kind, session_id, cwd, state) VALUES ('claudeCode', 'fresh-1', '/Users/x/code/my-proj', 'running')`).run();
+
+    const rail = new OverviewRepository(db, () => NOW).sessionRail(10);
+
+    expect(rail).toHaveLength(1);
+    expect(rail[0]).toMatchObject({
+      sessionId: 0,
+      sourceKind: 'claude_jsonl',
+      sourceSessionKey: 'fresh-1',
+      projectName: 'my-proj',        // cwd 尾目录名
+      tokensTotal: 0,
+      isLive: true,
+      isBlocked: false
+    });
+
+    // 扫描落库后（agent_sessions 有对应行）：占位卡消失，只剩真实卡。
+    seedSession(1, 'claude', 'my-proj', 10_000, 100);
+    db.prepare(`UPDATE agent_sessions SET source_session_key = 'fresh-1' WHERE id = 1`).run();
+    const after = new OverviewRepository(db, () => NOW).sessionRail(10);
+    expect(after).toHaveLength(1);
+    expect(after[0].sessionId).toBe(1);
+  });
+
+  it('drops the placeholder as soon as the session is reported ended', () => {
+    db.prepare(`INSERT INTO live_sessions(agent_kind, session_id, cwd, state) VALUES ('codex', 'fresh-2', '/tmp/w', 'ended')`).run();
+
+    expect(new OverviewRepository(db, () => NOW).sessionRail(10)).toHaveLength(0);
+  });
+
+  it('marks a hooks-reported running session blocked, but never an ended or inferred one', () => {
+    // 会话 1：running + blocked=1（agent 在等权限确认）→ isBlocked。
+    seedSession(1, 'claude', 'alpha', 10_000, 100);
+    db.prepare(`INSERT INTO live_sessions(agent_kind, session_id, state, blocked) VALUES ('claudeCode', 's1', 'running', 1)`).run();
+    // 会话 2：ended 残留 blocked=1（异常路径）→ 不亮也不算阻塞。
+    seedSession(2, 'claude', 'beta', 10_000, 100);
+    db.prepare(`INSERT INTO live_sessions(agent_kind, session_id, state, blocked) VALUES ('claudeCode', 's2', 'ended', 1)`).run();
+    // 会话 3：无上报记录 → mtime 推断只有 isLive，没有 blocked 概念。
+    seedSession(3, 'claude', 'gamma', 10_000, 100);
+
+    const rail = new OverviewRepository(db, () => NOW).sessionRail(10);
+    const byProject = new Map(rail.map((r) => [r.projectName, r.isBlocked]));
+    expect(byProject.get('alpha')).toBe(true);
+    expect(byProject.get('beta')).toBe(false);
+    expect(byProject.get('gamma')).toBe(false);
+  });
+
   it('lists only main sessions, sums sub-agent tokens/cost, and folds their activity into isLive', () => {
     // 父会话自己 10 分钟前（超出 5 分钟 live 窗口，自己不 live）
     seedSession(1, 'codex', 'proj', 10 * 60_000, 1000);
@@ -308,17 +390,22 @@ describe('trend', () => {
 });
 
 describe('heatmap', () => {
+  function seedActive(date: string, provider: string, rootKey: string, count: number) {
+    db.prepare(`INSERT INTO daily_active_sessions(usage_date, provider_id, root_session_key, sessions_count)
+                VALUES (?,?,?,?)`).run(date, provider, rootKey, count);
+  }
+
   it('returns one row per day that has data, with three switchable metrics', () => {
     db.exec(`INSERT INTO daily_rollup(usage_date, provider_id, source_kind, project_id, model_canonical,
       sessions_count, events_count, tokens_input, tokens_output, cost_usd_micros)
       VALUES ('2026-07-09','c','k',NULL,'m1', 1, 3, 100, 10, 500),
              ('2026-07-09','c','k',NULL,'m2', 1, 2,  50,  5, 300),
              ('2026-07-10','c','k',NULL,'m1', 1, 1,  20,  2, 100);`);
-    // sessions 走 usage_events 的 count(distinct)，与 token/成本/事件分开取。
-    // 07-09 是两个不同会话，07-10 是一个会话。
-    seedEvent(1, 1, '2026-07-09T09:00:00');
-    seedEvent(2, 2, '2026-07-09T10:00:00');
-    seedEvent(3, 1, '2026-07-10T09:00:00');
+    // sessions 从 daily_active_sessions 按天求和，与 token/成本/事件分开取。
+    // 07-09 是两个主会话，07-10 是一个。
+    seedActive('2026-07-09', 'c', 'k:s1', 1);
+    seedActive('2026-07-09', 'c', 'k:s2', 1);
+    seedActive('2026-07-10', 'c', 'k:s1', 1);
 
     const rows = new OverviewRepository(db, () => NOW).heatmap('2026-07-09', '2026-07-10');
 
@@ -328,19 +415,18 @@ describe('heatmap', () => {
     ]);
   });
 
-  it('counts distinct sessions, not summed sessions_count, when one session used two models', () => {
+  it('sums daily_active_sessions counts, never daily_rollup sessions_count', () => {
     // 同一会话当天用了两个模型 → 两行 daily_rollup、各 sessions_count=1，naive sum = 2。
-    // 但 usage_events 里只有一个 session_id → 正确会话数是 1。RollupBuilder.swift L44-49 同旨。
+    // daily_active_sessions 里它只有一行（RollupBuilder 按主会话去重）→ 正确会话数 1。
     db.exec(`INSERT INTO daily_rollup(usage_date, provider_id, source_kind, project_id, model_canonical,
       sessions_count, events_count, tokens_input, cost_usd_micros)
       VALUES ('2026-07-09','c','k',NULL,'m1', 1, 1, 100, 1),
              ('2026-07-09','c','k',NULL,'m2', 1, 1, 200, 1);`);
-    seedEvent(1, 7, '2026-07-09T09:00:00', 'm1');
-    seedEvent(2, 7, '2026-07-09T10:00:00', 'm2');
+    seedActive('2026-07-09', 'c', 'k:s7', 1);
 
     const rows = new OverviewRepository(db, () => NOW).heatmap('2026-07-09', '2026-07-09');
 
-    expect(rows[0].sessions).toBe(1);   // NOT sum(sessions_count) = 2
+    expect(rows[0].sessions).toBe(1);   // NOT sum(daily_rollup.sessions_count) = 2
   });
 });
 
@@ -480,17 +566,28 @@ describe('agentTrend', () => {
     expect(series.buckets[9]).toBe('2026-07-10');
   });
 
-  it('counts distinct merged main sessions, folding sub-agent sessions into their root', () => {
-    seedSession(1, 'codex', 'proj', 60_000, 1000);
-    seedSubSession(2, 'codex', 's1', 'worker', 60_000, 500);
-    seedEvent(101, 1, '2026-07-10T09:00:00');
-    seedEvent(102, 1, '2026-07-10T10:00:00');
-    seedEvent(103, 2, '2026-07-10T11:00:00');   // 子会话事件折回主会话，不另计
+  it('counts distinct merged main sessions from daily_active_sessions', () => {
+    // 主会话 + 其子会话在 RollupBuilder 里已折成一行（sessions_count=2 是名下原始会话数），
+    // agentTrend 的口径是 distinct 主会话 → 1。
+    db.prepare(`INSERT INTO daily_active_sessions(usage_date, provider_id, root_session_key, sessions_count)
+                VALUES ('2026-07-10','codex','codex_jsonl:s1',2)`).run();
 
     const series = new OverviewRepository(db, () => NOW).agentTrend('2026-07-01', '2026-07-10', 'day');
 
     const day = series.rows.find(r => r.bucket === '2026-07-10' && r.providerId === 'codex');
     expect(day?.sessions).toBe(1);
+  });
+
+  it('keeps a session distinct per week bucket even when it spans multiple days', () => {
+    // 同一主会话跨两天（同一周内）：week 粒度必须 distinct 成 1，不是日行求和的 2。
+    db.exec(`INSERT INTO daily_active_sessions(usage_date, provider_id, root_session_key, sessions_count)
+      VALUES ('2026-07-06','codex','codex_jsonl:s1',1),
+             ('2026-07-07','codex','codex_jsonl:s1',1);`);
+
+    const series = new OverviewRepository(db, () => NOW).agentTrend('2026-04-18', '2026-07-10', 'week');
+
+    const week = series.rows.find(r => r.bucket === '2026-07-06' && r.providerId === 'codex');
+    expect(week?.sessions).toBe(1);
   });
 
   it('buckets weeks on Monday and months on YYYY-MM with full axes', () => {
@@ -530,6 +627,12 @@ describe('kpis totals & modelRanking provider', () => {
     expect(k.totalCostUsdMicros).toBe(7000);
     expect(k.totalCostUnknownEvents).toBe(3);
     expect(k.totalEvents).toBe(14);
+    // 当月（2026-07）与本周（NOW=07-10 周五 → 周一 07-06 起）都只含 07-09 那行。
+    expect(k.monthTokens).toBe(40);
+    expect(k.monthCostUsdMicros).toBe(2000);
+    expect(k.weekTokens).toBe(40);
+    expect(k.weekCostUsdMicros).toBe(2000);
+    expect(k.weekCostUnknownEvents).toBe(1);
     expect(k.totalSessions).toBe(1);
     expect(k.monthCostUnknownEvents).toBe(1);
   });
@@ -544,5 +647,25 @@ describe('kpis totals & modelRanking provider', () => {
 
     expect(rows[0]).toMatchObject({ model: 'claude-fable-5', providerId: 'claude-code' });
     expect(rows[1]).toMatchObject({ model: 'gpt-5.5', tokens: 150, providerId: null });
+  });
+});
+
+describe('dayProjectBreakdown', () => {
+  it('groups the day by project with display names, folding rows without a project into 未归属项目', () => {
+    db.prepare(`INSERT INTO projects(id, canonical_path, display_name) VALUES (1, '/p/tm', 'token-meter')`).run();
+    db.exec(`INSERT INTO daily_rollup(usage_date, provider_id, source_kind, project_id, model_canonical,
+             tokens_input, cost_usd_micros, sessions_count, events_count) VALUES
+             ('2026-07-10','codex','codex_jsonl', 1, 'm1', 100, 5000, 2, 40),
+             ('2026-07-10','claude-code','claude_jsonl', 1, 'm2', 60, 3000, 1, 20),
+             ('2026-07-10','omp','omp_jsonl', NULL, 'm3', 10, 500, 1, 5),
+             ('2026-07-09','codex','codex_jsonl', 1, 'm1', 999, 9999, 9, 99)`);
+
+    const rows = new OverviewRepository(db, () => NOW).dayProjectBreakdown('2026-07-10');
+
+    // 同项目跨 provider/model 的行合并；其他日期不掺入；无项目行归入「未归属项目」
+    expect(rows).toEqual([
+      { project: 'token-meter', tokens: 160, costUsdMicros: 8000, sessions: 3, events: 60 },
+      { project: '未归属项目', tokens: 10, costUsdMicros: 500, sessions: 1, events: 5 }
+    ]);
   });
 });

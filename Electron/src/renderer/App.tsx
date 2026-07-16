@@ -3,11 +3,15 @@ import { createRoot } from 'react-dom/client';
 
 import type { IndexStatusResult } from './api.js';
 import { Layout, type RouteName } from './components/Layout.js';
-import { IndexStatus } from './routes/IndexStatus.js';
+import { Models } from './routes/Models.js';
 import { Overview } from './routes/Overview.js';
+import { Projects } from './routes/Projects.js';
 import { Sessions } from './routes/Sessions.js';
 import { Settings } from './routes/Settings.js';
 import './styles.css';
+// tailwind.css 在 styles.css 之后:utilities 未分层,与 styles.css 平级按
+// specificity 竞争(shadcn 组件类稳赢元素级全局样式,详见 tailwind.css 头注)。
+import './tailwind.css';
 
 export type IndexStatusState =
   | { kind: 'loading' }
@@ -26,7 +30,8 @@ export function AppShell() {
   const [route, setRoute] = useState<RouteName>('dashboard');
   const [indexStatusState, setIndexStatusState] = useState<IndexStatusState>({ kind: 'loading' });
 
-  // 概览页（Overview）自持数据与自动刷新；App 只负责索引状态，供「索引状态」页与重扫后刷新用。
+  // 概览页（Overview）自持数据与自动刷新；App 只维护索引状态摘要，
+  // 供侧栏底部的「上次扫描」显示（索引状态明细已并入设置页数据区）。
   const refreshIndexStatus = useCallback(async () => {
     try {
       setIndexStatusState({ kind: 'loaded', status: await window.tokenMeter.index.status() });
@@ -76,8 +81,9 @@ export function AppShell() {
   return (
     <Layout route={route} onRoute={setRoute} lastScanEpochMs={lastScanEpochMs}>
       {route === 'dashboard' && <Overview />}
+      {route === 'projects' && <Projects />}
       {route === 'sessions' && <Sessions />}
-      {route === 'index' && <IndexStatus indexState={indexStatusState} onRefresh={refreshIndexStatus} />}
+      {route === 'models' && <Models />}
       {route === 'settings' && <Settings />}
     </Layout>
   );

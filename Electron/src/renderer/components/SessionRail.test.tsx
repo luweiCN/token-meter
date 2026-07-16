@@ -6,9 +6,10 @@ import { SessionRail } from './SessionRail.js';
 import type { ActivityRow, SubagentRow } from '../api.js';
 
 const base: ActivityRow = {
-  sessionId: 1, providerId: 'codex', projectName: 'proj', primaryModel: 'gpt-5.5',
+  sessionId: 1, sourceKind: 'codex_jsonl', sourceSessionKey: 's1',
+  providerId: 'codex', projectName: 'proj', primaryModel: 'gpt-5.5',
   tokensTotal: 1800, firstEventEpochMs: 0, costUsdMicros: 3000, costUnknownEvents: 0,
-  msSinceLastEvent: 60_000, isLive: false, subagentCount: 2,
+  msSinceLastEvent: 60_000, isLive: false, isBlocked: false, subagentCount: 2,
   models: ['gpt-5.5', 'gpt-5.6-sol']
 };
 
@@ -32,20 +33,29 @@ describe('SessionRail sub-agent drill-down', () => {
     expect(screen.getByText('1.80K')).toBeTruthy();   // formatTokens(1800)，含子代理的合计
   });
 
-  it('maps freshness to the three card states: running / idle / done', () => {
+  it('maps freshness to the four card states: blocked / running / idle / done', () => {
     render(
       <SessionRail
         now={Date.now()}
         sessions={[
           { ...base, sessionId: 1, isLive: true },
           { ...base, sessionId: 2, isLive: false, msSinceLastEvent: 5 * 60_000 },
-          { ...base, sessionId: 3, isLive: false, msSinceLastEvent: 30 * 60_000 }
+          { ...base, sessionId: 3, isLive: false, msSinceLastEvent: 30 * 60_000 },
+          { ...base, sessionId: 4, isLive: true, isBlocked: true }
         ]}
       />
     );
     expect(screen.getByText('运行中').closest('.lcard')?.getAttribute('data-state')).toBe('running');
     expect(screen.getByText('等待输入').closest('.lcard')?.getAttribute('data-state')).toBe('idle');
     expect(screen.getByText('已结束').closest('.lcard')?.getAttribute('data-state')).toBe('done');
+    expect(screen.getByText('阻塞').closest('.lcard')?.getAttribute('data-state')).toBe('blocked');
+  });
+
+  it('never shows blocked for a non-live session even if the flag lingers', () => {
+    render(
+      <SessionRail now={Date.now()} sessions={[{ ...base, isLive: false, isBlocked: true }]} />
+    );
+    expect(screen.getByText('等待输入').closest('.lcard')?.getAttribute('data-state')).toBe('idle');
   });
 
   it('shows a sub-agent count badge when a session has sub-agents', () => {

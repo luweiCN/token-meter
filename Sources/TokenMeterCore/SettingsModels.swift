@@ -38,19 +38,23 @@ public struct SettingsSnapshot: Codable, Equatable {
     public let autoRefreshSeconds: Int
     public let enabledAgentKinds: [String]
     public let providerOverrides: [ProviderConfigOverride]
+    /// 额度用量告警阈值（usedPercent 达到即通知）。0 = 关闭。Electron 设置页写入。
+    public let quotaUsedThresholdPercent: Int
 
     public init(
         version: Int,
         menuBarPrimaryProviderId: String?,
         autoRefreshSeconds: Int,
         enabledAgentKinds: [String],
-        providerOverrides: [ProviderConfigOverride]
+        providerOverrides: [ProviderConfigOverride],
+        quotaUsedThresholdPercent: Int = 0
     ) {
         self.version = version
         self.menuBarPrimaryProviderId = menuBarPrimaryProviderId
         self.autoRefreshSeconds = autoRefreshSeconds
         self.enabledAgentKinds = enabledAgentKinds
         self.providerOverrides = providerOverrides
+        self.quotaUsedThresholdPercent = quotaUsedThresholdPercent
     }
 }
 

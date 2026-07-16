@@ -5,6 +5,43 @@ import XCTest
 
 @MainActor
 final class ProviderStoreLocalIndexTests: XCTestCase {
+    /// 并发单飞：await scanner 让出 MainActor 时重入的第二个调用必须被挡回
+    ///（否则增量扫描会堆叠——实测 16 路并发把 CPU 顶到 150%+）。
+    func testConcurrentRefreshCallsCoalesceIntoOneScan() async throws {
+        let homeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: homeDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: homeDirectory) }
+
+        let codexRoot = homeDirectory.appendingPathComponent("codex", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexRoot, withIntermediateDirectories: true)
+        try writeLocalIndexJSONL(codexJSONL(sessionKey: "s", inputTokens: 1, outputTokens: 1), to: codexRoot.appendingPathComponent("session.jsonl"))
+
+        let databaseURL = homeDirectory
+            .appendingPathComponent("database", isDirectory: true)
+            .appendingPathComponent("tokenmeter.sqlite")
+        let store = ProviderStore(
+            config: TokenMeterConfig(menuBar: MenuBarConfig(primaryProviderId: nil), providers: []),
+            notificationCenter: nil,
+            databaseURL: databaseURL
+        )
+        let database = try SQLiteDatabase(path: databaseURL.path)
+        try insertScanRoot(database, id: 1, kind: .codexJSONL, rootPath: codexRoot.path, displayName: "Codex")
+
+        async let first = store.refreshLocalAgentIndex()
+        async let second = store.refreshLocalAgentIndex()
+        let results = await [first, second]
+
+        // 一个真扫、另一个被单飞守卫合并（消息「扫描已在进行」，不新起 scan_runs）。
+        let skipped = results.filter { $0.message == "扫描已在进行" }
+        XCTAssertEqual(skipped.count, 1, "并发调用必须恰好一个被合并")
+        XCTAssertEqual(
+            try scalarInt(database, "SELECT count(*) AS value FROM scan_runs"),
+            1,
+            "两次并发调用只允许产生一轮扫描"
+        )
+    }
+
     func testRefreshLocalAgentIndexScansOnlyEnabledAgentKinds() async throws {
         let homeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

@@ -1,6 +1,6 @@
 import Foundation
 
-/// 两张汇总表都是 `usage_events` 的纯函数投影，随时可以整体重建。
+/// 三张汇总表都是 `usage_events` 的纯函数投影，随时可以整体重建。
 /// 时区变更后重建即可，不必重扫源文件。
 public final class RollupBuilder {
     private let database: SQLiteDatabase
@@ -14,6 +14,7 @@ public final class RollupBuilder {
         do {
             try rebuildDailyRollup()
             try rebuildSessionRollup()
+            try rebuildDailyActiveSessions()
             try database.execute("COMMIT")
         } catch {
             try? database.execute("ROLLBACK")
@@ -63,6 +64,33 @@ public final class RollupBuilder {
             JOIN agent_sessions s ON s.id = e.session_id
             WHERE s.status != 'deleted'
             GROUP BY usage_date, s.provider_id, s.source_kind, s.project_id, e.model_canonical
+            """
+        )
+    }
+
+    // MARK: - daily_active_sessions
+
+    /// 「日 × provider × 主会话」活跃明细（表注释见 TokenMeterDatabaseSchema）。
+    /// 子会话通过 coalesce(root_session_key, source_session_key) 折回主会话，
+    /// sessions_count 记该主会话当天名下的原始会话数——Electron 的 agentTrend
+    /// 数 distinct 主会话、heatmap 对 sessions_count 求和，各取所需且口径不变。
+    private func rebuildDailyActiveSessions() throws {
+        try database.execute("DELETE FROM daily_active_sessions")
+        try database.execute(
+            """
+            INSERT INTO daily_active_sessions(usage_date, provider_id, root_session_key, sessions_count)
+            SELECT
+                date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime') AS usage_date,
+                s.provider_id,
+                s.source_kind || ':' || coalesce(s.root_session_key, s.source_session_key) AS root_session_key,
+                count(DISTINCT e.session_id)
+            FROM usage_events e
+            JOIN agent_sessions s ON s.id = e.session_id
+            WHERE s.status != 'deleted'
+            -- 按位置序号分组：裸写 root_session_key 会被解析成 s.root_session_key
+            -- 源列（主会话 NULL、子会话非空 → 分组裂开，同拼接键两行撞 UNIQUE），
+            -- 而不是 SELECT 里的 coalesce 拼接别名。
+            GROUP BY 1, 2, 3
             """
         )
     }

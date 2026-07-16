@@ -91,6 +91,15 @@ export function registerAppLifecycle(): void {
   });
 
   app.whenReady().then(() => {
+    // Dock 图标：内嵌 Electron.app 的默认图标换成品牌图。vite 把主进程打到
+    // dist-main/main/ 子目录，assets 在 Electron/assets → 上两级。必须 try/catch：
+    // setIcon 抛错会中断 whenReady 链，IPC handler 全部注册不上、整页报
+    // No handler registered（实测踩过）。图标失败只能是装饰性损失。
+    try {
+      app.dock?.setIcon(path.join(__dirname, '../../assets/dock-icon.png'));
+    } catch {
+      /* 图标加载失败不影响功能 */
+    }
     registerIpcHandlers();
     createWindow();
   });

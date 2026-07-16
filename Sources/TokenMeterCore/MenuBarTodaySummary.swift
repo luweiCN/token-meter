@@ -18,19 +18,42 @@ public struct MenuBarTodaySummary: Equatable {
         }
     }
 
+    public struct ModelToday: Equatable {
+        public let model: String
+        public let tokens: Int64
+        public let costUsdMicros: Int64
+
+        public init(model: String, tokens: Int64, costUsdMicros: Int64) {
+            self.model = model
+            self.tokens = tokens
+            self.costUsdMicros = costUsdMicros
+        }
+    }
+
     public let tokens: Int64
     public let costUsdMicros: Int64
     public let sessions: Int
     public let unknownEvents: Int
     /// 按今日 tokens 降序。
     public let perProvider: [ProviderToday]
+    /// 今日按模型（model_canonical，跨 provider 合并），tokens 降序。
+    /// 不带会话数——一个会话可以用多个模型，按模型数会话会重复计（既有裁定）。
+    public let perModel: [ModelToday]
 
-    public init(tokens: Int64, costUsdMicros: Int64, sessions: Int, unknownEvents: Int, perProvider: [ProviderToday]) {
+    public init(
+        tokens: Int64,
+        costUsdMicros: Int64,
+        sessions: Int,
+        unknownEvents: Int,
+        perProvider: [ProviderToday],
+        perModel: [ModelToday] = []
+    ) {
         self.tokens = tokens
         self.costUsdMicros = costUsdMicros
         self.sessions = sessions
         self.unknownEvents = unknownEvents
         self.perProvider = perProvider
+        self.perModel = perModel
     }
 
     public static let empty = MenuBarTodaySummary(tokens: 0, costUsdMicros: 0, sessions: 0, unknownEvents: 0, perProvider: [])
@@ -62,6 +85,21 @@ public enum MenuBarTodaySummaryRepository {
         ) else {
             return .empty
         }
+
+        // 口径与 Electron 热力图日详情（overviewRepository.dayModelBreakdown）一致。
+        let modelRows = (try? database.query(
+            """
+            SELECT model_canonical AS model,
+                   coalesce(sum(tokens_input + tokens_output + tokens_cache_read
+                                + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
+                   coalesce(sum(cost_usd_micros), 0) AS cost
+              FROM daily_rollup
+             WHERE usage_date = ?
+            GROUP BY model_canonical
+            ORDER BY tokens DESC
+            """,
+            [.text(today)]
+        )) ?? []
 
         let sessionRows = (try? database.query(
             """
@@ -102,13 +140,19 @@ public enum MenuBarTodaySummaryRepository {
         }
         perProvider.sort { $0.tokens > $1.tokens }
 
+        let perModel: [MenuBarTodaySummary.ModelToday] = modelRows.compactMap { row in
+            guard let model = row.string("model") else { return nil }
+            return .init(model: model, tokens: row.int("tokens") ?? 0, costUsdMicros: row.int("cost") ?? 0)
+        }
+
         let totalSessions = sessionsByProvider.values.reduce(0, +)
         return MenuBarTodaySummary(
             tokens: totalTokens,
             costUsdMicros: totalCost,
             sessions: totalSessions,
             unknownEvents: totalUnknown,
-            perProvider: perProvider
+            perProvider: perProvider,
+            perModel: perModel
         )
     }
 }
