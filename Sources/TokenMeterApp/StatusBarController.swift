@@ -145,12 +145,9 @@ struct MenuBarQuotaCellView: View {
         .frame(width: diameter, height: diameter)
     }
 
-    /// 窗口选取顺序是 [5h, 7d]（与弹窗环同源）：last = 最长窗口（周额度）。
-    private var weekly: MenuBarQuotaModel.Window? { cell.windows.last }
-    /// 双窗口时 first 是 5h;单窗口（仅 7d）没有短窗口。
-    private var shortWindow: MenuBarQuotaModel.Window? {
-        cell.windows.count > 1 ? cell.windows.first : nil
-    }
+    /// 外环 = 最长窗口（周额度，Cell.longWindow）；内环 = 短窗（5h，单窗家没有）。
+    private var weekly: MenuBarQuotaModel.Window? { cell.longWindow }
+    private var shortWindow: MenuBarQuotaModel.Window? { cell.shortWindow }
 
     private func numberText(_ window: MenuBarQuotaModel.Window) -> some View {
         Text("\(Int(window.remainingPercent.rounded()))")
@@ -435,13 +432,17 @@ final class StatusBarController: NSObject {
             .store(in: &cancellables)
 
         // 额度 cell 组：providerSnapshots（额度刷新）或 settingsSnapshot
-        // （启停/别名）一变即重投影，与弹窗的展示口径同步。
+        // （启停/别名/菜单栏外观）一变即重投影，与弹窗的展示口径同步。
         store.$providerSnapshots
             .combineLatest(store.$settingsSnapshot)
             .receive(on: RunLoop.main)
             .sink { [weak self] _, _ in
                 guard let self else { return }
-                self.quotaCells = MenuBarQuotaModel.cells(from: self.store.displayProviderSnapshots)
+                self.quotaCells = MenuBarQuotaModel.projection(
+                    snapshots: self.store.displayProviderSnapshots,
+                    settings: self.store.settingsSnapshot,
+                    todaySummary: self.store.todaySummary
+                ).cells
                 self.applyStatusContent()
             }
             .store(in: &cancellables)
