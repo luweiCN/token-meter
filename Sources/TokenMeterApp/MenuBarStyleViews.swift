@@ -223,6 +223,208 @@ struct Ring1GlyphView: View {
     }
 }
 
+// MARK: - 聚合紧凑族（S8-S11）、数字支（S12-S13）、混合系（S14-S15）
+
+/// 13pt 品牌 logo（sentinel / grid / strip 的名称前缀位）。
+struct MiniBrandLogo: View {
+    var tint: Color = .primary
+    var body: some View {
+        MenuBarBrandMark(size: 13)
+            .foregroundStyle(tint)
+            .opacity(0.85)
+    }
+}
+
+/// S8 点阵网格：全家聚合一个点阵（4 家 2×2、≤3 家单行），点色 = 家级最险
+///（图形窗口口径）。名称开关 = logo 前缀；数字开关 = 全家最险单数字。
+struct GridAggregateView: View {
+    let projection: MenuBarQuotaModel.MenuBarProjection
+
+    private var columns: [GridItem] {
+        let count = projection.cells.count == 4 ? 2 : max(1, min(projection.cells.count, 3))
+        return Array(repeating: GridItem(.fixed(5.5), spacing: 2), count: count)
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if projection.showName { MiniBrandLogo() }
+            LazyVGrid(columns: columns, spacing: 2) {
+                ForEach(projection.cells, id: \.providerId) { cell in
+                    Circle()
+                        .fill(MenuBarToneColor.display(cell.worstGlyphWindow.tone, stale: cell.isStale))
+                        .frame(width: 5.5, height: 5.5)
+                }
+            }
+            .fixedSize()
+            if projection.showNumber, let worst = MenuBarQuotaModel.aggregateWorstNumber(cells: projection.cells) {
+                CellNumbersView(windows: [worst.window], isStale: false)
+            }
+        }
+        .fixedSize()
+    }
+}
+
+/// S11 堆叠条：每家一段 6×13pt、1pt 缝，段色 = 家级最险（图形窗口口径）；
+/// stale 段降透明区分「灰」与「没数据」。
+struct StripAggregateView: View {
+    let projection: MenuBarQuotaModel.MenuBarProjection
+    var body: some View {
+        HStack(spacing: 4) {
+            if projection.showName { MiniBrandLogo() }
+            HStack(spacing: 1) {
+                ForEach(projection.cells, id: \.providerId) { cell in
+                    Rectangle()
+                        .fill(MenuBarToneColor.display(cell.worstGlyphWindow.tone, stale: cell.isStale))
+                        .frame(width: 6, height: 13)
+                        .opacity(cell.isStale ? 0.55 : 1)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+            if projection.showNumber, let worst = MenuBarQuotaModel.aggregateWorstNumber(cells: projection.cells) {
+                CellNumbersView(windows: [worst.window], isStale: false)
+            }
+        }
+        .fixedSize()
+    }
+}
+
+/// S10 字母色徽：单字符警戒色染字（名称即图形即状态），stale 加删除线
+///（色彩之外的第二编码，色盲安全）。
+struct MonogramAggregateView: View {
+    let projection: MenuBarQuotaModel.MenuBarProjection
+    var body: some View {
+        HStack(spacing: 4) {
+            HStack(spacing: 4) {
+                ForEach(projection.cells, id: \.providerId) { cell in
+                    Text(cell.mono)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(MenuBarToneColor.display(cell.worstNumberWindow.tone, stale: cell.isStale))
+                        .strikethrough(cell.isStale, color: MenuBarToneColor.color(.muted))
+                        .fixedSize()
+                }
+            }
+            if projection.showNumber, let worst = MenuBarQuotaModel.aggregateWorstNumber(cells: projection.cells) {
+                CellNumbersView(windows: [worst.window], isStale: false)
+            }
+        }
+        .fixedSize()
+    }
+}
+
+/// S9 哨兵：quiet = 单色 logo（史上最窄常态）；alert = 最险家（logo 染色 +
+/// 短名 + 数字，各随元素开关）；stale = 灰 logo + 未更新分钟数。
+struct SentinelView: View {
+    let projection: MenuBarQuotaModel.MenuBarProjection
+    var body: some View {
+        switch MenuBarQuotaModel.sentinelState(cells: projection.cells) {
+        case .quiet:
+            MiniBrandLogo()
+        case let .alert(cell, window):
+            let tint = MenuBarToneColor.color(window.tone)
+            HStack(spacing: 4) {
+                if projection.showGlyph { MiniBrandLogo(tint: tint) }
+                if projection.showName {
+                    Text(cell.badge)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(tint)
+                        .fixedSize()
+                }
+                if projection.showNumber { CellNumbersView(windows: [window], isStale: false) }
+            }
+            .fixedSize()
+        case let .stale(minutes):
+            HStack(spacing: 4) {
+                MiniBrandLogo(tint: MenuBarToneColor.color(.muted))
+                Text("\(minutes)m")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize()
+            }
+            .fixedSize()
+        }
+    }
+}
+
+/// deck 单家 unit：上行小字名 / 下行数字（S13 与混合系共用，17pt 高度纵向两层）。
+struct DeckUnitView: View {
+    let cell: MenuBarQuotaModel.Cell
+    let projection: MenuBarQuotaModel.MenuBarProjection
+    /// tagnum 用单字符、deck2/混合系用短名；nil = 名称关闭（裸数字位序）。
+    let nameText: String?
+
+    var body: some View {
+        VStack(spacing: 1) {
+            if let nameText {
+                Text(nameText)
+                    .font(.system(size: 7.5, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(0.55))
+                    .fixedSize()
+            }
+            CellNumbersView(windows: cell.numberWindows(order: projection.windowOrder), isStale: cell.isStale)
+        }
+        .fixedSize()
+    }
+}
+
+/// S12 字标数字：10pt 半透明单字符前标 + 警戒色数字（baseline 排布），
+/// 数字一个不少、按家窗口全语义。
+struct TagnumAggregateView: View {
+    let projection: MenuBarQuotaModel.MenuBarProjection
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            ForEach(projection.cells, id: \.providerId) { cell in
+                HStack(alignment: .firstTextBaseline, spacing: 1.5) {
+                    if projection.showName {
+                        Text(cell.mono)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.primary.opacity(0.55))
+                            .fixedSize()
+                    }
+                    CellNumbersView(windows: cell.numberWindows(order: projection.windowOrder), isStale: cell.isStale)
+                }
+            }
+        }
+        .fixedSize()
+    }
+}
+
+/// S13 双层堆叠：每家一个 DeckUnit（上名下数），宽度只由数字本身决定。
+struct Deck2AggregateView: View {
+    let projection: MenuBarQuotaModel.MenuBarProjection
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(projection.cells, id: \.providerId) { cell in
+                DeckUnitView(cell: cell, projection: projection, nameText: projection.showName ? cell.badge : nil)
+            }
+        }
+        .fixedSize()
+    }
+}
+
+/// S14/S15 混合系单家 cell：图形（环/竖条，图形窗口口径）+ DeckUnit（数字窗口
+/// 口径）——图形管比例感、数字管精确值，任意交叉。
+struct HybridCellView: View {
+    let cell: MenuBarQuotaModel.Cell
+    let projection: MenuBarQuotaModel.MenuBarProjection
+
+    var body: some View {
+        let glyphWindows = cell.glyphWindows(order: projection.windowOrder)
+        HStack(spacing: 3) {
+            if projection.style == .ringdeck {
+                if glyphWindows.count > 1 {
+                    RingsGlyphView(windows: glyphWindows, isStale: cell.isStale)
+                } else {
+                    Ring1GlyphView(window: glyphWindows[0], isStale: cell.isStale)
+                }
+            } else {
+                VBarsGlyphView(windows: glyphWindows, isStale: cell.isStale)
+            }
+            DeckUnitView(cell: cell, projection: projection, nameText: projection.showName ? cell.badge : nil)
+        }
+        .fixedSize()
+    }
+}
+
 /// 基础族（S0-S7）单家 cell：[name][glyph][pct] 语法 + 元素开关 +
 /// ticks 双组刻度静音数字 + digits 的 CJK 超宽降级。
 struct BasicStyleCellView: View {

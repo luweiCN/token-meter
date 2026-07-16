@@ -137,15 +137,46 @@ struct MenuBarBrandMark: View {
     }
 }
 
-/// 按样式分发 cell 渲染：基础族逐家 BasicStyleCellView；聚合/数字支/混合系
-/// 的分支在 Task 5 落地前暂回落基础族渲染（rings 形态兜底，功能不缺失）。
+/// 按样式分发 cell 渲染：基础族与混合系逐家一 cell；聚合/数字支全家一 cell。
 struct MenuBarStyleRouterView: View {
     let projection: MenuBarQuotaModel.MenuBarProjection
 
     var body: some View {
-        HStack(spacing: 9) {
-            ForEach(projection.cells, id: \.providerId) { cell in
-                BasicStyleCellView(cell: cell, projection: projection)
+        // 空 cell 组不渲染任何样式骨架（聚合样式的 logo 前缀也不出）——
+        // 全空的品牌小标兜底由 StatusBarContentView 统一负责，避免双 logo。
+        if projection.cells.isEmpty {
+            EmptyView()
+        } else {
+            styled
+        }
+    }
+
+    @ViewBuilder
+    private var styled: some View {
+        switch projection.style {
+        case .rings, .vbars, .hbar, .digits, .dots, .caps, .ticks, .ring1:
+            HStack(spacing: 9) {
+                ForEach(projection.cells, id: \.providerId) { cell in
+                    BasicStyleCellView(cell: cell, projection: projection)
+                }
+            }
+        case .grid:
+            GridAggregateView(projection: projection)
+        case .strip:
+            StripAggregateView(projection: projection)
+        case .monogram:
+            MonogramAggregateView(projection: projection)
+        case .sentinel:
+            SentinelView(projection: projection)
+        case .tagnum:
+            TagnumAggregateView(projection: projection)
+        case .deck2:
+            Deck2AggregateView(projection: projection)
+        case .ringdeck, .barsdeck:
+            HStack(spacing: 9) {
+                ForEach(projection.cells, id: \.providerId) { cell in
+                    HybridCellView(cell: cell, projection: projection)
+                }
             }
         }
     }
