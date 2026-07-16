@@ -57,6 +57,8 @@ public enum TokenMeterDatabaseSchema {
       menu_rank INTEGER,
       show_in_menu_bar INTEGER CHECK (show_in_menu_bar IN (0,1)),
       show_in_charts INTEGER CHECK (show_in_charts IN (0,1)),
+      menubar_glyph_window TEXT CHECK (menubar_glyph_window IN ('short','long','both')),
+      menubar_number_window TEXT CHECK (menubar_number_window IN ('short','long','both')),
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 

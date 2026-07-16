@@ -54,7 +54,8 @@ public final class SettingsStore {
         let enabledAgentKinds = try settingStringArray("filters.enabledAgentKinds") ?? []
         let providerRows = try database.query(
             """
-            SELECT provider_id, enabled, display_name, menu_rank, show_in_menu_bar, show_in_charts
+            SELECT provider_id, enabled, display_name, menu_rank, show_in_menu_bar, show_in_charts,
+                   menubar_glyph_window, menubar_number_window
             FROM provider_config_overrides
             ORDER BY menu_rank ASC, provider_id ASC
             """
@@ -66,7 +67,9 @@ public final class SettingsStore {
                 displayName: row.string("display_name"),
                 menuRank: row.int("menu_rank").map(Int.init),
                 showInMenuBar: row.int("show_in_menu_bar").map { $0 == 1 },
-                showInCharts: row.int("show_in_charts").map { $0 == 1 }
+                showInCharts: row.int("show_in_charts").map { $0 == 1 },
+                menuBarGlyphWindow: row.string("menubar_glyph_window").flatMap(MenuBarWindowChoice.init(rawValue:)),
+                menuBarNumberWindow: row.string("menubar_number_window").flatMap(MenuBarWindowChoice.init(rawValue:))
             )
         }
 
@@ -76,7 +79,26 @@ public final class SettingsStore {
             autoRefreshSeconds: autoRefreshSeconds,
             enabledAgentKinds: enabledAgentKinds,
             providerOverrides: providerOverrides,
-            quotaUsedThresholdPercent: Int(try settingInt("notifications.quotaUsedThresholdPercent") ?? 0)
+            quotaUsedThresholdPercent: Int(try settingInt("notifications.quotaUsedThresholdPercent") ?? 0),
+            menuBarAppearance: menuBarAppearance()
+        )
+    }
+
+    /// 菜单栏外观 kv：缺失/非法一律回默认（未来加样式后回滚旧版也安全）。
+    private func menuBarAppearance() -> MenuBarAppearanceSettings {
+        func string(_ key: String) -> String? {
+            (try? settingString(key)) ?? nil
+        }
+        func flag(_ key: String) -> Bool {
+            (((try? settingInt(key)) ?? nil) ?? 1) != 0
+        }
+        return MenuBarAppearanceSettings(
+            style: string("menubar.style").flatMap(MenuBarStyleId.init(rawValue:)) ?? .rings,
+            showName: flag("menubar.showName"),
+            showGlyph: flag("menubar.showGlyph"),
+            showNumber: flag("menubar.showNumber"),
+            usage: string("menubar.usage").flatMap(MenuBarUsageTail.init(rawValue:)) ?? .tok,
+            windowOrder: string("menubar.windowOrder").flatMap(MenuBarWindowOrder.init(rawValue:)) ?? .longFirst
         )
     }
 

@@ -18,6 +18,8 @@ public enum TokenMeterDatabaseMigrator {
         try database.execute("PRAGMA busy_timeout = 5000")
 
         try database.execute(TokenMeterDatabaseSchema.configTables)
+        // 配置表不参与版本重建，新增列走幂等 additive 迁移（必须每次跑，不受版本短路影响）。
+        try ensureConfigColumns(database)
 
         let currentVersion = try database.query("PRAGMA user_version")[0].int("user_version") ?? 0
         if currentVersion != TokenMeterDatabaseSchema.derivedVersion {
@@ -27,6 +29,23 @@ public enum TokenMeterDatabaseMigrator {
         // 运行时表必须在派生表重建之后建：rebuildDerivedTables 的「非配置表全删」
         // 网兜会把它一并 DROP，先建后删就丢表了。
         try database.execute(TokenMeterDatabaseSchema.runtimeTables)
+    }
+
+    /// 配置表（settings / provider_config_overrides）里的新列：缺列才 ALTER，
+    /// 老库数据原样保留；新库建表语句已含列，PRAGMA 检查天然幂等。
+    private static func ensureConfigColumns(_ database: SQLiteDatabase) throws {
+        let columns = try database.query("PRAGMA table_info(provider_config_overrides)")
+            .compactMap { $0.string("name") }
+        if !columns.contains("menubar_glyph_window") {
+            try database.execute(
+                "ALTER TABLE provider_config_overrides ADD COLUMN menubar_glyph_window TEXT CHECK (menubar_glyph_window IN ('short','long','both'))"
+            )
+        }
+        if !columns.contains("menubar_number_window") {
+            try database.execute(
+                "ALTER TABLE provider_config_overrides ADD COLUMN menubar_number_window TEXT CHECK (menubar_number_window IN ('short','long','both'))"
+            )
+        }
     }
 
     private static func rebuildDerivedTables(_ database: SQLiteDatabase) throws {

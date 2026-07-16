@@ -127,6 +127,84 @@ final class SettingsStoreTests: XCTestCase {
             XCTFail("Expected staleVersion after the competing writer committed version 2")
         }
     }
+
+    // MARK: - 菜单栏外观设置（menubar.* kv + overrides 窗口列）
+
+    func testMenuBarAppearanceDefaultsWhenUnset() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try TokenMeterDatabaseMigrator.migrate(database)
+        let store = SettingsStore(database: database)
+        let snapshot = try store.snapshot()
+        XCTAssertEqual(snapshot.menuBarAppearance, .default)
+        XCTAssertEqual(snapshot.menuBarAppearance.style, .rings)
+        XCTAssertEqual(snapshot.menuBarAppearance.windowOrder, .longFirst)
+    }
+
+    func testMenuBarAppearanceReadsStoredValues() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try TokenMeterDatabaseMigrator.migrate(database)
+        try database.execute(
+            "INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by) VALUES ('menubar.style', '\"deck2\"', 'string', 2, 'electron')"
+        )
+        try database.execute(
+            "INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by) VALUES ('menubar.showName', '0', 'int', 2, 'electron')"
+        )
+        try database.execute(
+            "INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by) VALUES ('menubar.usage', '\"cost\"', 'string', 2, 'electron')"
+        )
+        try database.execute(
+            "INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by) VALUES ('menubar.windowOrder', '\"shortFirst\"', 'string', 2, 'electron')"
+        )
+        try database.execute(
+            "INSERT INTO provider_config_overrides(provider_id, menubar_glyph_window, menubar_number_window) VALUES ('claude-code', 'both', 'short')"
+        )
+        let snapshot = try SettingsStore(database: database).snapshot()
+        XCTAssertEqual(snapshot.menuBarAppearance.style, .deck2)
+        XCTAssertFalse(snapshot.menuBarAppearance.showName)
+        XCTAssertTrue(snapshot.menuBarAppearance.showGlyph)
+        XCTAssertEqual(snapshot.menuBarAppearance.usage, .cost)
+        XCTAssertEqual(snapshot.menuBarAppearance.windowOrder, .shortFirst)
+        let override = snapshot.providerOverrides.first { $0.providerId == "claude-code" }
+        XCTAssertEqual(override?.menuBarGlyphWindow, .both)
+        XCTAssertEqual(override?.menuBarNumberWindow, .short)
+    }
+
+    func testMenuBarAppearanceUnknownValuesFallBackToDefault() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try TokenMeterDatabaseMigrator.migrate(database)
+        try database.execute(
+            "INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by) VALUES ('menubar.style', '\"holographic\"', 'string', 2, 'electron')"
+        )
+        let snapshot = try SettingsStore(database: database).snapshot()
+        XCTAssertEqual(snapshot.menuBarAppearance.style, .rings)
+    }
+
+    func testMigratorAddsMenubarColumnsToLegacyOverridesTable() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        // 老库：无 menubar 列的 overrides 表已存在
+        try database.execute(
+            """
+            CREATE TABLE provider_config_overrides (
+              provider_id TEXT PRIMARY KEY,
+              enabled INTEGER CHECK (enabled IN (0,1)),
+              display_name TEXT,
+              menu_rank INTEGER,
+              show_in_menu_bar INTEGER CHECK (show_in_menu_bar IN (0,1)),
+              show_in_charts INTEGER CHECK (show_in_charts IN (0,1)),
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        try database.execute("INSERT INTO provider_config_overrides(provider_id, enabled) VALUES ('zhipu', 1)")
+        try TokenMeterDatabaseMigrator.migrate(database)
+        let columns = try database.query("PRAGMA table_info(provider_config_overrides)").compactMap { $0.string("name") }
+        XCTAssertTrue(columns.contains("menubar_glyph_window"))
+        XCTAssertTrue(columns.contains("menubar_number_window"))
+        // 旧行保留
+        XCTAssertEqual(try database.query("SELECT count(*) AS c FROM provider_config_overrides")[0].int("c"), 1)
+        // 幂等：再跑一次不炸
+        try TokenMeterDatabaseMigrator.migrate(database)
+    }
 }
 
 private final class LockProtected<Value> {
