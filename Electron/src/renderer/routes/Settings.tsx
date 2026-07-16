@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import type { AgentBinaryStatus, FailedFileSummary, IndexStatusResult, ScanProgress, ScanRootSummary } from '../api.js';
+import { MenubarAppearance, currentStyleName, previewStateFromSettings } from '../components/MenubarAppearance.js';
+import { MenubarPreviewBar } from '../components/MenubarPreview.js';
 import { showToast } from '../components/toast.js';
 import { formatBytes, formatRelative, parseUtcTimestamp } from '../format.js';
 import { settingsStore, useSettings } from '../stores/settingsStore.js';
@@ -34,6 +36,7 @@ const SCAN_INTERVALS: Array<{ seconds: number; label: string }> = [
 
 export function Settings() {
   const settings = useSettings();
+  const [subview, setSubview] = useState<'main' | 'menubar'>('main');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [savedTick, setSavedTick] = useState<string | null>(null);
   const [indexStatus, setIndexStatus] = useState<IndexStatusResult | null>(null);
@@ -164,6 +167,10 @@ export function Settings() {
         showToast('error', `目录开关保存失败：${error instanceof Error ? error.message : '未知错误'}`);
       });
   };
+
+  if (subview === 'menubar') {
+    return <MenubarAppearance onBack={() => setSubview('main')} />;
+  }
 
   return (
     <section className="view">
@@ -361,6 +368,37 @@ export function Settings() {
           </button>
         </div>
         {rebuildNote ? <p className="muted" role="status">{rebuildNote}</p> : null}
+      </div>
+
+      {/* 菜单栏外观 — 入口摘要卡（完整配置在下钻页） */}
+      <div
+        className="card mbentry"
+        role="button"
+        tabIndex={0}
+        aria-label="菜单栏外观"
+        onClick={() => setSubview('menubar')}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') setSubview('menubar');
+        }}
+      >
+        <div className="chead" style={{ marginBottom: 10 }}>
+          <div>
+            <h2>菜单栏外观</h2>
+            <div className="desc">托盘常驻区的样式、元素与每家窗口</div>
+          </div>
+          <span className="mbcur num">{currentStyleName(settings)}</span>
+          <button
+            className="btn"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setSubview('menubar');
+            }}
+          >
+            配置 →
+          </button>
+        </div>
+        <MenubarPreviewBar mode="dark" state={previewStateFromSettings(settings)} />
       </div>
 
       {/* 外观 */}
