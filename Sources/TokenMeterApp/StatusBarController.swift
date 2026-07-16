@@ -265,6 +265,10 @@ final class StatusBarController: NSObject {
     ) {
         self.store = store
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // 固定 autosave 身份：无名时系统按 Item-0/Item-1 顺序分配，双实例并存会把
+        // 身份挤漂移——Bartender 等按「bundle id + item 名」记显示规则的工具从此
+        // 认不出这个 item，直接收进隐藏区（表现为图标凭空消失）。
+        self.statusItem.autosaveName = "TokenMeterQuota"
         self.popover = popover ?? NSPopover()
         self.mainInterfaceLauncher = mainInterfaceLauncher ?? ElectronMainInterfaceLauncher()
         self.quitApplication = quitApplication ?? { NSApp.terminate(nil) }
@@ -304,6 +308,11 @@ final class StatusBarController: NSObject {
     /// 测试用：宽度层（透明 title）当前的字符串。
     var titleForTesting: String {
         statusItem.button?.attributedTitle.string ?? ""
+    }
+
+    /// 测试用：status item 的 autosave 身份。
+    var autosaveNameForTesting: String {
+        statusItem.autosaveName
     }
 
     private func configureStatusItem() {

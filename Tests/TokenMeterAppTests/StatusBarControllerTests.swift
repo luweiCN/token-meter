@@ -17,6 +17,19 @@ final class StatusBarControllerTests: XCTestCase {
         XCTAssertEqual(controller.statusItemClickAction(for: nil), .togglePopover)
     }
 
+    /// status item 必须有固定 autosave 身份：无名时系统按 Item-0/Item-1 顺序分配，
+    /// 双实例（dev 验证）会把身份挤漂移，Bartender 这类按身份记显示规则的工具
+    /// 从此认不出它（2026-07-17 实锤：图标被收进隐藏区「消失」）。
+    func testStatusItemHasStableAutosaveName() throws {
+        let controller = StatusBarController(
+            store: makeStore(),
+            mainInterfaceLauncher: RecordingMainInterfaceLauncher(),
+            quitApplication: {}
+        )
+
+        XCTAssertEqual(controller.autosaveNameForTesting, "TokenMeterQuota")
+    }
+
     func testUpdateTitleDrivesTheWidthTitleLayer() throws {
         let controller = StatusBarController(
             store: makeStore(),
