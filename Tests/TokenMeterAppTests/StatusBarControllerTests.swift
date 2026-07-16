@@ -30,6 +30,31 @@ final class StatusBarControllerTests: XCTestCase {
         XCTAssertEqual(controller.titleForTesting, "1.2M")
     }
 
+    /// 三源绑定（snapshots × settings × todaySummary）初始投影：controller 的
+    /// 投影镜像必须与按 store 当前状态直接投影的结果一致（store 可能读到本机
+    /// 磁盘缓存的快照，断言一致性而非空态）；无设置时样式回默认、尾巴隐藏。
+    func testProjectionMirrorsStoreStateAfterInit() throws {
+        let store = makeStore()
+        let controller = StatusBarController(
+            store: store,
+            mainInterfaceLauncher: RecordingMainInterfaceLauncher(),
+            quitApplication: {}
+        )
+
+        // bindStore 经 RunLoop.main 投递，转一拍让初始 sink 落地。
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        let expected = MenuBarQuotaModel.projection(
+            snapshots: store.displayProviderSnapshots,
+            settings: store.settingsSnapshot,
+            todaySummary: store.todaySummary
+        )
+        XCTAssertEqual(controller.projectionForTesting, expected)
+        XCTAssertEqual(controller.projectionForTesting.style, .rings)
+        XCTAssertEqual(controller.projectionForTesting.tail, .hidden)
+        XCTAssertEqual(controller.titleForTesting, "")
+    }
+
     func testContextMenuContainsOpenMainInterfaceAndQuit() throws {
         let controller = StatusBarController(
             store: makeStore(),

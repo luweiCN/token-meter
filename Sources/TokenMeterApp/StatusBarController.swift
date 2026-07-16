@@ -107,100 +107,15 @@ struct StatusBarTitleView: View {
     }
 }
 
-/// 菜单栏额度 cell：同心双环形态（用户从六种候选里选定的 B 方案）——
-/// 「Claude ◎ 55·96」：品牌短名主文字色；双环外=周额度(7d)、内=5h（用户裁定），
-/// 各自染 pace 警戒色（健康绿/超速黄/用尽红，系统色适配深浅菜单栏）；
-/// 数字第一个=周额度，点后第二个=5h，都不带 %（用户裁定），各自跟随所属环的颜色。
-/// 单窗口（Codex 已无 5h）只画一个环、一个数字。
-struct MenuBarQuotaCellView: View {
-    let cell: MenuBarQuotaModel.Cell
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private func toneColor(_ tone: UsageMetricTone) -> Color {
-        switch tone {
-        case .ok: return Color(nsColor: .systemGreen)
-        case .warning: return Color(nsColor: .systemYellow)
-        case .bad: return Color(nsColor: .systemRed)
-        case .muted: return Color(nsColor: .tertiaryLabelColor)
-        }
-    }
-
-    private func ring(_ window: MenuBarQuotaModel.Window, diameter: CGFloat) -> some View {
-        ZStack {
-            // 底环加深：完整圆的轮廓始终可见，剩余弧的缺口才不会把「视觉重心」
-            // 拉偏——双环异色时缺口方向不同，曾造成「没对齐」的错觉（几何是同心的）。
-            Circle()
-                .stroke(Color.primary.opacity(0.28), lineWidth: 2)
-            // 平头端点：圆头(round)会在弧两端各凸出半线宽的小圆点，双环端点
-            // 方位不同、颜色又不同时就是持续的不对称噪音（用户反馈的「不协调感」）。
-            Circle()
-                .trim(from: 0, to: window.remainingPercent / 100)
-                .stroke(
-                    toneColor(window.tone),
-                    style: StrokeStyle(lineWidth: 2, lineCap: .butt)
-                )
-                .rotationEffect(.degrees(-90))
-                .animation(reduceMotion ? nil : .smooth(duration: 0.5), value: window.remainingPercent)
-        }
-        .frame(width: diameter, height: diameter)
-    }
-
-    /// 外环 = 最长窗口（周额度，Cell.longWindow）；内环 = 短窗（5h，单窗家没有）。
-    private var weekly: MenuBarQuotaModel.Window? { cell.longWindow }
-    private var shortWindow: MenuBarQuotaModel.Window? { cell.shortWindow }
-
-    private func numberText(_ window: MenuBarQuotaModel.Window) -> some View {
-        Text("\(Int(window.remainingPercent.rounded()))")
-            .font(.system(size: 11, weight: .bold, design: .monospaced))
-            .monospacedDigit()
-            .foregroundStyle(toneColor(window.tone))
-            .fixedSize()
-            .contentTransition(reduceMotion ? .identity : .numericText())
-            .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: window.remainingPercent)
-    }
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Text(cell.badge)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.primary)
-                .fixedSize()
-
-            // 内环用 overlay 挂在外环上：overlay 天然居中于宿主，圆心必然重合
-            //（曾用 ZStack + 8.5 直径，亚像素中心在 Retina 下渲染出肉眼可见的偏心）。
-            // 内环 8：与外环留出 1.5pt 空隙，双环异色时不再互相压迫。
-            if let weekly {
-                ring(weekly, diameter: 15)
-                    .overlay {
-                        if let shortWindow {
-                            ring(shortWindow, diameter: 8)
-                        }
-                    }
-                    .frame(width: 17, height: 17)
-            }
-
-            // 基线对齐：两个数字异色（亮度不同）时 center 对齐会有高低错觉，
-            // 按文字基线排最稳;分隔点淡化,别和数字抢注意力。
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
-                if let weekly {
-                    numberText(weekly)
-                }
-                if let shortWindow {
-                    Text("·")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 1.5)
-                    numberText(shortWindow)
-                }
-            }
-        }
-        .fixedSize()
-    }
-}
+// 菜单栏额度 cell 的样式族视图（S0 同心双环及其余 15 种）统一在
+// MenuBarStyleViews.swift：投影（MenuBarProjection）驱动，样式规则见 spec §3。
 
 /// 品牌折线小标（弹窗 BrandMark 的菜单栏版）：today 数据未加载时替代
 /// 「TokenMeter」文字（用户裁定：图标比应用名文案好）。随菜单栏黑白取 primary。
+/// size 可调：哨兵/点阵/堆叠条样式用 13pt 作名称前缀位。
 struct MenuBarBrandMark: View {
+    var size: CGFloat = 16
+
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -217,24 +132,44 @@ struct MenuBarBrandMark: View {
             .frame(width: 13.5, height: 12.5)
         }
         .frame(width: 16, height: 16)
+        .scaleEffect(size / 16)
+        .frame(width: size, height: size)
     }
 }
 
-/// 菜单栏整体内容：额度 cell 组 + 今日 token 数字（未加载时品牌图标）。
-/// 宽度由 StatusBarController.applyStatusContent 按 fittingSize 显式设定。
-struct StatusBarContentView: View {
-    let cells: [MenuBarQuotaModel.Cell]
-    let title: String
+/// 按样式分发 cell 渲染：基础族逐家 BasicStyleCellView；聚合/数字支/混合系
+/// 的分支在 Task 5 落地前暂回落基础族渲染（rings 形态兜底，功能不缺失）。
+struct MenuBarStyleRouterView: View {
+    let projection: MenuBarQuotaModel.MenuBarProjection
 
     var body: some View {
         HStack(spacing: 9) {
-            ForEach(cells, id: \.providerId) { cell in
-                MenuBarQuotaCellView(cell: cell)
+            ForEach(projection.cells, id: \.providerId) { cell in
+                BasicStyleCellView(cell: cell, projection: projection)
             }
-            if title.isEmpty {
+        }
+    }
+}
+
+/// 菜单栏整体内容：样式化 cell 组 + 组件级今日尾巴（token/花费）。
+/// 全空（无 cell 且尾巴隐藏）时退品牌小标。宽度由 applyStatusContent 显式设定。
+struct StatusBarContentView: View {
+    let projection: MenuBarQuotaModel.MenuBarProjection
+    let title: String
+
+    private var tailText: String? {
+        if case let .text(text) = projection.tail { return text }
+        return nil
+    }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            MenuBarStyleRouterView(projection: projection)
+            if let tailText {
+                StatusBarTitleView(title: tailText)
+                    .opacity(0.75)
+            } else if projection.cells.isEmpty {
                 MenuBarBrandMark()
-            } else {
-                StatusBarTitleView(title: title)
             }
         }
     }
@@ -279,7 +214,13 @@ final class StatusBarController: NSObject {
     private var titleHosting: NSHostingView<StatusBarContentView>?
     private var globalClickMonitor: Any?
     private var currentTitle = "TokenMeter"
-    private var quotaCells: [MenuBarQuotaModel.Cell] = []
+    private var projection = MenuBarQuotaModel.MenuBarProjection(
+        style: .rings, showName: true, showGlyph: true, showNumber: true,
+        windowOrder: .longFirst, cells: [], tail: .hidden
+    )
+
+    /// 测试用：当前投影镜像。
+    var projectionForTesting: MenuBarQuotaModel.MenuBarProjection { projection }
 
     /// 菜单栏标题字体：透明的 button.title（管宽度）与 SwiftUI 层（管显示）
     /// 必须同字体两层才对得上；等宽数字避免滚动时横向抖动。
@@ -320,7 +261,7 @@ final class StatusBarController: NSObject {
     /// 更新 SwiftUI 层并按理想尺寸显式设定 item 宽度。
     private func applyStatusContent() {
         guard let hosting = titleHosting else { return }
-        hosting.rootView = StatusBarContentView(cells: quotaCells, title: currentTitle)
+        hosting.rootView = StatusBarContentView(projection: projection, title: currentTitle)
         // rootView 更新后 intrinsic 需要显式作废再取，否则可能拿到旧值/偏小值，
         // length 偏小会把内容压出省略号（实测）。视图层全 fixedSize 兜底不塌缩。
         hosting.invalidateIntrinsicContentSize()
@@ -349,7 +290,7 @@ final class StatusBarController: NSObject {
     }
 
     private func installTitleHosting(on button: NSStatusBarButton) {
-        let hosting = PassthroughHostingView(rootView: StatusBarContentView(cells: [], title: ""))
+        let hosting = PassthroughHostingView(rootView: StatusBarContentView(projection: projection, title: ""))
         hosting.translatesAutoresizingMaskIntoConstraints = false
         button.addSubview(hosting)
         NSLayoutConstraint.activate([
@@ -419,31 +360,24 @@ final class StatusBarController: NSObject {
     }
 
     private func bindStore() {
-        // 菜单栏标题 = 今日已用 token 总量（用户裁定：不再显示「服务商 剩余%」）。
-        // todaySummary 与弹窗头部同源（daily_rollup 今日行），随每次刷新周期更新。
-        store.$todaySummary
-            .receive(on: RunLoop.main)
-            .sink { [weak self] summary in
-                // 0（未加载/刚过午夜）不显示 "TokenMeter" 文案，交给品牌图标（空串）。
-                self?.updateTitle(
-                    summary.tokens > 0 ? UsageFormatter.menuBarTitle(todayTokens: summary.tokens) : ""
-                )
-            }
-            .store(in: &cancellables)
-
-        // 额度 cell 组：providerSnapshots（额度刷新）或 settingsSnapshot
-        // （启停/别名/菜单栏外观）一变即重投影，与弹窗的展示口径同步。
+        // 三源合并重投影：providerSnapshots（额度刷新）/ settingsSnapshot
+        // （启停/别名/菜单栏外观）/ todaySummary（今日尾巴）任一变化即重建，
+        // 与弹窗的展示口径同步。尾巴文本同步进透明 title（宽度/a11y 镜像层）。
         store.$providerSnapshots
-            .combineLatest(store.$settingsSnapshot)
+            .combineLatest(store.$settingsSnapshot, store.$todaySummary)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _, _ in
+            .sink { [weak self] _, _, _ in
                 guard let self else { return }
-                self.quotaCells = MenuBarQuotaModel.projection(
+                self.projection = MenuBarQuotaModel.projection(
                     snapshots: self.store.displayProviderSnapshots,
                     settings: self.store.settingsSnapshot,
                     todaySummary: self.store.todaySummary
-                ).cells
-                self.applyStatusContent()
+                )
+                if case let .text(text) = self.projection.tail {
+                    self.updateTitle(text)
+                } else {
+                    self.updateTitle("")
+                }
             }
             .store(in: &cancellables)
     }
