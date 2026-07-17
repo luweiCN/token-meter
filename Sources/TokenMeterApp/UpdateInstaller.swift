@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import UserNotifications
 
 /// 一键自动更新：下载 Release 资产 → sha256 校验 → 解压验证 → 原子替换自身 → 重启。
 /// 安全顺序是这里的全部要点：**所有校验通过之前绝不触碰现有安装**；替换用同卷
@@ -115,9 +116,24 @@ enum UpdateInstaller {
             throw InstallError.swapFailed(error.localizedDescription)
         }
 
-        // 5. 重启：分离的 shell 等本进程退出后 open 新版（孤儿进程由 launchd 收养）。
+        // 5. 旧主界面（Electron）引用的 Resources/Electron 已被整目录替换，
+        //    留着必然状态错乱/白屏（install-app.sh 同款处理）——一并关掉。
+        let killElectron = Process()
+        killElectron.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+        killElectron.arguments = ["-f", "\(installURL.path)/Contents/Resources/Electron"]
+        try? killElectron.run()
+        killElectron.waitUntilExit()
+
+        // 6. 重启：先发系统通知预告（不打断、不等待），再由分离的 shell
+        //    等本进程退出后 open 新版（孤儿进程由 launchd 收养）。
         guard relaunch else { return }
         progress("即将重启…")
+        let content = UNMutableNotificationContent()
+        content.title = "TokenMeter 已更新到 \(release.tagName)"
+        content.body = "正在自动重启以完成更新。"
+        try? await UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: "tokenmeter.updated.\(release.tagName)", content: content, trigger: nil)
+        )
         let relauncher = Process()
         relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
         relauncher.arguments = ["-c", "sleep 1; /usr/bin/open \"\(installURL.path)\""]
