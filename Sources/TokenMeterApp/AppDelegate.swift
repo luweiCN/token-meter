@@ -30,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scheduleRefreshTimer(interval: refreshInterval(for: store.settingsSnapshot))
         bindSettingsTimer(to: store)
         bindHooksInstaller(to: store)
+        // 静默更新检查（24h 节流）：有新版发系统通知；手动入口在右键菜单。
+        UpdateChecker.autoCheckIfDue()
     }
 
     /// enabledAgentKinds 一变（含启动的首个快照）就对账 hooks 装卸：

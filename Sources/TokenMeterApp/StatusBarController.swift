@@ -475,6 +475,14 @@ final class StatusBarController: NSObject {
         )
         openItem.target = self
         menu.addItem(openItem)
+
+        let updateItem = NSMenuItem(
+            title: "检查更新…",
+            action: #selector(checkForUpdates),
+            keyEquivalent: ""
+        )
+        updateItem.target = self
+        menu.addItem(updateItem)
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(
@@ -490,6 +498,10 @@ final class StatusBarController: NSObject {
 
     @objc private func openMainInterface() {
         mainInterfaceLauncher.openMainInterface()
+    }
+
+    @objc private func checkForUpdates() {
+        Task { await UpdateChecker.checkInteractively() }
     }
 
     @objc private func quitTokenMeter() {

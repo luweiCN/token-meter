@@ -77,9 +77,8 @@ final class StatusBarControllerTests: XCTestCase {
 
         let menu = controller.makeContextMenuForTesting()
 
-        XCTAssertEqual(menu.items.first?.title, "打开主界面")
-        XCTAssertTrue(menu.items.dropFirst().first?.isSeparatorItem == true)
-        XCTAssertEqual(menu.items.last?.title, "退出 TokenMeter")
+        XCTAssertEqual(menu.items.map(\.title), ["打开主界面", "检查更新…", "", "退出 TokenMeter"])
+        XCTAssertTrue(menu.items[2].isSeparatorItem)
     }
 
     func testOpenMainInterfaceMenuItemInvokesLauncher() throws {
