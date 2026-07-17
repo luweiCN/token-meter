@@ -2342,9 +2342,9 @@ th.sort.desc::after{content:"↓";opacity:1;color:var(--accent)}
 .mbcell .nm{font-size:11px;font-weight:600}
 .mbcell .pct{font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums;font-weight:500}
 .mbcell .pct i{font-style:normal;opacity:.45;margin:0 1px}
-/* ok = 系统绿（与弹窗进度条同语义；品牌青试过被否）；文字纯白/纯黑 */
-.mbar.mbdark  .g-ok{color:#30d158}.mbar.mbdark  .g-warn{color:#ffd60a}.mbar.mbdark  .g-bad{color:#ff453a}.mbar.mbdark  .g-off{color:rgba(255,255,255,.38)}
-.mbar.mblight .g-ok{color:#1d9a46}.mbar.mblight .g-warn{color:#b48b00}.mbar.mblight .g-bad{color:#d70015}.mbar.mblight .g-off{color:rgba(0,0,0,.32)}
+/* 警戒三色与弹窗 MBTheme 同源（深 #44ffb1/#ffe073/#e52e2e，浅 #0f9d6e/#9a7500/#c92a2a）；文字纯白/纯黑 */
+.mbar.mbdark  .g-ok{color:#44ffb1}.mbar.mbdark  .g-warn{color:#ffe073}.mbar.mbdark  .g-bad{color:#e52e2e}.mbar.mbdark  .g-off{color:rgba(255,255,255,.38)}
+.mbar.mblight .g-ok{color:#0f9d6e}.mbar.mblight .g-warn{color:#9a7500}.mbar.mblight .g-bad{color:#c92a2a}.mbar.mblight .g-off{color:rgba(0,0,0,.32)}
 .mbar.mbdark .mbcell .nm{color:#fff}
 .mbar.mblight .mbcell .nm{color:#000}
 .mbar.mbdark .mb-deck2 .u b,.mbar.mbdark .mb-tagnum .u b{color:#fff}

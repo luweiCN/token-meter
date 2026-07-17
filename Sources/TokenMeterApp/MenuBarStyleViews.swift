@@ -11,13 +11,30 @@ enum MenuBarToneColor {
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .white : .black
     })
 
-    /// 安全态 = 系统绿，与弹窗进度条同语义（用户裁定 2026-07-17 二改：
-    /// 曾试过品牌青，与弹窗的绿进度条明显不一致，回绿）。
+    /// 深浅菜单栏动态色（深随 MBTheme.dark、浅随 MBTheme.light）。
+    private static func themed(dark: Int, light: Int) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let hex = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+            return NSColor(
+                red: CGFloat((hex >> 16) & 0xFF) / 255.0,
+                green: CGFloat((hex >> 8) & 0xFF) / 255.0,
+                blue: CGFloat(hex & 0xFF) / 255.0,
+                alpha: 1
+            )
+        })
+    }
+
+    /// 警戒三色与弹窗 MBTheme 完全同源（用户裁定 2026-07-17 三改：系统绿与
+    /// 弹窗的 #44FFB1 肉眼可辨地不同——两处必须是同一种绿）。
+    static let ok = themed(dark: 0x44FFB1, light: 0x0F9D6E)
+    static let warn = themed(dark: 0xFFE073, light: 0x9A7500)
+    static let danger = themed(dark: 0xE52E2E, light: 0xC92A2A)
+
     static func color(_ tone: UsageMetricTone) -> Color {
         switch tone {
-        case .ok: return Color(nsColor: .systemGreen)
-        case .warning: return Color(nsColor: .systemYellow)
-        case .bad: return Color(nsColor: .systemRed)
+        case .ok: return ok
+        case .warning: return warn
+        case .bad: return danger
         case .muted: return Color(nsColor: .tertiaryLabelColor)
         }
     }
