@@ -1,106 +1,111 @@
 # TokenMeter
 
-TokenMeter 是一个 macOS 菜单栏小工具，用来查看 AI 工具或供应商的 token 用量、额度、余额等状态。
+[English](README.en.md) | 简体中文
 
-第一版是原生 macOS MVP：
+**macOS 菜单栏里的 coding agent 用量仪表盘** —— 实时统计 Claude Code、Codex CLI 等本地 AI 编程工具的 token 用量、花费与订阅额度，全程本地、零上传。
 
-- 使用 AppKit 创建菜单栏入口。
-- 使用 SwiftUI 创建点击后的原生浮窗。
-- 不使用 Electron、Tauri 或 WKWebView。
-- 通过本地配置文件描述供应商。
-- Codex、Claude Code、OpenCode Go 第一版先作为手写配置项。
-- 智谱第一版提供 HTTP 查询 provider，API Key 通过环境变量读取。
+![菜单栏](docs/screenshots/menubar.png)
 
-## 运行
+## 它解决什么问题
+
+重度使用 coding agent 的人每天都在问三个问题：**今天烧了多少 token？这周额度还剩多少？钱都花在哪个模型上了？** TokenMeter 把答案常驻在菜单栏——额度环一眼看余量，点开是完整仪表盘。
+
+## 功能
+
+### 菜单栏常驻
+
+- **多供应商订阅额度**：5 小时 / 7 天窗口剩余百分比，时间进度感知的警戒色（绿=充裕、黄=消耗偏快、红=用尽）
+- **16 种可切换样式**：同心双环、竖条、胶囊电池、点阵、哨兵、双层堆叠……看腻了随时换
+- **深度定制**：品牌名 / 图形 / 数字逐项开关，每家供应商独立配置显示窗口，今日用量尾巴三态（Token / 花费 / 关闭）
+- **额度告警**：用量达到阈值时系统通知
+
+### 主界面（Electron）
+
+| 总览 | 项目 |
+|---|---|
+| ![总览](docs/screenshots/overview.png) | ![项目](docs/screenshots/projects.png) |
+
+| 会话 | 模型 |
+|---|---|
+| ![会话](docs/screenshots/sessions.png) | ![模型](docs/screenshots/models.png) |
+
+- **总览**：累计 / 当月 / 本周 / 今日 KPI、实时会话卡（hooks 秒级状态）、用量趋势直方图、全年活跃度热力图
+- **项目**：按工作目录聚合，花费火花线与模型分布
+- **会话**：主会话列表（子代理自动归并），活跃趋势与统计卡跟随筛选，下钻子代理任务明细
+- **模型**：按模型聚合的 token / 成本排行，Top 6 模型用量趋势
+- **设置**：agent 集成开关（自动装卸 hooks）、供应商额度接入、菜单栏外观实时预览
+
+| 设置 | 菜单栏外观定制 |
+|---|---|
+| ![设置](docs/screenshots/settings.png) | ![菜单栏外观](docs/screenshots/menubar-appearance.png) |
+
+## 支持的数据源
+
+**本地会话统计**（解析 agent 自己写盘的日志，只读）：
+
+| Agent | 数据源 |
+|---|---|
+| Claude Code | `~/.claude/projects/*.jsonl` |
+| Codex CLI | `~/.codex/sessions/*.jsonl` |
+| OMP (Oh My Pi) | `~/.omp/agent/sessions/*.jsonl` |
+| OpenCode | `~/.local/share/opencode/opencode.db` |
+
+**订阅额度**（读取本机已登录凭证或 API Key）：
+
+| 供应商 | 凭证来源 |
+|---|---|
+| Claude Code | 钥匙串（本机登录态） |
+| Codex | `~/.codex/auth.json` |
+| 智谱 GLM | 应用内填写（存钥匙串）或 `ZHIPU_API_KEY` |
+
+## 架构
+
+```
+┌─ 菜单栏 App（Swift / AppKit + SwiftUI）
+│   ├─ 增量扫描 agent 会话日志 → SQLite 派生库（可随时删除重建）
+│   ├─ hooks 实时上报（会话开始/心跳/结束，秒级 live 状态）
+│   ├─ 订阅额度 API 轮询（≥5 分钟，防上游限流）
+│   └─ Unix socket IPC
+└─ 主界面（Electron + React）
+    └─ 读同一个 SQLite，事件驱动刷新
+```
+
+- **成本计算**：LiteLLM 定价表随构建打包（离线快照），token 单价 × 用量本地计算，不联网查价
+- **口径一致**：菜单栏「今日」、弹窗、主界面各页全部从同一张消息级事件表（`usage_events`）派生
+
+## 安装
+
+目前从源码构建（需要 macOS 13+、Xcode 命令行工具、Node.js LTS）：
 
 ```bash
-swift run TokenMeterApp
+git clone https://github.com/luweiCN/token-meter.git
+cd token-meter
+./scripts/install-app.sh
 ```
 
-运行后，TokenMeter 会出现在 macOS 菜单栏。左键点击菜单栏文字可以打开浮窗并手动刷新；右键点击会显示菜单，可打开 Electron 主界面或退出应用。
+脚本会完成 release 构建、安装到 `/Applications/TokenMeter.app` 并注册登录自启。首次启动后在 设置 → Coding Agent 集成 里打开你在用的 agent 即可。
 
-也可以打包一个开发版 `.app` 后打开：
+开发模式（renderer 热更新）：
 
 ```bash
-scripts/package-dev-app.sh
-open build/TokenMeter.app
+./scripts/dev-app.sh
 ```
-
-## 配置
-
-默认会按下面顺序读取配置：
-
-1. `TOKENMETER_CONFIG` 环境变量指向的 JSON 文件。
-2. `~/.token-meter/config.json`。
-3. 内置默认配置。
-
-示例配置见：
-
-```text
-config/token-meter.example.json
-```
-
-智谱 API Key 使用环境变量：
-
-```bash
-export ZHIPU_API_KEY="你的智谱 API Key"
-```
-
-智谱只读取这个环境变量，不会从其他文件位置读取 API Key。
-
-OpenCode Go 套餐额度来自 OpenCode Go dashboard，不是 OpenCode 本地 session 数据。TokenMeter 支持两种配置方式：
-
-```bash
-export OPENCODE_GO_WORKSPACE_ID="你的 workspace id"
-export OPENCODE_GO_AUTH_COOKIE="你的 dashboard auth cookie"
-```
-
-或者写入文件：
-
-```text
-~/.config/opencode/opencode-quota/opencode-go.json
-```
-
-格式：
-
-```json
-{
-  "workspaceId": "你的 workspace id",
-  "authCookie": "你的 dashboard auth cookie"
-}
-```
-
-本地调试时可以复制示例配置到本地文件：
-
-```bash
-mkdir -p ~/.token-meter
-cp config/token-meter.example.json ~/.token-meter/config.json
-```
-
-不要把真实 API Key 写进仓库。
 
 ## 开发验证
 
 ```bash
-swift test
-swift build
+swift test                                  # Swift 单元测试
+npm test --prefix Electron                  # Electron 单元测试
+python3 -m unittest discover -s scripts -p 'test_*.py'   # 定价转换测试
+scripts/reconcile-with-ccusage.sh           # 与 ccusage 独立对账（全程只读）
 ```
 
-`scripts/reconcile-with-ccusage.sh` 把 token 记账与 ccusage 独立对账：扫真实语料进临时库，按 provider 比对 `usage_events.tokens_total`，任一源超出容差即非零退出（`~/.claude`、`~/.codex`、`~/.omp`、`opencode.db` 全程只读）。它只验证全量扫描；增量路径由 `LocalAgentScannerTests.testIncrementalScanReplacesAPartialStreamedFrameWithTheFinalOne` 守护。
+## 隐私
 
-## 第二阶段开发
+- **全部本地**：无账号、无遥测、无任何数据上传
+- **只读数据源**：绝不写入、修改 agent 的会话日志；派生数据库删除即重建
+- **只统计元数据**：token 数、模型名、时间戳——提示词与回复正文从不入库
 
-Swift 菜单栏仍可单独运行：
+## License
 
-```bash
-swift run TokenMeterApp
-```
-
-Electron 主界面在 `Electron/` 下开发：
-
-```bash
-npm install --prefix Electron
-npm run dev --prefix Electron
-```
-
-隐私约束：TokenMeter SQLite 只保存 session 元数据、token usage、cost、扫描状态和设置，不保存 prompt、assistant response、tool output、reasoning、attachments 或凭据。
+[MIT](LICENSE)
