@@ -18,6 +18,7 @@ Heavy coding-agent users ask the same three questions every day: **How many toke
 - **16 switchable styles**: concentric rings, bars, capsules, dot grid, sentinel, stacked deck… swap whenever you're bored
 - **Deep customization**: toggle brand name / glyph / numbers independently, per-provider window selection, today-usage tail (tokens / cost / off)
 - **Quota alerts**: system notification when usage crosses your threshold
+- **One-click self-update**: download, SHA-256 verify, atomic swap, and relaunch in one go (the existing install is never touched unless every check passes)
 
 ### Main window (Electron)
 

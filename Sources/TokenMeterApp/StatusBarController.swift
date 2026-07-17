@@ -476,6 +476,18 @@ final class StatusBarController: NSObject {
         openItem.target = self
         menu.addItem(openItem)
 
+        // 已发现可安装的新版时，菜单直接给一键更新入口（静默检查的通知也指到这里）。
+        if let release = UpdateChecker.pendingRelease,
+           UpdateChecker.isNewer(remoteTag: release.tagName, than: UpdateChecker.currentVersion),
+           UpdateChecker.installableAssets(from: release.assets) != nil {
+            let installItem = NSMenuItem(
+                title: "更新到 \(release.tagName)",
+                action: #selector(installPendingUpdate),
+                keyEquivalent: ""
+            )
+            installItem.target = self
+            menu.addItem(installItem)
+        }
         let updateItem = NSMenuItem(
             title: "检查更新…",
             action: #selector(checkForUpdates),
@@ -502,6 +514,14 @@ final class StatusBarController: NSObject {
 
     @objc private func checkForUpdates() {
         Task { await UpdateChecker.checkInteractively() }
+    }
+
+    @objc private func installPendingUpdate() {
+        Task { @MainActor in
+            guard let release = UpdateChecker.pendingRelease,
+                  let assets = UpdateChecker.installableAssets(from: release.assets) else { return }
+            await UpdateChecker.runInstall(release: release, assets: assets)
+        }
     }
 
     @objc private func quitTokenMeter() {
