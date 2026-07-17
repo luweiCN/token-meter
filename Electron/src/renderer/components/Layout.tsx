@@ -7,9 +7,8 @@ import { TrafficLightHover } from './TrafficLightHover.js';
 
 export type RouteName = 'dashboard' | 'projects' | 'sessions' | 'models' | 'settings';
 
-/// 侧栏导航。「查询」的页面稿未接入，先渲染禁用态——禁用项不产生路由。
-/// 索引状态已并入设置页「数据」区，不再单列。
-const NAV: Array<{ route?: RouteName; label: string; icon: ReactNode; disabled?: boolean }> = [
+/// 侧栏导航。索引状态已并入设置页「数据」区，不再单列。
+const NAV: Array<{ route: RouteName; label: string; icon: ReactNode }> = [
   {
     route: 'dashboard',
     label: '总览',
@@ -45,16 +44,6 @@ const NAV: Array<{ route?: RouteName; label: string; icon: ReactNode; disabled?:
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
         <path d="M7 1.5 12.5 4.5v5L7 12.5 1.5 9.5v-5L7 1.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
         <path d="M1.5 4.5 7 7.5l5.5-3M7 7.5v5" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-      </svg>
-    )
-  },
-  {
-    label: '查询',
-    disabled: true,
-    icon: (
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <circle cx="6" cy="6" r="4.4" stroke="currentColor" strokeWidth="1.4" />
-        <path d="m9.4 9.4 3.1 3.1" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
       </svg>
     )
   },
@@ -106,11 +95,9 @@ export function Layout({
             <button
               key={item.label}
               type="button"
-              className={item.route !== undefined && route === item.route ? 'on' : ''}
-              aria-current={item.route !== undefined && route === item.route ? 'page' : undefined}
-              disabled={item.disabled}
-              title={item.disabled ? '即将推出' : undefined}
-              onClick={item.route !== undefined ? () => onRoute(item.route as RouteName) : undefined}
+              className={route === item.route ? 'on' : ''}
+              aria-current={route === item.route ? 'page' : undefined}
+              onClick={() => onRoute(item.route)}
             >
               {item.icon}
               {item.label}

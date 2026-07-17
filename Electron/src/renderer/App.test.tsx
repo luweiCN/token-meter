@@ -352,8 +352,8 @@ describe('AppShell renderer routes', () => {
     expect(within(nav).queryByRole('button', { name: '索引状态' })).toBeNull();
     expect((within(nav).getByRole('button', { name: '项目' }) as HTMLButtonElement).disabled).toBe(false);
     expect((within(nav).getByRole('button', { name: '模型' }) as HTMLButtonElement).disabled).toBe(false);
-    // 「查询」的页面稿未接入：仍是禁用态占位，不产生路由。
-    expect((within(nav).getByRole('button', { name: '查询' }) as HTMLButtonElement).disabled).toBe(true);
+    // 「查询」已移除（用户裁定 2026-07-17：不需要该页）。
+    expect(within(nav).queryByRole('button', { name: '查询' })).toBeNull();
     expect(document.querySelectorAll('a:not([href])')).toHaveLength(0);
     expectNoEnglishScaffold();
   });

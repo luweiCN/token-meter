@@ -197,8 +197,9 @@ struct StatusBarContentView: View {
         HStack(spacing: 9) {
             MenuBarStyleRouterView(projection: projection)
             if let tailText {
+                // 尾巴纯白满亮度（用户裁定：token 量不要灰灰的）。
                 StatusBarTitleView(title: tailText)
-                    .opacity(0.75)
+                    .foregroundStyle(MenuBarToneColor.text)
             } else if projection.cells.isEmpty {
                 MenuBarBrandMark()
             }

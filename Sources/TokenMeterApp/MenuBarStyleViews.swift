@@ -6,9 +6,22 @@ import TokenMeterCore
 /// cell 内只用系统语义色（品牌色禁入菜单栏）。
 
 enum MenuBarToneColor {
+    /// 安全态 = 品牌青（用户裁定 2026-07-17：与主应用高亮色匹配，替换系统绿）。
+    /// 深色菜单栏用主界面深色主题的 accent，浅色用浅色主题的（同弹窗 MBTheme 色值）。
+    static let brandAccent = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0x0F / 255.0, green: 0xC5 / 255.0, blue: 0xED / 255.0, alpha: 1)
+            : NSColor(red: 0x08 / 255.0, green: 0x95 / 255.0, blue: 0xBD / 255.0, alpha: 1)
+    })
+
+    /// 名称/尾巴文字 = 纯白（深）/纯黑（浅）——用户裁定：不要系统 label 的灰调。
+    static let text = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .white : .black
+    })
+
     static func color(_ tone: UsageMetricTone) -> Color {
         switch tone {
-        case .ok: return Color(nsColor: .systemGreen)
+        case .ok: return brandAccent
         case .warning: return Color(nsColor: .systemYellow)
         case .bad: return Color(nsColor: .systemRed)
         case .muted: return Color(nsColor: .tertiaryLabelColor)
@@ -21,13 +34,13 @@ enum MenuBarToneColor {
     }
 }
 
-/// 品牌短名（11pt semibold，primary）。
+/// 品牌短名（11pt semibold，纯白/纯黑——用户裁定不要 label 灰调）。
 struct CellNameText: View {
     let badge: String
     var body: some View {
         Text(badge)
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.primary)
+            .foregroundStyle(MenuBarToneColor.text)
             .fixedSize()
     }
 }
@@ -357,7 +370,7 @@ struct DeckUnitView: View {
             if let nameText {
                 Text(nameText)
                     .font(.system(size: 7.5, weight: .semibold))
-                    .foregroundStyle(.primary.opacity(0.55))
+                    .foregroundStyle(MenuBarToneColor.text)
                     .fixedSize()
             }
             CellNumbersView(windows: cell.numberWindows(order: projection.windowOrder), isStale: cell.isStale)
@@ -377,7 +390,7 @@ struct TagnumAggregateView: View {
                     if projection.showName {
                         Text(cell.mono)
                             .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.primary.opacity(0.55))
+                            .foregroundStyle(MenuBarToneColor.text)
                             .fixedSize()
                     }
                     CellNumbersView(windows: cell.numberWindows(order: projection.windowOrder), isStale: cell.isStale)

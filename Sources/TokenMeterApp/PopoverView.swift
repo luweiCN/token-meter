@@ -1088,12 +1088,14 @@ private struct StaleCard: View {
 
 // MARK: - 环形主额度（.qring：44×44，r19 stroke4，-90° 起笔）
 
-/// tone → 主题色。ok 保持 accent（设计语言里的"正常"色），muted（数据不足）同。
+/// tone → 主题色。ok = 绿（用户裁定 2026-07-17：额度安全就该是绿色，
+/// 原「正常态用 accent」的设计语言只保留给 muted/数据不足）。
 private func toneStroke(_ tone: UsageMetricTone, theme: MBTheme) -> Color {
     switch tone {
     case .warning: return theme.warn
     case .bad: return theme.danger
-    case .ok, .muted: return theme.accent
+    case .ok: return theme.ok
+    case .muted: return theme.accent
     }
 }
 

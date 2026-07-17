@@ -382,9 +382,7 @@ export function MenubarPreviewBar({ mode, state }: { mode: 'dark' | 'light'; sta
   const tail =
     state.usage !== 'off' ? (
       <span className="mbcell" key="tail">
-        <span className="pct" style={{ opacity: 0.75 }}>
-          {state.usage === 'tok' ? '214.8M' : '$196.44'}
-        </span>
+        <span className="pct nm">{state.usage === 'tok' ? '214.8M' : '$196.44'}</span>
       </span>
     ) : null;
 
