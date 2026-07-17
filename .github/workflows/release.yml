@@ -19,8 +19,9 @@ permissions:
 
 jobs:
   build-and-release:
-    # macos-14 起 runner 是 Apple Silicon，产物为 arm64。
-    runs-on: macos-14
+    # Apple Silicon runner；必须 macos-15+（Xcode 16 / macOS 15 SDK——
+    # onGeometryChange 与新并发检查，macos-14 的 Xcode 编不过，CI 实测）。
+    runs-on: macos-15
     timeout-minutes: 45
     steps:
       - name: 解析目标 tag
@@ -51,7 +52,9 @@ jobs:
           fi
 
       - name: 构建 TokenMeter.app
-        run: ./scripts/build-app.sh
+        run: |
+          swift --version
+          ./scripts/build-app.sh
 
       - name: 打包 zip
         id: zip
