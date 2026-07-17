@@ -188,12 +188,14 @@ const allowedIpcChannels: Record<string, true> = {
   'index:setRootEnabled': true,
   'index:status': true,
   'models:query': true,
+  'models:trend': true,
   'notifications:state': true,
   'notifications:requestAuthorization': true,
   'projects:list': true,
   'projects:detail': true,
   'sessions:projects': true,
   'sessions:query': true,
+  'sessions:trend': true,
   'settings:get': true,
   'settings:update': true,
   'window:setButtonsVisible': true
@@ -205,10 +207,10 @@ const allowedPreloadApiShape: Record<string, string[]> = {
   dashboard: ['queryOverview'],
   overview: ['dayModelBreakdown', 'dayProjectBreakdown', 'onInvalidate', 'onSessionEvent', 'query', 'subagentBreakdown'],
   index: ['onScanProgress', 'setRootEnabled', 'startFullReindex', 'status'],
-  models: ['query'],
+  models: ['query', 'trend'],
   notifications: ['requestAuthorization', 'state'],
   projects: ['detail', 'list'],
-  sessions: ['projects', 'query'],
+  sessions: ['projects', 'query', 'trend'],
   settings: ['get', 'update'],
   windowControls: ['setButtonsVisible']
 };

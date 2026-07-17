@@ -31,10 +31,12 @@ contextBridge.exposeInMainWorld('tokenMeter', {
   },
   sessions: {
     query: (filter: SessionsFilter) => ipcRenderer.invoke('sessions:query', filter),
+    trend: (filter: SessionsFilter) => ipcRenderer.invoke('sessions:trend', filter),
     projects: () => ipcRenderer.invoke('sessions:projects')
   },
   models: {
-    query: (filter: ModelsFilter) => ipcRenderer.invoke('models:query', filter)
+    query: (filter: ModelsFilter) => ipcRenderer.invoke('models:query', filter),
+    trend: (filter: ModelsFilter) => ipcRenderer.invoke('models:trend', filter)
   },
   projects: {
     list: () => ipcRenderer.invoke('projects:list'),

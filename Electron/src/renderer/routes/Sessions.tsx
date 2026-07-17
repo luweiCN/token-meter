@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { SessionItem, SessionProjectOption, SessionsFilter, SubagentRow } from '../api.js';
+import type { SessionItem, SessionProjectOption, SessionsFilter, SessionTrendResult, SubagentRow } from '../api.js';
+import { StackedTrendChart, type TrendSeriesDef } from '../charts/StackedTrendChart.js';
 import { DateRangePicker, MultiSelect, Pager, type DateRange } from '../components/ui.js';
 import {
   formatCount,
@@ -9,6 +10,61 @@ import {
   formatUnknownCostNote,
   formatUsdMicros
 } from '../format.js';
+
+/// agent 系列（与总览趋势图同色序 s1-s4；名单外 provider 归「其他」）。
+const TREND_PROVIDERS: TrendSeriesDef[] = [
+  { id: 'claude-code', label: 'Claude Code', color: 'var(--s1)' },
+  { id: 'codex', label: 'Codex CLI', color: 'var(--s2)' },
+  { id: 'omp', label: 'OMP', color: 'var(--s3)' },
+  { id: 'opencode', label: 'OpenCode', color: 'var(--s4)' }
+];
+const TREND_OTHER: TrendSeriesDef = { id: '__other', label: '其他', color: 'var(--muted)' };
+
+/// 会话活跃趋势直方图（按起始日 × agent 堆叠 token，跟随列表筛选）。
+function SessionTrendCard({ trend }: { trend: SessionTrendResult | null }) {
+  const byBucket = useMemo(() => {
+    if (trend === null) return new Map<string, Map<string, number>>();
+    const known = new Set(TREND_PROVIDERS.map((p) => p.id));
+    const m = new Map<string, Map<string, number>>();
+    for (const row of trend.rows) {
+      const key = known.has(row.providerId) ? row.providerId : TREND_OTHER.id;
+      let inner = m.get(row.bucket);
+      if (!inner) {
+        inner = new Map();
+        m.set(row.bucket, inner);
+      }
+      inner.set(key, (inner.get(key) ?? 0) + row.tokens);
+    }
+    return m;
+  }, [trend]);
+
+  const series = useMemo(() => {
+    if (trend === null) return [];
+    const present = new Set(trend.rows.map((r) => r.providerId));
+    const known = TREND_PROVIDERS.filter((p) => present.has(p.id));
+    const hasOther = [...present].some((id) => !TREND_PROVIDERS.some((p) => p.id === id));
+    return hasOther ? [...known, TREND_OTHER] : known;
+  }, [trend]);
+
+  if (trend === null || trend.rows.length === 0) return null;
+  return (
+    <div className="card">
+      <div className="chead">
+        <div>
+          <h2>活跃趋势</h2>
+          <div className="desc">按会话起始日 · Token 含子代理合计 · 跟随筛选</div>
+        </div>
+      </div>
+      <StackedTrendChart
+        buckets={trend.buckets}
+        series={series}
+        valueOf={(bucket, seriesId) => byBucket.get(bucket)?.get(seriesId) ?? 0}
+        formatValue={(value) => formatTokens(value, true)}
+        ariaLabel="会话活跃趋势直方图"
+      />
+    </div>
+  );
+}
 
 type SortKey = NonNullable<SessionsFilter['sortBy']>;
 
@@ -60,6 +116,7 @@ function SessionList({ onOpen }: { onOpen: (session: SessionItem) => void }) {
   const [page, setPage] = useState(1);
   const [items, setItems] = useState<SessionItem[]>([]);
   const [total, setTotal] = useState(0);
+  const [trend, setTrend] = useState<SessionTrendResult | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -88,9 +145,15 @@ function SessionList({ onOpen }: { onOpen: (session: SessionItem) => void }) {
         ...(range === null ? {} : { dateFrom: range.from, dateTo: range.to }),
         ...(debouncedSearch.trim() === '' ? {} : { search: debouncedSearch.trim() })
       };
-      const result = await window.tokenMeter.sessions.query(filter);
+      // 趋势不受分页影响：filter 去掉 limit/offset 后单独查。
+      const { limit: _limit, offset: _offset, ...trendFilter } = filter;
+      const [result, trendResult] = await Promise.all([
+        window.tokenMeter.sessions.query(filter),
+        window.tokenMeter.sessions.trend(trendFilter)
+      ]);
       setItems(result.items);
       setTotal(result.total);
+      setTrend(trendResult);
       setLoadError(null);
     } catch (unknownError: unknown) {
       setLoadError(unknownError instanceof Error ? unknownError.message : '会话列表加载失败');
@@ -152,6 +215,8 @@ function SessionList({ onOpen }: { onOpen: (session: SessionItem) => void }) {
       </div>
 
       {loadError ? <p className="status-error" role="status">会话列表加载失败：{loadError}</p> : null}
+
+      <SessionTrendCard trend={trend} />
 
       <div className="card sess-table-card">
         <div className="hscroll">

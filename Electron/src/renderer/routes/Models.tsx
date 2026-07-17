@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { ModelsFilter, ModelUsageItem } from '../api.js';
+import type { ModelsFilter, ModelTrendResult, ModelUsageItem } from '../api.js';
+import { StackedTrendChart, type TrendSeriesDef } from '../charts/StackedTrendChart.js';
 import { DateTimeRangePicker, type DateTimeRangeValue } from '../components/ui.js';
 import { formatCount, formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
 
@@ -23,6 +24,54 @@ const AGENT_LABEL: Record<string, string> = {
 
 /// 份额条分段色:系列色 s1-s4 打头(与全应用图表一致),补两色,「其他」灰。
 const SHARE_COLORS = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', '#ff8fa3', '#ffb26b'];
+const OTHER_MODEL = '__other';
+
+/// Top6 模型（按筛选范围 token 总量降序）+「其他」的系列定义——
+/// 份额条与趋势直方图共用同一份名单与色序，两图对同一模型永远同色。
+function modelSeriesDefs(items: ModelUsageItem[]): TrendSeriesDef[] {
+  const top = [...items].sort((a, b) => b.tokensTotal - a.tokensTotal).slice(0, 6);
+  const defs = top.map((item, index) => ({ id: item.model, label: item.model, color: SHARE_COLORS[index] }));
+  if (items.length > top.length) defs.push({ id: OTHER_MODEL, label: '其他', color: 'var(--muted)' });
+  return defs;
+}
+
+/// 模型 token 用量趋势直方图（Top6 + 其他，与份额条同色序）。
+function ModelTrendCard({ trend, series }: { trend: ModelTrendResult | null; series: TrendSeriesDef[] }) {
+  const byBucket = useMemo(() => {
+    if (trend === null) return new Map<string, Map<string, number>>();
+    const topIds = new Set(series.map((s) => s.id));
+    const m = new Map<string, Map<string, number>>();
+    for (const row of trend.rows) {
+      const key = topIds.has(row.model) ? row.model : OTHER_MODEL;
+      let inner = m.get(row.bucket);
+      if (!inner) {
+        inner = new Map();
+        m.set(row.bucket, inner);
+      }
+      inner.set(key, (inner.get(key) ?? 0) + row.tokens);
+    }
+    return m;
+  }, [trend, series]);
+
+  if (trend === null || trend.rows.length === 0) return null;
+  return (
+    <div className="card">
+      <div className="chead">
+        <div>
+          <h2>Token 用量趋势</h2>
+          <div className="desc">按日 · Top 6 模型 + 其他 · 与份额条同色</div>
+        </div>
+      </div>
+      <StackedTrendChart
+        buckets={trend.buckets}
+        series={series}
+        valueOf={(bucket, seriesId) => byBucket.get(bucket)?.get(seriesId) ?? 0}
+        formatValue={(value) => formatTokens(value, true)}
+        ariaLabel="模型 token 用量趋势直方图"
+      />
+    </div>
+  );
+}
 
 /// 模型份额堆叠条(GitHub 语言条式样):Top6 模型 + 其他,一眼看出
 /// 筛选范围内谁吃掉了额度——反推套餐容量场景的主视觉。
@@ -65,6 +114,7 @@ export function Models() {
   const [sortBy, setSortBy] = useState<SortKey>('tokens');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [items, setItems] = useState<ModelUsageItem[]>([]);
+  const [trend, setTrend] = useState<ModelTrendResult | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -81,8 +131,12 @@ export function Models() {
         ...(range.to === undefined ? {} : { toEpochMs: range.to.getTime() }),
         ...(debouncedSearch.trim() === '' ? {} : { search: debouncedSearch.trim() })
       };
-      const result = await window.tokenMeter.models.query(filter);
+      const [result, trendResult] = await Promise.all([
+        window.tokenMeter.models.query(filter),
+        window.tokenMeter.models.trend(filter)
+      ]);
       setItems(result.items);
+      setTrend(trendResult);
       setLoadError(null);
     } catch (unknownError: unknown) {
       setLoadError(unknownError instanceof Error ? unknownError.message : '模型统计加载失败');
@@ -121,6 +175,7 @@ export function Models() {
   const sortClass = (key: SortKey) => `r sort${sortBy === key ? ` ${sortDir}` : ''}`;
   const filtered = range.from !== undefined || range.to !== undefined;
   const maxTokens = useMemo(() => items.reduce((max, it) => Math.max(max, it.tokensTotal), 0), [items]);
+  const trendSeries = useMemo(() => modelSeriesDefs(items), [items]);
 
   return (
     <section className="view">
@@ -157,6 +212,7 @@ export function Models() {
       {loadError ? <p className="status-error" role="status">模型统计加载失败：{loadError}</p> : null}
 
       <ModelShareBar items={items} totalTokens={totals.tokens} />
+      <ModelTrendCard trend={trend} series={trendSeries} />
 
       <div className="card sess-table-card">
         <div className="hscroll">

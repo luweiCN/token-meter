@@ -149,4 +149,53 @@ describe('ModelsRepository', () => {
 
     expect(result.items.map((item) => item.model)).toEqual(['gpt-5.6-sol']);
   });
+
+  describe('trend', () => {
+    /// 本地时区某日 12:00 的毫秒时间戳（分桶断言不骑在午夜边界上）。
+    function noonOf(date: string): number {
+      return Date.parse(`${date}T12:00:00`);
+    }
+
+    it('buckets tokens per local day and model over the filtered range', () => {
+      seedSession(db, 1, 'codex');
+      seedEvent(db, { session: 1, at: noonOf('2026-07-10'), model: 'gpt-a', tokens: 100 });
+      seedEvent(db, { session: 1, at: noonOf('2026-07-10'), model: 'gpt-a', tokens: 40 });
+      seedEvent(db, { session: 1, at: noonOf('2026-07-10'), model: 'gpt-b', tokens: 5 });
+      seedEvent(db, { session: 1, at: noonOf('2026-07-12'), model: 'gpt-a', tokens: 7 });
+
+      const result = repository.trend({
+        fromEpochMs: noonOf('2026-07-09'),
+        toEpochMs: noonOf('2026-07-12')
+      });
+
+      // buckets 连续铺满范围（含无数据日），行只含有数据的桶。
+      expect(result.buckets).toEqual(['2026-07-09', '2026-07-10', '2026-07-11', '2026-07-12']);
+      expect(result.rows).toEqual([
+        { bucket: '2026-07-10', model: 'gpt-a', tokens: 140 },
+        { bucket: '2026-07-10', model: 'gpt-b', tokens: 5 },
+        { bucket: '2026-07-12', model: 'gpt-a', tokens: 7 }
+      ]);
+    });
+
+    it('defaults to the recent 30 local days when no range given', () => {
+      seedSession(db, 1, 'codex');
+      seedEvent(db, { session: 1, at: Date.now(), model: 'gpt-a', tokens: 9 });
+
+      const result = repository.trend({});
+
+      expect(result.buckets).toHaveLength(30);
+      expect(result.buckets[29]).toBe(result.rows[0].bucket);
+      expect(result.rows[0]).toMatchObject({ model: 'gpt-a', tokens: 9 });
+    });
+
+    it('applies the model search filter', () => {
+      seedSession(db, 1, 'codex');
+      seedEvent(db, { session: 1, at: Date.now(), model: 'gpt-a', tokens: 9 });
+      seedEvent(db, { session: 1, at: Date.now(), model: 'sonnet-x', tokens: 5 });
+
+      const result = repository.trend({ search: 'sonnet' });
+
+      expect(result.rows.map((row) => row.model)).toEqual(['sonnet-x']);
+    });
+  });
 });

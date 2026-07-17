@@ -243,4 +243,33 @@ describe('SessionsRepository', () => {
       expect(() => repo.query(filter as never), name).toThrow(/sessions filter/i);
     }
   });
+
+  describe('trend', () => {
+    it('buckets per-provider tokens by local start day across the filtered range', () => {
+      const result = openRepo().trend({ dateFrom: '2026-07-01', dateTo: '2026-07-04' });
+
+      expect(result.buckets).toEqual(['2026-07-01', '2026-07-02', '2026-07-03', '2026-07-04']);
+      // 三个主会话都始于本地 2026-07-03：codex 35+55、claude 77（含子代理合计口径）。
+      expect(result.rows).toEqual([
+        { bucket: '2026-07-03', providerId: 'claude-code', tokens: 77, sessions: 1 },
+        { bucket: '2026-07-03', providerId: 'codex', tokens: 90, sessions: 2 }
+      ]);
+    });
+
+    it('follows the project filter', () => {
+      const result = openRepo().trend({ projectIds: [10], dateFrom: '2026-07-01', dateTo: '2026-07-04' });
+
+      expect(result.rows).toEqual([
+        { bucket: '2026-07-03', providerId: 'codex', tokens: 90, sessions: 2 }
+      ]);
+    });
+
+    it('defaults to the recent 30 local days', () => {
+      const result = openRepo().trend({});
+
+      expect(result.buckets).toHaveLength(30);
+      // 测试数据固定在 2026-07 初，远离「今天」：默认窗口内没有行也不该抛。
+      expect(Array.isArray(result.rows)).toBe(true);
+    });
+  });
 });

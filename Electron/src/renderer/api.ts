@@ -197,6 +197,31 @@ export interface ModelsQueryResult {
   items: ModelUsageItem[];
 }
 
+/// 模型用量趋势（模型页直方图，与主进程 ModelTrendResult 同形）。
+export interface ModelTrendRow {
+  bucket: string;
+  model: string;
+  tokens: number;
+}
+
+export interface ModelTrendResult {
+  buckets: string[];
+  rows: ModelTrendRow[];
+}
+
+/// 会话活跃趋势（会话页直方图，与主进程 SessionTrendResult 同形）。
+export interface SessionTrendRow {
+  bucket: string;
+  providerId: string;
+  tokens: number;
+  sessions: number;
+}
+
+export interface SessionTrendResult {
+  buckets: string[];
+  rows: SessionTrendRow[];
+}
+
 /// 会话列表一行：只列主会话，token/成本含子代理合计（与总览口径一致）。
 export interface SessionItem {
   id: number;
@@ -329,10 +354,12 @@ declare global {
       };
       sessions: {
         query(filter: SessionsFilter): Promise<SessionQueryResult>;
+        trend(filter: SessionsFilter): Promise<SessionTrendResult>;
         projects(): Promise<SessionProjectOption[]>;
       };
       models: {
         query(filter: ModelsFilter): Promise<ModelsQueryResult>;
+        trend(filter: ModelsFilter): Promise<ModelTrendResult>;
       };
       projects: {
         list(): Promise<ProjectCard[]>;

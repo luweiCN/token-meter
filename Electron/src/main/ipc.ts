@@ -53,7 +53,9 @@ export function registerIpcHandlers() {
   ipcMain.handle('overview:dayModelBreakdown', async (_event, date: string) => overview.dayModelBreakdown(date));
   ipcMain.handle('overview:dayProjectBreakdown', async (_event, date: string) => overview.dayProjectBreakdown(date));
   ipcMain.handle('sessions:query', async (_event, filter) => sessions.query(filter));
+  ipcMain.handle('sessions:trend', async (_event, filter) => sessions.trend(filter));
   ipcMain.handle('models:query', async (_event, filter) => models.query(filter));
+  ipcMain.handle('models:trend', async (_event, filter) => models.trend(filter));
   ipcMain.handle('sessions:projects', async () => sessions.projects());
   ipcMain.handle('projects:list', async () => projects.list());
   ipcMain.handle('projects:detail', async (_event, projectId: number) => projects.detail(Number(projectId)));

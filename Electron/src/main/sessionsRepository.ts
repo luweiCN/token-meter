@@ -47,6 +47,20 @@ export interface SessionProjectOption {
   sessionsCount: number;
 }
 
+/// 会话页直方图：本地起始日 × provider 的会话聚合（token 含子代理合计，
+/// 跨天会话整段记在起始日——与「会话」维度一致）。
+export interface SessionTrendRow {
+  bucket: string;
+  providerId: string;
+  tokens: number;
+  sessions: number;
+}
+
+export interface SessionTrendResult {
+  buckets: string[];
+  rows: SessionTrendRow[];
+}
+
 interface CountRow {
   count: number;
 }
@@ -153,6 +167,61 @@ export class SessionsRepository {
     return { items, total: total.count };
   }
 
+  /// 会话页直方图数据：跟随 query 同一套筛选（provider/项目/日期/搜索）。
+  trend(filter: unknown = {}): SessionTrendResult {
+    const f = validateSessionsFilter(filter);
+    const providerId = f.providerId ?? null;
+    const projectIds = f.projectIds ?? [];
+    const search = f.search ? `%${f.search.trim()}%` : null;
+    // 缺省范围 = 近 30 个本地日（含今天）。
+    const fromDefault = new Date();
+    fromDefault.setHours(0, 0, 0, 0);
+    fromDefault.setDate(fromDefault.getDate() - 29);
+    const rangeStart = f.dateFrom ? Date.parse(`${f.dateFrom}T00:00:00`) : fromDefault.getTime();
+    // dateTo 是闭区间日 → +1 天取开区间上界；缺省时 now 本身就是上界。
+    const rangeEnd = f.dateTo ? Date.parse(`${f.dateTo}T00:00:00`) + 86_400_000 : Date.now();
+
+    const projectClause = projectIds.length > 0
+      ? ` AND s.project_id IN (${projectIds.map(() => '?').join(',')})`
+      : '';
+    const rows = this.db
+      .prepare(
+        `SELECT date(sr.first_event_epoch_ms / 1000, 'unixepoch', 'localtime') AS bucket,
+                coalesce(s.provider_id, s.source_kind) AS providerId,
+                sum(sr.tokens_total + coalesce(sub.tokens, 0)) AS tokens,
+                count(*) AS sessions
+         FROM agent_sessions s
+         JOIN session_rollup sr ON sr.session_id = s.id
+         ${SUB_JOINS}
+         WHERE s.status != 'deleted'
+           AND s.root_session_key IS NULL
+           AND (? IS NULL OR s.provider_id = ?)${projectClause}
+           AND sr.first_event_epoch_ms >= ?
+           AND sr.first_event_epoch_ms < ?
+           AND (? IS NULL OR s.title LIKE ? OR sr.primary_model LIKE ?)
+         GROUP BY bucket, providerId
+         ORDER BY bucket ASC, providerId ASC`
+      )
+      .all(
+        providerId, providerId,
+        ...projectIds,
+        rangeStart, rangeEnd,
+        search, search, search
+      ) as SessionTrendRow[];
+
+    const buckets: string[] = [];
+    const cursor = new Date(rangeStart);
+    cursor.setHours(12, 0, 0, 0); // 正午推进，跨夏令时不跳日
+    const lastMs = rangeEnd - 1;
+    for (let i = 0; i < 1000; i += 1) {
+      const day = localDayOf(cursor.getTime());
+      buckets.push(day);
+      if (day === localDayOf(lastMs)) break;
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return { buckets, rows };
+  }
+
   /// 筛选下拉的项目清单：只含有主会话数据的项目，按名称排序。
   projects(): SessionProjectOption[] {
     return this.db
@@ -169,6 +238,12 @@ export class SessionsRepository {
       )
       .all() as SessionProjectOption[];
   }
+}
+
+function localDayOf(epochMs: number): string {
+  const d = new Date(epochMs);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function validateSessionsFilter(filter: unknown): SessionsFilter {

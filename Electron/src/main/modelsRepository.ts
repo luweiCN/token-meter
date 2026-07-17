@@ -29,6 +29,49 @@ export interface ModelsResult {
   items: ModelItem[];
 }
 
+/// 模型用量趋势（模型页直方图）：本地日 × model_canonical 的 token 聚合。
+export interface ModelTrendRow {
+  bucket: string;
+  model: string;
+  tokens: number;
+}
+
+export interface ModelTrendResult {
+  /// 连续铺满范围的本地日序列（含无数据日，直方图空桶也占位）。
+  buckets: string[];
+  rows: ModelTrendRow[];
+}
+
+/// 'YYYY-MM-DD'（本地时区）。
+export function localDay(epochMs: number): string {
+  const d = new Date(epochMs);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/// 连续本地日序列 [fromDay, toDay]。
+export function dayBuckets(fromEpochMs: number, toEpochMs: number): string[] {
+  const buckets: string[] = [];
+  const cursor = new Date(fromEpochMs);
+  cursor.setHours(12, 0, 0, 0); // 正午推进，跨夏令时不会跳日
+  const last = localDay(toEpochMs);
+  for (let i = 0; i < 1000; i += 1) {
+    const day = localDay(cursor.getTime());
+    buckets.push(day);
+    if (day === last) break;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return buckets;
+}
+
+/// 缺省范围 = 近 30 个本地日（含今天）。
+export function defaultTrendRange(now = Date.now()): { fromEpochMs: number; toEpochMs: number } {
+  const from = new Date(now);
+  from.setHours(0, 0, 0, 0);
+  from.setDate(from.getDate() - 29);
+  return { fromEpochMs: from.getTime(), toEpochMs: now };
+}
+
 const SORT_EXPR: Record<NonNullable<ModelsFilter['sortBy']>, string> = {
   tokens: 'tokensTotal',
   cost: 'costUsdMicros',
@@ -95,5 +138,34 @@ export class ModelsRepository {
         lastUsedEpochMs: row.lastUsedEpochMs
       }))
     };
+  }
+
+  /// 模型页直方图数据：跟随 query 同一套筛选（时间范围 + 模型名搜索），
+  /// 本地日分桶。TopN/「其他」归并在前端做（与份额条共用同一份 Top6 名单）。
+  trend(filter: ModelsFilter): ModelTrendResult {
+    const range = filter.fromEpochMs === undefined && filter.toEpochMs === undefined
+      ? defaultTrendRange()
+      : {
+          fromEpochMs: filter.fromEpochMs ?? defaultTrendRange().fromEpochMs,
+          toEpochMs: filter.toEpochMs ?? Date.now()
+        };
+
+    const rows = this.db.prepare(
+      `SELECT date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime') AS bucket,
+              e.model_canonical AS model,
+              coalesce(sum(e.tokens_total), 0) AS tokens
+         FROM usage_events e
+        WHERE e.model_canonical IS NOT NULL
+          AND e.observed_epoch_ms >= ?
+          AND e.observed_epoch_ms <= ?
+          AND (? IS NULL OR instr(lower(e.model_canonical), lower(?)) > 0)
+     GROUP BY bucket, model
+     ORDER BY bucket ASC, model ASC`
+    ).all(
+      range.fromEpochMs, range.toEpochMs,
+      filter.search ?? null, filter.search ?? null
+    ) as ModelTrendRow[];
+
+    return { buckets: dayBuckets(range.fromEpochMs, range.toEpochMs), rows };
   }
 }

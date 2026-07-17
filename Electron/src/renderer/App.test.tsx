@@ -97,6 +97,7 @@ interface TokenMeterApi {
   };
   sessions: {
     query: Mock<() => Promise<{ items: unknown[]; total: number }>>;
+    trend: Mock<() => Promise<{ buckets: string[]; rows: unknown[] }>>;
     projects: Mock<() => Promise<unknown[]>>;
   };
   projects: {
@@ -274,6 +275,7 @@ function installTokenMeterApi(): TokenMeterApi {
     },
     sessions: {
       query: vi.fn(async () => ({ items: [], total: 0 })),
+      trend: vi.fn(async () => ({ buckets: [], rows: [] })),
       projects: vi.fn(async () => [])
     },
     projects: {
