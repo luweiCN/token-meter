@@ -209,11 +209,13 @@ export interface ModelTrendResult {
   rows: ModelTrendRow[];
 }
 
-/// 会话活跃趋势（会话页直方图，与主进程 SessionTrendResult 同形）。
+/// 会话活跃趋势（会话页直方图，与主进程 SessionTrendResult 同形）：
+/// 事件日口径（与菜单栏「今日」一致），sessions = 当天活跃主会话数。
 export interface SessionTrendRow {
   bucket: string;
   providerId: string;
   tokens: number;
+  costUsdMicros: number;
   sessions: number;
 }
 

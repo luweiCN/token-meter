@@ -20,7 +20,9 @@ const TREND_PROVIDERS: TrendSeriesDef[] = [
 ];
 const TREND_OTHER: TrendSeriesDef = { id: '__other', label: '其他', color: 'var(--muted)' };
 
-/// 会话活跃趋势直方图（按起始日 × agent 堆叠 token，跟随列表筛选）。
+/// 会话活跃趋势直方图：每天活跃的会话个数（按 agent 堆叠，跟随列表筛选）。
+/// 会话页的主指标是「会话」不是 token（用户裁定 2026-07-17）；token/花费
+/// 合计在上方统计卡，均为事件日口径。
 function SessionTrendCard({ trend }: { trend: SessionTrendResult | null }) {
   const byBucket = useMemo(() => {
     if (trend === null) return new Map<string, Map<string, number>>();
@@ -33,7 +35,7 @@ function SessionTrendCard({ trend }: { trend: SessionTrendResult | null }) {
         inner = new Map();
         m.set(row.bucket, inner);
       }
-      inner.set(key, (inner.get(key) ?? 0) + row.tokens);
+      inner.set(key, (inner.get(key) ?? 0) + row.sessions);
     }
     return m;
   }, [trend]);
@@ -52,16 +54,59 @@ function SessionTrendCard({ trend }: { trend: SessionTrendResult | null }) {
       <div className="chead">
         <div>
           <h2>活跃趋势</h2>
-          <div className="desc">按会话起始日 · Token 含子代理合计 · 跟随筛选</div>
+          <div className="desc">每日活跃会话数 · 按 Agent 堆叠 · 跟随筛选</div>
         </div>
       </div>
       <StackedTrendChart
         buckets={trend.buckets}
         series={series}
         valueOf={(bucket, seriesId) => byBucket.get(bucket)?.get(seriesId) ?? 0}
-        formatValue={(value) => formatTokens(value, true)}
-        ariaLabel="会话活跃趋势直方图"
+        formatValue={(value) => formatCount(Math.round(value))}
+        ariaLabel="每日活跃会话数直方图"
       />
+    </div>
+  );
+}
+
+/// 会话页统计卡（跟随筛选）：会话数 = 列表 total；Token/花费 = 事件日口径
+/// （与菜单栏「今日」同源可对账）；活跃天数 = 趋势里有数据的天数。
+function SessionStatCards({ total, trend }: { total: number; trend: SessionTrendResult | null }) {
+  const sums = useMemo(() => {
+    if (trend === null) return { tokens: 0, cost: 0, activeDays: 0 };
+    let tokens = 0;
+    let cost = 0;
+    const days = new Set<string>();
+    for (const row of trend.rows) {
+      tokens += row.tokens;
+      // dev 工作流里 renderer 热更快于 bundle 主进程，旧 trend 行无 cost 字段。
+      cost += row.costUsdMicros ?? 0;
+      days.add(row.bucket);
+    }
+    return { tokens, cost, activeDays: days.size };
+  }, [trend]);
+
+  return (
+    <div className="stats">
+      <div className="stat">
+        <div className="lb">会话</div>
+        <div className="v num">{formatCount(total)}</div>
+        <div className="sb">筛选范围内的主会话</div>
+      </div>
+      <div className="stat">
+        <div className="lb">Token</div>
+        <div className="v num">{formatTokens(sums.tokens)}</div>
+        <div className="sb">按事件实际发生日统计</div>
+      </div>
+      <div className="stat">
+        <div className="lb">花费</div>
+        <div className="v num">{formatUsdMicros(sums.cost)}</div>
+        <div className="sb">不含价格未知事件</div>
+      </div>
+      <div className="stat">
+        <div className="lb">活跃天数</div>
+        <div className="v num">{formatCount(sums.activeDays)}</div>
+        <div className="sb">范围内有用量的天数</div>
+      </div>
     </div>
   );
 }
@@ -216,6 +261,7 @@ function SessionList({ onOpen }: { onOpen: (session: SessionItem) => void }) {
 
       {loadError ? <p className="status-error" role="status">会话列表加载失败：{loadError}</p> : null}
 
+      <SessionStatCards total={total} trend={trend} />
       <SessionTrendCard trend={trend} />
 
       <div className="card sess-table-card">

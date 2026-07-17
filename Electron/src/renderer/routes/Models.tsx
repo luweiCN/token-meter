@@ -22,12 +22,11 @@ const AGENT_LABEL: Record<string, string> = {
   opencode: 'OpenCode'
 };
 
-/// 份额条分段色:系列色 s1-s4 打头(与全应用图表一致),补两色,「其他」灰。
+/// 趋势系列色:系列色 s1-s4 打头(与全应用图表一致),补两色,「其他」灰。
 const SHARE_COLORS = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', '#ff8fa3', '#ffb26b'];
 const OTHER_MODEL = '__other';
 
-/// Top6 模型（按筛选范围 token 总量降序）+「其他」的系列定义——
-/// 份额条与趋势直方图共用同一份名单与色序，两图对同一模型永远同色。
+/// Top6 模型（按筛选范围 token 总量降序）+「其他」的系列定义。
 function modelSeriesDefs(items: ModelUsageItem[]): TrendSeriesDef[] {
   const top = [...items].sort((a, b) => b.tokensTotal - a.tokensTotal).slice(0, 6);
   const defs = top.map((item, index) => ({ id: item.model, label: item.model, color: SHARE_COLORS[index] }));
@@ -35,7 +34,48 @@ function modelSeriesDefs(items: ModelUsageItem[]): TrendSeriesDef[] {
   return defs;
 }
 
-/// 模型 token 用量趋势直方图（Top6 + 其他，与份额条同色序）。
+/// 模型页统计卡（跟随筛选时间段）：Token / 花费 / 模型数 / 用量第一的模型。
+function ModelStatCards({
+  items,
+  totals
+}: {
+  items: ModelUsageItem[];
+  totals: { tokens: number; cost: number; events: number };
+}) {
+  const top = items.reduce<ModelUsageItem | null>(
+    (best, item) => (best === null || item.tokensTotal > best.tokensTotal ? item : best),
+    null
+  );
+  const topShare = top !== null && totals.tokens > 0 ? (top.tokensTotal / totals.tokens) * 100 : 0;
+
+  return (
+    <div className="stats">
+      <div className="stat">
+        <div className="lb">Token</div>
+        <div className="v num">{formatTokens(totals.tokens)}</div>
+        <div className="sb">{formatCount(totals.events)} 条用量事件</div>
+      </div>
+      <div className="stat">
+        <div className="lb">花费</div>
+        <div className="v num">{formatUsdMicros(totals.cost)}</div>
+        <div className="sb">不含价格未知事件</div>
+      </div>
+      <div className="stat">
+        <div className="lb">模型</div>
+        <div className="v num">{formatCount(items.length)}</div>
+        <div className="sb">范围内用过的模型数</div>
+      </div>
+      <div className="stat">
+        <div className="lb">用量第一</div>
+        <div className="v"><span className="mname">{top?.model ?? '—'}</span></div>
+        <div className="sb">{top !== null ? `占总量 ${topShare.toFixed(1)}%` : '暂无用量'}</div>
+      </div>
+    </div>
+  );
+}
+
+/// 模型 token 用量趋势直方图（Top6 + 其他）。份额堆叠小条已删
+///（用户裁定 2026-07-17：与趋势图信息重复），份额看图例与统计卡。
 function ModelTrendCard({ trend, series }: { trend: ModelTrendResult | null; series: TrendSeriesDef[] }) {
   const byBucket = useMemo(() => {
     if (trend === null) return new Map<string, Map<string, number>>();
@@ -59,7 +99,7 @@ function ModelTrendCard({ trend, series }: { trend: ModelTrendResult | null; ser
       <div className="chead">
         <div>
           <h2>Token 用量趋势</h2>
-          <div className="desc">按日 · Top 6 模型 + 其他 · 与份额条同色</div>
+          <div className="desc">按日 · Top 6 模型 + 其他 · 跟随筛选</div>
         </div>
       </div>
       <StackedTrendChart
@@ -69,37 +109,6 @@ function ModelTrendCard({ trend, series }: { trend: ModelTrendResult | null; ser
         formatValue={(value) => formatTokens(value, true)}
         ariaLabel="模型 token 用量趋势直方图"
       />
-    </div>
-  );
-}
-
-/// 模型份额堆叠条(GitHub 语言条式样):Top6 模型 + 其他,一眼看出
-/// 筛选范围内谁吃掉了额度——反推套餐容量场景的主视觉。
-function ModelShareBar({ items, totalTokens }: { items: ModelUsageItem[]; totalTokens: number }) {
-  if (totalTokens <= 0 || items.length === 0) return null;
-  const byTokens = [...items].sort((a, b) => b.tokensTotal - a.tokensTotal);
-  const top = byTokens.slice(0, 6);
-  const otherTokens = totalTokens - top.reduce((sum, item) => sum + item.tokensTotal, 0);
-  const segments = [
-    ...top.map((item, index) => ({ label: item.model, tokens: item.tokensTotal, color: SHARE_COLORS[index] })),
-    ...(otherTokens > 0 ? [{ label: '其他', tokens: otherTokens, color: 'var(--muted)' }] : [])
-  ];
-  return (
-    <div className="card mshare-card">
-      <div className="mshare-bar" role="img" aria-label="模型 token 份额">
-        {segments.map((seg) => (
-          <i key={seg.label} style={{ width: `${(seg.tokens / totalTokens) * 100}%`, background: seg.color }} />
-        ))}
-      </div>
-      <div className="mshare-legend">
-        {segments.map((seg) => (
-          <span className="it" key={seg.label}>
-            <i style={{ background: seg.color }} />
-            <span className="mname">{seg.label}</span>
-            <b className="num">{((seg.tokens / totalTokens) * 100).toFixed(1)}%</b>
-          </span>
-        ))}
-      </div>
     </div>
   );
 }
@@ -211,7 +220,7 @@ export function Models() {
 
       {loadError ? <p className="status-error" role="status">模型统计加载失败：{loadError}</p> : null}
 
-      <ModelShareBar items={items} totalTokens={totals.tokens} />
+      <ModelStatCards items={items} totals={totals} />
       <ModelTrendCard trend={trend} series={trendSeries} />
 
       <div className="card sess-table-card">

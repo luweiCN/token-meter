@@ -60,7 +60,10 @@ function createSessionsDb() {
       id INTEGER PRIMARY KEY,
       session_id INTEGER NOT NULL,
       source_file_id INTEGER NOT NULL DEFAULT 1,
-      is_sidechain INTEGER NOT NULL DEFAULT 0
+      is_sidechain INTEGER NOT NULL DEFAULT 0,
+      observed_epoch_ms INTEGER NOT NULL DEFAULT 0,
+      tokens_total INTEGER NOT NULL DEFAULT 0,
+      cost_usd_micros INTEGER
     );
 
     CREATE TABLE session_rollup (
@@ -245,27 +248,63 @@ describe('SessionsRepository', () => {
   });
 
   describe('trend', () => {
-    it('buckets per-provider tokens by local start day across the filtered range', () => {
-      const result = openRepo().trend({ dateFrom: '2026-07-01', dateTo: '2026-07-04' });
+    /// 事件种子：trend 按事件实际发生日聚合（与菜单栏「今日」同口径），
+    /// 不按会话起始日——曾按起始日分桶，跨天长会话把当天 token 全记去
+    /// 昨天，与菜单栏差出几个数量级（用户实测 900K vs 5 亿）。
+    function seedTrendEvent(
+      db: ReturnType<typeof createSessionsDb>,
+      session: number,
+      day: string,
+      tokens: number,
+      costUsdMicros = 0
+    ) {
+      db.prepare(
+        'INSERT INTO usage_events (session_id, observed_epoch_ms, tokens_total, cost_usd_micros) VALUES (?, ?, ?, ?)'
+      ).run(session, Date.parse(`${day}T12:00:00`), tokens, costUsdMicros);
+    }
 
-      expect(result.buckets).toEqual(['2026-07-01', '2026-07-02', '2026-07-03', '2026-07-04']);
-      // 三个主会话都始于本地 2026-07-03：codex 35+55、claude 77（含子代理合计口径）。
+    function openTrendRepo() {
+      const db = createSessionsDb();
+      openedDbs.push(db);
+      // 会话 1（codex, 项目10）事件跨 07-03/07-04；会话 3（claude）07-04。
+      seedTrendEvent(db, 1, '2026-07-03', 30, 300);
+      seedTrendEvent(db, 1, '2026-07-04', 5, 50);
+      seedTrendEvent(db, 3, '2026-07-04', 70, 700);
+      // 子代理会话（root 指向会话 2 的 key）：token 归并进主会话 2 的 provider（codex），
+      // 活跃会话数也算主会话。
+      db.prepare(
+        `INSERT INTO agent_sessions(id, source_kind, source_session_key, scan_root_id, project_id, provider_id,
+          status, source_revision, root_session_key)
+         VALUES (7, 'codex_jsonl', 'codex-sub', 1, NULL, 'codex', 'active', 'rev-s', 'codex-new')`
+      ).run();
+      seedTrendEvent(db, 7, '2026-07-04', 11, 110);
+      return new SessionsRepository(db);
+    }
+
+    it('buckets tokens/cost by the local day events actually happened', () => {
+      const result = openTrendRepo().trend({ dateFrom: '2026-07-02', dateTo: '2026-07-04' });
+
+      expect(result.buckets).toEqual(['2026-07-02', '2026-07-03', '2026-07-04']);
       expect(result.rows).toEqual([
-        { bucket: '2026-07-03', providerId: 'claude-code', tokens: 77, sessions: 1 },
-        { bucket: '2026-07-03', providerId: 'codex', tokens: 90, sessions: 2 }
+        { bucket: '2026-07-03', providerId: 'codex', tokens: 30, costUsdMicros: 300, sessions: 1 },
+        { bucket: '2026-07-04', providerId: 'claude-code', tokens: 70, costUsdMicros: 700, sessions: 1 },
+        // 会话 1 的 5 + 子代理(归并主会话 2)的 11；活跃主会话 = 1 和 2 两个。
+        { bucket: '2026-07-04', providerId: 'codex', tokens: 16, costUsdMicros: 160, sessions: 2 }
       ]);
     });
 
-    it('follows the project filter', () => {
-      const result = openRepo().trend({ projectIds: [10], dateFrom: '2026-07-01', dateTo: '2026-07-04' });
+    it('follows the project filter through subagent merge', () => {
+      const result = openTrendRepo().trend({ projectIds: [10], dateFrom: '2026-07-02', dateTo: '2026-07-04' });
 
+      // 项目 10 只有 codex 主会话（1、2）；claude（无项目）被滤掉。
       expect(result.rows).toEqual([
-        { bucket: '2026-07-03', providerId: 'codex', tokens: 90, sessions: 2 }
+        { bucket: '2026-07-03', providerId: 'codex', tokens: 30, costUsdMicros: 300, sessions: 1 },
+        { bucket: '2026-07-04', providerId: 'codex', tokens: 16, costUsdMicros: 160, sessions: 2 }
       ]);
     });
 
     it('defaults to the recent 30 local days', () => {
-      const result = openRepo().trend({});
+      const result = openTrendRepo().trend({});
 
       expect(result.buckets).toHaveLength(30);
       // 测试数据固定在 2026-07 初，远离「今天」：默认窗口内没有行也不该抛。

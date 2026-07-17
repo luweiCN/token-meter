@@ -47,12 +47,14 @@ export interface SessionProjectOption {
   sessionsCount: number;
 }
 
-/// 会话页直方图：本地起始日 × provider 的会话聚合（token 含子代理合计，
-/// 跨天会话整段记在起始日——与「会话」维度一致）。
+/// 会话页直方图：按事件实际发生的本地日 × 主会话 provider 聚合。
+/// 口径与菜单栏「今日」一致（事件日）；子代理事件归并进主会话的
+/// provider，sessions = 当天有活动的主会话数（跨天会话每天都计入）。
 export interface SessionTrendRow {
   bucket: string;
   providerId: string;
   tokens: number;
+  costUsdMicros: number;
   sessions: number;
 }
 
@@ -167,7 +169,9 @@ export class SessionsRepository {
     return { items, total: total.count };
   }
 
-  /// 会话页直方图数据：跟随 query 同一套筛选（provider/项目/日期/搜索）。
+  /// 会话页直方图数据：跟随 query 同一套筛选（provider/项目/日期/搜索），
+  /// 但按【事件日】聚合——曾按会话起始日分桶，跨天长会话把当天用量全记去
+  /// 起始那天，选「今天」时与菜单栏差出数量级（实测 900K vs 5 亿）。
   trend(filter: unknown = {}): SessionTrendResult {
     const f = validateSessionsFilter(filter);
     const providerId = f.providerId ?? null;
@@ -184,29 +188,48 @@ export class SessionsRepository {
     const projectClause = projectIds.length > 0
       ? ` AND s.project_id IN (${projectIds.map(() => '?').join(',')})`
       : '';
+    // mains = 通过筛选的主会话；members = 主会话自身 + 其子代理会话，
+    // 事件经 members 归并到主会话（provider 与活跃会话数都按主会话计）。
     const rows = this.db
       .prepare(
-        `SELECT date(sr.first_event_epoch_ms / 1000, 'unixepoch', 'localtime') AS bucket,
-                coalesce(s.provider_id, s.source_kind) AS providerId,
-                sum(sr.tokens_total + coalesce(sub.tokens, 0)) AS tokens,
-                count(*) AS sessions
-         FROM agent_sessions s
-         JOIN session_rollup sr ON sr.session_id = s.id
-         ${SUB_JOINS}
-         WHERE s.status != 'deleted'
-           AND s.root_session_key IS NULL
-           AND (? IS NULL OR s.provider_id = ?)${projectClause}
-           AND sr.first_event_epoch_ms >= ?
-           AND sr.first_event_epoch_ms < ?
-           AND (? IS NULL OR s.title LIKE ? OR sr.primary_model LIKE ?)
-         GROUP BY bucket, providerId
-         ORDER BY bucket ASC, providerId ASC`
+        `WITH mains AS (
+           SELECT s.id AS id,
+                  s.source_kind AS source_kind,
+                  s.source_session_key AS session_key,
+                  coalesce(s.provider_id, s.source_kind) AS pid
+             FROM agent_sessions s
+             JOIN session_rollup sr ON sr.session_id = s.id
+            WHERE s.status != 'deleted'
+              AND s.root_session_key IS NULL
+              AND (? IS NULL OR s.provider_id = ?)${projectClause}
+              AND (? IS NULL OR s.title LIKE ? OR sr.primary_model LIKE ?)
+         ),
+         members AS (
+           SELECT id AS session_id, id AS main_id FROM mains
+           UNION ALL
+           SELECT c.id, m.id
+             FROM agent_sessions c
+             JOIN mains m ON c.source_kind = m.source_kind AND c.root_session_key = m.session_key
+            WHERE c.status != 'deleted'
+         )
+         SELECT date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime') AS bucket,
+                m.pid AS providerId,
+                coalesce(sum(e.tokens_total), 0) AS tokens,
+                coalesce(sum(e.cost_usd_micros), 0) AS costUsdMicros,
+                count(DISTINCT mem.main_id) AS sessions
+           FROM usage_events e
+           JOIN members mem ON mem.session_id = e.session_id
+           JOIN mains m ON m.id = mem.main_id
+          WHERE e.observed_epoch_ms >= ?
+            AND e.observed_epoch_ms < ?
+          GROUP BY bucket, providerId
+          ORDER BY bucket ASC, providerId ASC`
       )
       .all(
         providerId, providerId,
         ...projectIds,
-        rangeStart, rangeEnd,
-        search, search, search
+        search, search, search,
+        rangeStart, rangeEnd
       ) as SessionTrendRow[];
 
     const buckets: string[] = [];

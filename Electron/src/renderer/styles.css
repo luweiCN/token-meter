@@ -2207,55 +2207,6 @@ th.sort.desc::after{content:"↓";opacity:1;color:var(--accent)}
 }
 
 /* ── 模型页:份额堆叠条 + 图例(GitHub 语言条式样) ─────────────────── */
-.mshare-card {
-  padding: 14px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.mshare-bar {
-  display: flex;
-  height: 10px;
-  border-radius: 5px;
-  overflow: hidden;
-  gap: 1px;
-  background: var(--track);
-}
-
-.mshare-bar i {
-  display: block;
-  min-width: 2px;
-  transition: width 0.4s ease;
-}
-
-.mshare-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 16px;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.mshare-legend .it {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.mshare-legend .it i {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  flex: none;
-}
-
-.mshare-legend .it b {
-  color: var(--fg);
-  font-weight: 600;
-}
-
-/* 表格行内占比条(模型页/会话页 Token 列):数字下一根细条,右对齐。 */
 .rowbar {
   display: inline-flex;
   flex-direction: column;
@@ -2391,9 +2342,9 @@ th.sort.desc::after{content:"↓";opacity:1;color:var(--accent)}
 .mbcell .nm{font-size:11px;font-weight:600}
 .mbcell .pct{font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums;font-weight:500}
 .mbcell .pct i{font-style:normal;opacity:.45;margin:0 1px}
-/* ok = 品牌青（用户裁定 2026-07-17，与 Swift MenuBarToneColor.brandAccent 同值）；文字纯白/纯黑 */
-.mbar.mbdark  .g-ok{color:#0fc5ed}.mbar.mbdark  .g-warn{color:#ffd60a}.mbar.mbdark  .g-bad{color:#ff453a}.mbar.mbdark  .g-off{color:rgba(255,255,255,.38)}
-.mbar.mblight .g-ok{color:#0895bd}.mbar.mblight .g-warn{color:#b48b00}.mbar.mblight .g-bad{color:#d70015}.mbar.mblight .g-off{color:rgba(0,0,0,.32)}
+/* ok = 系统绿（与弹窗进度条同语义；品牌青试过被否）；文字纯白/纯黑 */
+.mbar.mbdark  .g-ok{color:#30d158}.mbar.mbdark  .g-warn{color:#ffd60a}.mbar.mbdark  .g-bad{color:#ff453a}.mbar.mbdark  .g-off{color:rgba(255,255,255,.38)}
+.mbar.mblight .g-ok{color:#1d9a46}.mbar.mblight .g-warn{color:#b48b00}.mbar.mblight .g-bad{color:#d70015}.mbar.mblight .g-off{color:rgba(0,0,0,.32)}
 .mbar.mbdark .mbcell .nm{color:#fff}
 .mbar.mblight .mbcell .nm{color:#000}
 .mbar.mbdark .mb-deck2 .u b,.mbar.mbdark .mb-tagnum .u b{color:#fff}

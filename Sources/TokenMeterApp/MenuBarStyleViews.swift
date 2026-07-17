@@ -6,22 +6,16 @@ import TokenMeterCore
 /// cell 内只用系统语义色（品牌色禁入菜单栏）。
 
 enum MenuBarToneColor {
-    /// 安全态 = 品牌青（用户裁定 2026-07-17：与主应用高亮色匹配，替换系统绿）。
-    /// 深色菜单栏用主界面深色主题的 accent，浅色用浅色主题的（同弹窗 MBTheme 色值）。
-    static let brandAccent = Color(nsColor: NSColor(name: nil) { appearance in
-        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(red: 0x0F / 255.0, green: 0xC5 / 255.0, blue: 0xED / 255.0, alpha: 1)
-            : NSColor(red: 0x08 / 255.0, green: 0x95 / 255.0, blue: 0xBD / 255.0, alpha: 1)
-    })
-
     /// 名称/尾巴文字 = 纯白（深）/纯黑（浅）——用户裁定：不要系统 label 的灰调。
     static let text = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .white : .black
     })
 
+    /// 安全态 = 系统绿，与弹窗进度条同语义（用户裁定 2026-07-17 二改：
+    /// 曾试过品牌青，与弹窗的绿进度条明显不一致，回绿）。
     static func color(_ tone: UsageMetricTone) -> Color {
         switch tone {
-        case .ok: return brandAccent
+        case .ok: return Color(nsColor: .systemGreen)
         case .warning: return Color(nsColor: .systemYellow)
         case .bad: return Color(nsColor: .systemRed)
         case .muted: return Color(nsColor: .tertiaryLabelColor)
