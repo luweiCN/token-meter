@@ -1,0 +1,77 @@
+# 发布流水线：推 tag（v*）即构建并上传 Release 产物。
+# 本地发布只剩两条命令：
+#   git tag -a v1.x.x -m "..." && git push origin v1.x.x
+# 构建逻辑与本地 install-app.sh 同源（scripts/build-app.sh），不会漂移。
+# workflow_dispatch 支持对已有 tag 手动补跑（输入 tag 名，产物 --clobber 覆盖）。
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要构建并上传产物的既有 tag（如 v1.0.0）'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    # macos-14 起 runner 是 Apple Silicon，产物为 arm64。
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - name: 解析目标 tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+
+      - name: 校验 tag 与 Info.plist 版本一致
+        run: |
+          PLIST_VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" Resources/Info.plist)
+          TAG_VERSION="${{ steps.tag.outputs.tag }}"
+          TAG_VERSION="${TAG_VERSION#v}"
+          if [ "$PLIST_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::tag 是 v$TAG_VERSION 但 Info.plist 是 $PLIST_VERSION——先 bump 版本号再打 tag"
+            exit 1
+          fi
+
+      - name: 构建 TokenMeter.app
+        run: ./scripts/build-app.sh
+
+      - name: 打包 zip
+        id: zip
+        run: |
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" build/TokenMeter.app/Contents/Info.plist)
+          ARCH=$(uname -m)
+          ZIP="TokenMeter-${VERSION}-${ARCH}.zip"
+          ditto -c -k --keepParent build/TokenMeter.app "$ZIP"
+          shasum -a 256 "$ZIP" > "$ZIP.sha256"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: 创建或更新 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          ZIP="${{ steps.zip.outputs.zip }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP" "$ZIP.sha256" --clobber
+          else
+            gh release create "$TAG" "$ZIP" "$ZIP.sha256" \
+              --title "TokenMeter ${TAG#v}" --generate-notes
+          fi
