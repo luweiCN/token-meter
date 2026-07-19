@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { ProjectCard, ProjectDetail, SessionItem, SessionsFilter } from '../api.js';
+import { chartAnimationDelay } from '../charts/chartMotion.js';
 import { Pager, Select } from '../components/ui.js';
 import { formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
 import { SessionCell, SessionDetail } from './Sessions.js';
@@ -124,7 +125,7 @@ function Sparkline({ values }: { values: number[] }) {
   const step = values.length > 1 ? W / (values.length - 1) : W;
   const points = values.map((v, i) => `${(i * step).toFixed(1)},${(H - 3 - (v / max) * (H - 8)).toFixed(1)}`);
   return (
-    <svg className="pc-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-label="近 14 天花费">
+    <svg className="pc-spark chart-surface-in" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-label="近 14 天花费">
       <polygon points={`0,${H} ${points.join(' ')} ${W},${H}`} fill="var(--accent)" opacity="0.12" />
       <polyline points={points.join(' ')} fill="none" stroke="var(--accent)" strokeWidth="1.5" />
     </svg>
@@ -191,10 +192,16 @@ function ProjectDetailView({ card, onBack }: { card: ProjectCard; onBack: () => 
       <div className="card proj-spend-card">
         <div className="chead"><div><h2>近 14 天花费</h2><div className="desc">USD · 不含价格未知事件</div></div></div>
         <div className="proj-days">
-          {(detail?.dailyCost ?? []).map((d) => (
+          {(detail?.dailyCost ?? []).map((d, index) => (
             <div className="proj-day" key={d.date} title={`${d.date} · ${formatUsdMicros(d.costUsdMicros)}`}>
               <div className="proj-day-bar">
-                <i style={{ height: `${Math.round((d.costUsdMicros / maxDaily) * 100)}%` }} />
+                <i
+                  className="chart-bar-y-in"
+                  style={{
+                    height: `${Math.round((d.costUsdMicros / maxDaily) * 100)}%`,
+                    animationDelay: chartAnimationDelay(index)
+                  }}
+                />
               </div>
               <span className="proj-day-lb num">{Number(d.date.slice(8, 10))}</span>
             </div>
@@ -207,10 +214,18 @@ function ProjectDetailView({ card, onBack }: { card: ProjectCard; onBack: () => 
           <div className="chead"><div><h2>模型分布</h2><div className="desc">按 token 计 · Top 8</div></div></div>
           {(detail?.models ?? []).length === 0 ? <p className="muted">暂无数据。</p> : (
             <div>
-              {detail!.models.map((m) => (
+              {detail!.models.map((m, index) => (
                 <div className="mbar dist-row" key={m.model}>
                   <span className="mname dist-name" title={m.model}>{m.model}</span>
-                  <div className="bar"><i style={{ width: `${Math.round((m.tokens / maxModelTokens) * 100)}%` }} /></div>
+                  <div className="bar">
+                    <i
+                      className="chart-bar-x-in"
+                      style={{
+                        width: `${Math.round((m.tokens / maxModelTokens) * 100)}%`,
+                        animationDelay: chartAnimationDelay(index)
+                      }}
+                    />
+                  </div>
                   <span className="num">{formatTokens(m.tokens)}</span>
                 </div>
               ))}
@@ -221,10 +236,18 @@ function ProjectDetailView({ card, onBack }: { card: ProjectCard; onBack: () => 
           <div className="chead"><div><h2>Coding Agent 分布</h2><div className="desc">按 token 计</div></div></div>
           {(detail?.agents ?? []).length === 0 ? <p className="muted">暂无数据。</p> : (
             <div>
-              {detail!.agents.map((a) => (
+              {detail!.agents.map((a, index) => (
                 <div className="mbar dist-row" key={a.providerId}>
                   <span className="mname dist-name">{a.providerId}</span>
-                  <div className="bar"><i style={{ width: `${Math.round((a.tokens / maxAgentTokens) * 100)}%` }} /></div>
+                  <div className="bar">
+                    <i
+                      className="chart-bar-x-in"
+                      style={{
+                        width: `${Math.round((a.tokens / maxAgentTokens) * 100)}%`,
+                        animationDelay: chartAnimationDelay(index)
+                      }}
+                    />
+                  </div>
                   <span className="num">{formatTokens(a.tokens)}</span>
                 </div>
               ))}

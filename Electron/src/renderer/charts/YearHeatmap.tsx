@@ -120,7 +120,7 @@ export function YearHeatmap({ days, lastDay, count = 371, metric = 'tokens' }: Y
   return (
     <div className="year-heatmap">
       <div
-        className="year-heatmap__grid"
+        className="year-heatmap__grid chart-surface-in"
         style={{ display: 'flex', gap: 3 }}
         onMouseOver={handleOver}
         onMouseLeave={() => setHovered(null)}

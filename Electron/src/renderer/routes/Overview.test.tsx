@@ -198,7 +198,9 @@ describe('Overview (ready)', () => {
     expect(await screen.findByText('28.40M')).toBeTruthy();                  // 累计 Token 卡
     expect(screen.getByText(/自 2025-02-03 起/)).toBeTruthy();              // 页头副标题
     expect(screen.getByLabelText('用量趋势直方图')).toBeTruthy();           // 趋势图 svg
+    expect(document.querySelector('.trend-col')?.classList.contains('chart-bar-y-in')).toBe(true);
     expect(document.querySelectorAll('.year-heatmap__cell')).toHaveLength(371); // 热力图 371 格
+    expect(document.querySelector('.year-heatmap__grid')?.classList.contains('chart-surface-in')).toBe(true);
     const ranking = screen.getByLabelText('模型用量排行');
     expect(within(ranking).getByText('claude-fable-5')).toBeTruthy();      // 模型排行
     expect(within(ranking).getByText('Claude Code')).toBeTruthy();         // 服务商列显示名

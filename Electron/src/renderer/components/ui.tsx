@@ -473,6 +473,11 @@ function quickRanges(): Array<{ label: string; range: DateRange | null }> {
   ];
 }
 
+function sameDateRange(left: DateRange | null, right: DateRange | null): boolean {
+  if (left === null || right === null) return left === right;
+  return left.from === right.from && left.to === right.to;
+}
+
 /// 日期范围选择器(天粒度,会话页):快捷项即选即关;日历第一次点=起点,
 /// 第二次点=终点(早于起点自动交换)后即关。
 export function DateRangePicker({
@@ -491,6 +496,7 @@ export function DateRangePicker({
   });
   const [pendingFrom, setPendingFrom] = useState<string | null>(null);
   const [hoverDate, setHoverDate] = useState<string | null>(null);
+  const [selectedQuickLabel, setSelectedQuickLabel] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   useDismiss(open, rootRef, () => setOpen(false));
 
@@ -507,9 +513,17 @@ export function DateRangePicker({
     }
     const [from, to] = pendingFrom <= date ? [pendingFrom, date] : [date, pendingFrom];
     setPendingFrom(null);
+    setSelectedQuickLabel(null);
     setOpen(false);
     onChange({ from, to });
   };
+
+  const quickOptions = quickRanges();
+  const selectedQuickMatchesValue = selectedQuickLabel !== null
+    && quickOptions.some((option) => option.label === selectedQuickLabel && sameDateRange(option.range, value));
+  const activeQuickLabel = selectedQuickMatchesValue
+    ? selectedQuickLabel
+    : quickOptions.find((option) => sameDateRange(option.range, value))?.label ?? null;
 
   const label = value === null
     ? '全部时间'
@@ -532,23 +546,31 @@ export function DateRangePicker({
           <path d="M1.5 5.5h11M4.5 1v3M9.5 1v3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
         </svg>
         <span className={value === null ? '' : 'val num'}>{label}</span>
-        {value !== null ? <ClearIcon label="清除日期筛选" onClear={() => onChange(null)} /> : null}
+        {value !== null ? (
+          <ClearIcon
+            label="清除日期筛选"
+            onClear={() => {
+              setSelectedQuickLabel(null);
+              onChange(null);
+            }}
+          />
+        ) : null}
       </button>
       {open ? (
         <div className="dtrp-pop" role="dialog" aria-label={ariaLabel}>
           <div className="dtrp">
             <div className="dtrp-main">
               <div className="dtrp-quick">
-                {quickRanges().map((q) => (
+                {quickOptions.map((q) => (
                   <button
                     key={q.label}
                     type="button"
-                    className={
-                      (q.range === null && value === null) ||
-                      (q.range !== null && value !== null && q.range.from === value.from && q.range.to === value.to)
-                        ? 'on' : ''
-                    }
-                    onClick={() => { setOpen(false); onChange(q.range); }}
+                    className={q.label === activeQuickLabel ? 'on' : ''}
+                    onClick={() => {
+                      setSelectedQuickLabel(q.label);
+                      setOpen(false);
+                      onChange(q.range);
+                    }}
                   >
                     {q.label}
                   </button>

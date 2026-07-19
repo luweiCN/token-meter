@@ -147,6 +147,9 @@
   background: var(--bg);
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
+  --chart-motion-duration: 220ms;
+  --chart-motion-surface-duration: 240ms;
+  --chart-motion-easing: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 * {
@@ -695,18 +698,48 @@ select {
   padding: 3px;
 }
 
-/* 整张网格挂载时淡入 + 轻微上浮，跟趋势图的 tm-chart-in 一个手法。
-   371 个格子共用【一个】入场动画（不是每格各播一次）——每格单独播放对
-   371 个元素同时触发 reflow/paint，没必要为看不出区别的效果付这个代价。 */
-.year-heatmap__grid {
-  animation: tm-chart-in 0.32s ease-out;
+/* 图表共用的克制动效：面图整体轻淡入，纵/横柱从各自基线展开。
+   每个元素只动 opacity/transform；错峰延迟由 chartMotion.ts 封顶在 80ms。 */
+.chart-surface-in {
+  animation: chart-surface-in var(--chart-motion-surface-duration) var(--chart-motion-easing) backwards;
+}
+
+.chart-bar-y-in,
+.chart-bar-x-in {
+  animation-duration: var(--chart-motion-duration);
+  animation-timing-function: var(--chart-motion-easing);
+  animation-fill-mode: backwards;
+}
+
+.chart-bar-y-in {
+  animation-name: chart-bar-y-in;
+  transform-origin: center bottom;
+}
+
+.chart-bar-x-in {
+  animation-name: chart-bar-x-in;
+  transform-origin: left center;
+}
+
+@keyframes chart-surface-in {
+  from { opacity: 0; transform: translateY(3px); }
+}
+
+@keyframes chart-bar-y-in {
+  from { opacity: 0.35; transform: scaleY(0.04); }
+}
+
+@keyframes chart-bar-x-in {
+  from { opacity: 0.35; transform: scaleX(0.04); }
 }
 
 /* 切指标（Token/成本/会话/事件）时颜色平滑过渡，不是瞬间跳变；
    hover 时格子轻微放大，给悬停一个即时反馈（格子不可点，不给 pointer 光标）。
    transform 用 scale 不改 width/height，不触发其余格子重排。 */
 .year-heatmap__cell {
-  transition: background-color 0.25s ease, transform 0.12s ease-out;
+  transition:
+    background-color var(--chart-motion-duration) var(--chart-motion-easing),
+    transform 120ms var(--chart-motion-easing);
   /* 极淡内描边：0 档（零活动）与 surface 的对比度只有 ~1.1:1，没有这圈边
      根本看不出「这里有一格」，也就无从比较深浅。 */
   box-shadow: inset 0 0 0 1px rgb(140 160 178 / 0.16);
@@ -994,15 +1027,14 @@ select {
   flex: none;
 }
 
-/* uPlot canvas fades in on (re)render — the only motion the bars themselves need. */
+/* uPlot 版本沿用同一套整体进场；只动容器，避免 canvas 与父层重复淡入。 */
 .trend-chart__plot {
   margin-top: 10px;
   position: relative;
 }
 
-.trend-chart__plot .uplot,
-.trend-chart__plot canvas {
-  animation: tm-chart-in 0.32s ease-out;
+.trend-chart__plot .uplot {
+  animation: chart-surface-in var(--chart-motion-surface-duration) var(--chart-motion-easing) backwards;
 }
 
 @keyframes tm-chart-in {
@@ -1096,11 +1128,10 @@ select {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .trend-chart__plot .uplot,
-  .trend-chart__plot canvas {
-    animation: none;
-  }
-  .year-heatmap__grid {
+  .chart-surface-in,
+  .chart-bar-y-in,
+  .chart-bar-x-in,
+  .trend-chart__plot .uplot {
     animation: none;
   }
   .year-heatmap__cell {
@@ -1114,13 +1145,9 @@ select {
   }
   .v-pulse,
   .ov-body > *,
-  .chart-wrap svg g.trend-col,
   .skl-line::after,
   .skl-block::after {
     animation: none;
-  }
-  .chart-wrap svg rect {
-    transition: none;
   }
 }
 
@@ -1825,23 +1852,10 @@ th.sort.desc::after{content:"↓";opacity:1;color:var(--accent)}
   display: block;
 }
 
-/* 直方图进场：柱子从基线依次长出（transform-box 以 viewBox 为盒、origin 落在底线）。
-   数据刷新时桶 key 不变、g 复用不重播；切粒度桶集合更换，整组重新生长。 */
-.chart-wrap svg g.trend-col {
-  animation: bar-grow 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+/* SVG 柱组以整张 viewBox 的底边为基线；HTML 柱条沿用通用类自己的 origin。 */
+.chart-wrap svg .chart-bar-y-in {
   transform-box: view-box;
   transform-origin: 50% 100%;
-}
-
-@keyframes bar-grow {
-  from {
-    transform: scaleY(0);
-  }
-}
-
-/* 切指标/数据刷新时柱段几何平滑过渡（SVG 几何属性走 CSS 过渡）。 */
-.chart-wrap svg rect {
-  transition: x 0.4s ease, y 0.4s ease, width 0.4s ease, height 0.4s ease;
 }
 
 .yticks {

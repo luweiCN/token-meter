@@ -2,6 +2,7 @@ import { useMemo, useState, type MouseEvent } from 'react';
 
 import type { AgentTrendSeries } from '../api.js';
 import { formatCount, formatTokens, formatUsdMicros } from '../format.js';
+import { chartAnimationDelay } from './chartMotion.js';
 
 export type AgentTrendMetric = 'tokens' | 'costUsdMicros' | 'sessions';
 
@@ -108,10 +109,13 @@ export function AgentTrendChart({
 
   const tipStack = tip ? stackOf(tip.bucket) : [];
   const tipTotal = tipStack.reduce((sum, s) => sum + s.value, 0);
+  const motionKey = `${data.granularity}:${metric}:${data.rows
+    .map((row) => `${row.bucket}/${row.providerId}/${metricValue(row, metric)}`)
+    .join('|')}`;
 
   return (
     <div className="chart-wrap" onMouseLeave={() => setTip(null)}>
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="用量趋势直方图">
+      <svg key={motionKey} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="用量趋势直方图">
         {/* 三条基准线（0 线在底部由柱子自然形成） */}
         {[1 / 3, 2 / 3, 1].map(f => (
           <line key={f} x1="0" x2={W} y1={H - f * (H - 10)} y2={H - f * (H - 10)}
@@ -121,8 +125,8 @@ export function AgentTrendChart({
           let y = H;
           const segs = stackOf(bucket);
           return (
-            <g key={bucket} className="trend-col"
-              style={{ animationDelay: `${i * 15}ms` }}
+            <g key={bucket} className="trend-col chart-bar-y-in"
+              style={{ animationDelay: chartAnimationDelay(i) }}
               onMouseMove={e => onMove(e, bucket)}
               onMouseEnter={e => onMove(e, bucket)}
               onMouseLeave={() => setTip(null)}>

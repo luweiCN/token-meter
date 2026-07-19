@@ -1,5 +1,7 @@
 import { useState, type MouseEvent } from 'react';
 
+import { chartAnimationDelay } from './chartMotion.js';
+
 /// 通用堆叠日直方图：AgentTrendChart（总览）的画布形态抽象——SVG 堆叠柱 +
 /// 右缘 y 刻度 + x 标签 + 图例 + 跟随鼠标 tooltip，系列定义与取值由调用方给。
 /// 模型页（Top6 模型 + 其他）与会话页（agent 系列）共用；总览的
@@ -49,10 +51,13 @@ export function StackedTrendChart({
   const onMove = (e: MouseEvent, bucket: string) => setTip({ bucket, x: e.clientX, y: e.clientY });
   const tipStack = tip ? stackOf(tip.bucket) : [];
   const tipTotal = tipStack.reduce((sum, s) => sum + s.value, 0);
+  const motionKey = buckets
+    .map((bucket) => `${bucket}:${series.map((def) => valueOf(bucket, def.id)).join(',')}`)
+    .join('|');
 
   return (
     <div className="chart-wrap" onMouseLeave={() => setTip(null)}>
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={ariaLabel}>
+      <svg key={motionKey} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={ariaLabel}>
         {[1 / 3, 2 / 3, 1].map((f) => (
           <line
             key={f}
@@ -71,8 +76,8 @@ export function StackedTrendChart({
           return (
             <g
               key={bucket}
-              className="trend-col"
-              style={{ animationDelay: `${i * 15}ms` }}
+              className="trend-col chart-bar-y-in"
+              style={{ animationDelay: chartAnimationDelay(i) }}
               onMouseMove={(e) => onMove(e, bucket)}
               onMouseEnter={(e) => onMove(e, bucket)}
               onMouseLeave={() => setTip(null)}

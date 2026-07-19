@@ -407,12 +407,44 @@ describe('AppShell renderer routes', () => {
     expect(await screen.findByText('token-meter')).toBeTruthy();
     expect(screen.getByText('~/code/ai/token-meter')).toBeTruthy();
     expect(screen.getByText('42 会话')).toBeTruthy();
+    expect(document.querySelector('.pc-spark')?.classList.contains('chart-surface-in')).toBe(true);
     expectNoEnglishScaffold();
 
     await user.click(screen.getByRole('button', { name: '设置' }));
     expect(screen.getByRole('heading', { level: 1, name: '设置' })).toBeTruthy();
     expect(screen.getAllByText(/供应商额度接入|Coding Agent 集成/).length).toBeGreaterThan(0);
     expectNoEnglishScaffold();
+  });
+
+  it('uses the shared chart motion on project sparklines, columns, and distribution bars', async () => {
+    const user = userEvent.setup();
+    api.projects.detail.mockResolvedValue({
+      id: 1,
+      displayName: 'token-meter',
+      pathLabel: '~/code/ai/token-meter',
+      sessionsCount: 42,
+      activeDays: 2,
+      lastActiveDate: '2026-07-20',
+      costUsdMicros: 1_300_000,
+      costUnknownEvents: 0,
+      tokensTotal: 999,
+      dailyCost: [
+        { date: '2026-07-19', costUsdMicros: 300_000 },
+        { date: '2026-07-20', costUsdMicros: 1_000_000 }
+      ],
+      models: [{ model: 'gpt-5', tokens: 999, costUsdMicros: 1_300_000 }],
+      agents: [{ providerId: 'codex', tokens: 999, costUsdMicros: 1_300_000 }]
+    });
+    render(<AppShell />);
+
+    await user.click(within(screen.getByRole('navigation')).getByRole('button', { name: '项目' }));
+    await screen.findByText('token-meter');
+    expect(document.querySelector('.pc-spark')?.classList.contains('chart-surface-in')).toBe(true);
+    await user.click(document.querySelector('.pcard')!);
+
+    await waitFor(() => expect(document.querySelectorAll('.proj-day-bar .chart-bar-y-in')).toHaveLength(2));
+    expect(document.querySelectorAll('.dist-row .chart-bar-x-in')).toHaveLength(2);
+    expect((document.querySelectorAll('.proj-day-bar .chart-bar-y-in')[1] as HTMLElement).style.animationDelay).toBe('8ms');
   });
 
   it('renders one source card per scan root inside the data section of the settings page', async () => {

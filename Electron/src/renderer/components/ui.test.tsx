@@ -130,6 +130,38 @@ describe('DateRangePicker', () => {
     expect(onChange).toHaveBeenCalledWith({ from: today, to: today });
   });
 
+  it('highlights only the clicked quick range when today is also the start of the week', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 20, 12)); // Monday
+
+    try {
+      const onChange = vi.fn();
+      const today = '2026-07-20';
+      const { rerender } = render(<DateRangePicker ariaLabel="按日期筛选" value={null} onChange={onChange} />);
+
+      fireEvent.click(screen.getByRole('button', { name: '按日期筛选' }));
+      fireEvent.click(screen.getByRole('button', { name: '今天' }));
+      expect(onChange).toHaveBeenLastCalledWith({ from: today, to: today });
+
+      rerender(
+        <DateRangePicker ariaLabel="按日期筛选" value={{ from: today, to: today }} onChange={onChange} />
+      );
+      fireEvent.click(screen.getByRole('button', { name: '按日期筛选' }));
+      expect(screen.getByRole('button', { name: '今天' }).className).toBe('on');
+      expect(screen.getByRole('button', { name: '本周' }).className).toBe('');
+
+      fireEvent.click(screen.getByRole('button', { name: '本周' }));
+      rerender(
+        <DateRangePicker ariaLabel="按日期筛选" value={{ from: today, to: today }} onChange={onChange} />
+      );
+      fireEvent.click(screen.getByRole('button', { name: '按日期筛选' }));
+      expect(screen.getByRole('button', { name: '今天' }).className).toBe('');
+      expect(screen.getByRole('button', { name: '本周' }).className).toBe('on');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('previews the hovered span after picking a start day', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
