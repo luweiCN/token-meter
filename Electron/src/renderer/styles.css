@@ -321,6 +321,19 @@ select:focus-visible {
 .side-foot .scan {
   font-size: 11px;
   color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.scan-spin {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border: 1.5px solid var(--muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: refresh-rotate .7s linear infinite;
 }
 
 .theme-btn {
@@ -1144,6 +1157,7 @@ select {
     animation: none;
   }
   .v-pulse,
+  .scan-spin,
   .ov-body > *,
   .skl-line::after,
   .skl-block::after {

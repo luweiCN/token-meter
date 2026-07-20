@@ -369,6 +369,7 @@ declare global {
       };
       index: {
         status(): Promise<IndexStatusResult>;
+        isScanning(): Promise<boolean>;
         setRootEnabled(id: number, enabled: boolean): Promise<void>;
         startFullReindex(rootId?: string): Promise<unknown>;
         onScanProgress(callback: (progress: ScanProgress) => void): () => void;

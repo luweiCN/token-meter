@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('tokenMeter', {
   },
   index: {
     status: () => ipcRenderer.invoke('index:status'),
+    isScanning: () => ipcRenderer.invoke('index:isScanning'),
     setRootEnabled: (id: number, enabled: boolean) => ipcRenderer.invoke('index:setRootEnabled', id, enabled),
     startFullReindex: (rootId?: string) => ipcRenderer.invoke('index:fullReindex', rootId),
     onScanProgress: (callback: (progress: unknown) => void) => {

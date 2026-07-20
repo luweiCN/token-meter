@@ -51,7 +51,8 @@ const mockSessionsRepository = vi.hoisted(() => ({
 
 const mockIndexStatusRepository = vi.hoisted(() => ({
   constructor: vi.fn(),
-  status: vi.fn()
+  status: vi.fn(),
+  isScanning: vi.fn()
 }));
 
 const mockModelsRepository = vi.hoisted(() => ({
@@ -112,7 +113,8 @@ vi.mock('./indexStatusRepository.js', () => ({
   IndexStatusRepository: vi.fn(function IndexStatusRepositoryMock(database: unknown) {
     mockIndexStatusRepository.constructor(database);
     return {
-      status: mockIndexStatusRepository.status
+      status: mockIndexStatusRepository.status,
+      isScanning: mockIndexStatusRepository.isScanning
     };
   })
 }));
@@ -185,6 +187,7 @@ const allowedIpcChannels: Record<string, true> = {
   'overview:dayModelBreakdown': true,
   'overview:dayProjectBreakdown': true,
   'index:fullReindex': true,
+  'index:isScanning': true,
   'index:setRootEnabled': true,
   'index:status': true,
   'models:query': true,
@@ -206,7 +209,7 @@ const allowedPreloadApiShape: Record<string, string[]> = {
   credentials: ['set', 'state'],
   dashboard: ['queryOverview'],
   overview: ['dayModelBreakdown', 'dayProjectBreakdown', 'onInvalidate', 'onSessionEvent', 'query', 'subagentBreakdown'],
-  index: ['onScanProgress', 'setRootEnabled', 'startFullReindex', 'status'],
+  index: ['isScanning', 'onScanProgress', 'setRootEnabled', 'startFullReindex', 'status'],
   models: ['query', 'trend'],
   notifications: ['requestAuthorization', 'state'],
   projects: ['detail', 'list'],
@@ -243,6 +246,7 @@ describe('Electron secure scaffold', () => {
     mockSettingsRepository.update.mockReturnValue({ requestedVersion: 4, status: 'pending' });
     mockSessionsRepository.query.mockReturnValue({ items: [{ sessionKey: 'codex-session' }], total: 1 });
     mockIndexStatusRepository.status.mockReturnValue({ roots: [{ id: 1, displayName: 'Codex' }], runs: [], failedFiles: [] });
+    mockIndexStatusRepository.isScanning.mockReturnValue(false);
   });
 
   it('registerIpcHandlers registers only the renderer IPC channel whitelist', () => {
@@ -445,6 +449,14 @@ describe('Electron secure scaffold', () => {
 
     expect(mockIndexStatusRepository.constructor).toHaveBeenCalledWith(mockDatabase.instance);
     expect(mockIndexStatusRepository.status).toHaveBeenCalledWith();
+  });
+
+  it('index:isScanning returns the repository scan state without renderer-supplied arguments', async () => {
+    mockIndexStatusRepository.isScanning.mockReturnValue(true);
+    const isScanningHandler = registerAndFindHandler('index:isScanning');
+
+    await expect(isScanningHandler({} as never, { ignored: true })).resolves.toBe(true);
+    expect(mockIndexStatusRepository.isScanning).toHaveBeenCalledWith();
   });
 
   it('index:fullReindex streams through requestFullRescan, forwards progress, then invalidates the dashboard', async () => {

@@ -63,11 +63,13 @@ export function Layout({
   route,
   onRoute,
   lastScanEpochMs,
+  isScanning,
   children
 }: {
   route: RouteName;
   onRoute: (route: RouteName) => void;
   lastScanEpochMs: number | null;
+  isScanning: boolean;
   children: ReactNode;
 }) {
   // 主题切换已收进设置页「外观」；这里启动时应用持久化的选择，
@@ -106,7 +108,8 @@ export function Layout({
         </nav>
         <div className="side-foot">
           <span className="scan">
-            {lastScanEpochMs !== null ? `上次扫描 ${formatRelative(Date.now() - lastScanEpochMs)}` : '尚未扫描'}
+            <span>{lastScanEpochMs !== null ? `上次扫描 ${formatRelative(Date.now() - lastScanEpochMs)}` : '尚未扫描'}</span>
+            {isScanning ? <span className="scan-spin" role="status" aria-label="正在扫描" /> : null}
           </span>
         </div>
       </aside>

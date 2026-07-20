@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { AgentBinaryStatus, FailedFileSummary, IndexStatusResult, ScanProgress, ScanRootSummary } from '../api.js';
 import { MenubarAppearance, currentStyleName, previewStateFromSettings } from '../components/MenubarAppearance.js';
 import { MenubarPreviewBar } from '../components/MenubarPreview.js';
+import { Input } from '../components/ui/input.js';
 import { showToast } from '../components/toast.js';
 import { formatBytes, formatRelative, parseUtcTimestamp } from '../format.js';
 import { settingsStore, useSettings } from '../stores/settingsStore.js';
@@ -513,7 +514,7 @@ function QuotaProviderRow({
         </div>
         {provider.keyed ? (
           <div className="qcred qkeyrow">
-            <input
+            <Input
               type="password"
               value={keyDraft}
               aria-label={`${provider.name} API Key`}

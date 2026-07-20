@@ -55,6 +55,24 @@ interface ScanRootRow extends Omit<ScanRootSummary, 'enabled' | 'rootPathLabel'>
 export class IndexStatusRepository {
   constructor(private readonly db: Database.Database) {}
 
+  isScanning(): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT EXISTS (
+           SELECT 1
+             FROM scan_runs current
+            WHERE current.status = 'running'
+              AND current.id = (
+                    SELECT max(newer.id)
+                      FROM scan_runs newer
+                     WHERE newer.scan_root_id IS current.scan_root_id
+                  )
+         ) AS active`
+      )
+      .get() as { active: 0 | 1 };
+    return row.active === 1;
+  }
+
   status() {
     const roots = this.db
       .prepare(

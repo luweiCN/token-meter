@@ -60,6 +60,7 @@ export function registerIpcHandlers() {
   ipcMain.handle('projects:list', async () => projects.list());
   ipcMain.handle('projects:detail', async (_event, projectId: number) => projects.detail(Number(projectId)));
   ipcMain.handle('index:status', async () => indexStatus.status());
+  ipcMain.handle('index:isScanning', async () => indexStatus.isScanning());
   ipcMain.handle('index:setRootEnabled', async (_event, id: number, enabled: boolean) => {
     indexStatus.setRootEnabled(Number(id), enabled === true);
   });

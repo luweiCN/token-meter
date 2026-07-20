@@ -106,6 +106,7 @@ interface TokenMeterApi {
   };
   index: {
     status: Mock<() => Promise<IndexStatusResult>>;
+    isScanning: Mock<() => Promise<boolean>>;
     setRootEnabled: Mock<(id: number, enabled: boolean) => Promise<void>>;
     startFullReindex: Mock<() => Promise<unknown>>;
     onScanProgress: Mock<(callback: (progress: unknown) => void) => () => void>;
@@ -290,6 +291,7 @@ function installTokenMeterApi(): TokenMeterApi {
     },
     index: {
       status: vi.fn<() => Promise<IndexStatusResult>>(),
+      isScanning: vi.fn<() => Promise<boolean>>(async () => false),
       setRootEnabled: vi.fn<(id: number, enabled: boolean) => Promise<void>>(async () => {}),
       startFullReindex: vi.fn<() => Promise<unknown>>(),
       onScanProgress: vi.fn<(callback: (progress: unknown) => void) => () => void>(() => () => {})
@@ -386,6 +388,29 @@ describe('AppShell renderer routes', () => {
     await waitFor(() => {
       expect(api.index.status.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
+  });
+
+  it('shows a loading indicator beside the last scan time while a scan is active', async () => {
+    api.index.isScanning.mockResolvedValue(true);
+    render(<AppShell />);
+
+    expect(await screen.findByRole('status', { name: '正在扫描' })).toBeTruthy();
+    expect(api.index.isScanning).toHaveBeenCalledTimes(1);
+  });
+
+  it('parses SQLite UTC scan timestamps without adding the local timezone offset', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-07-20T00:10:05Z'));
+    api.index.status.mockResolvedValue({
+      ...indexStatusResult,
+      roots: [{
+        ...indexStatusResult.roots[0],
+        lastScanStartedAt: '2026-07-20 00:10:00',
+        lastScanFinishedAt: '2026-07-20 00:10:00'
+      }]
+    });
+    render(<AppShell />);
+
+    expect(await screen.findByText('上次扫描 5 秒前')).toBeTruthy();
   });
 
   it('changes the visible route content when sidebar controls are clicked', async () => {
@@ -566,6 +591,7 @@ describe('AppShell renderer routes', () => {
     await user.click(screen.getByRole('button', { name: '设置' }));
 
     const keyInput = await screen.findByLabelText('智谱 GLM API Key');
+    expect(keyInput.getAttribute('data-slot')).toBe('input');
     await user.type(keyInput, 'sk-test-123');
     await user.click(screen.getByRole('button', { name: '存入钥匙串' }));
 

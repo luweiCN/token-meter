@@ -184,6 +184,32 @@ describe('IndexStatusRepository', () => {
     ]);
   });
 
+  it('reports whether any scan run is currently active', () => {
+    const db = createIndexStatusDb();
+    openedDbs.push(db);
+    const repo = new IndexStatusRepository(db);
+
+    db.prepare(
+      `INSERT INTO scan_runs(id, scan_root_id, run_kind, status)
+       VALUES (9, 1, 'incremental', 'running')`
+    ).run();
+    // 崩溃遗留的旧 running 行不能让侧栏永久转圈；只看每个目录的最新一轮。
+    expect(repo.isScanning()).toBe(false);
+
+    db.prepare(
+      `INSERT INTO scan_runs(id, scan_root_id, run_kind, status)
+       VALUES (12, 1, 'incremental', 'running')`
+    ).run();
+    expect(repo.isScanning()).toBe(true);
+
+    db.prepare(
+      `UPDATE scan_runs
+          SET status = 'ok', finished_at = CURRENT_TIMESTAMP
+        WHERE id = 12`
+    ).run();
+    expect(repo.isScanning()).toBe(false);
+  });
+
   it('setRootEnabled flips the flag, revives seed-disabled scan modes, and rejects unknown ids', () => {
     const repo = openRepo();
 

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import type { IndexStatusResult } from './api.js';
 import { Layout, type RouteName } from './components/Layout.js';
+import { parseUtcTimestamp } from './format.js';
 import { Models } from './routes/Models.js';
 import { Overview } from './routes/Overview.js';
 import { Projects } from './routes/Projects.js';
@@ -29,6 +30,7 @@ function indexStatusErrorMessage(unknownError: unknown) {
 export function AppShell() {
   const [route, setRoute] = useState<RouteName>('dashboard');
   const [indexStatusState, setIndexStatusState] = useState<IndexStatusState>({ kind: 'loading' });
+  const [isScanning, setIsScanning] = useState(false);
 
   // 概览页（Overview）自持数据与自动刷新；App 只维护索引状态摘要，
   // 供侧栏底部的「上次扫描」显示（索引状态明细已并入设置页数据区）。
@@ -58,6 +60,34 @@ export function AppShell() {
     };
   }, []);
 
+  // 完整 index:status 会聚合文件/事件数，不适合高频轮询；扫描灯只查最新
+  // scan_run 的轻量布尔值。短扫描来不及显示也无需闪烁，持续扫描会在 1s 内点亮。
+  useEffect(() => {
+    let cancelled = false;
+    const refreshScanState = () => {
+      void window.tokenMeter.index
+        .isScanning()
+        .then((active) => {
+          if (!cancelled) setIsScanning(active);
+        })
+        .catch(() => {});
+    };
+    refreshScanState();
+    const timer = window.setInterval(refreshScanState, 1_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  // 自动扫描完成时 Swift 会发 data.changed；沿用 Overview 的失效事件刷新侧栏时间。
+  useEffect(
+    () => window.tokenMeter.overview.onInvalidate(() => {
+      void refreshIndexStatus().catch(() => {});
+    }),
+    [refreshIndexStatus]
+  );
+
   useEffect(() => {
     const handleFocus = () => {
       void refreshIndexStatus().catch(() => {});
@@ -72,14 +102,14 @@ export function AppShell() {
     indexStatusState.kind === 'loaded'
       ? indexStatusState.status.roots.reduce<number | null>((latest, root) => {
           if (root.lastScanFinishedAt === null) return latest;
-          const ms = Date.parse(root.lastScanFinishedAt);
+          const ms = parseUtcTimestamp(root.lastScanFinishedAt);
           if (Number.isNaN(ms)) return latest;
           return latest === null || ms > latest ? ms : latest;
         }, null)
       : null;
 
   return (
-    <Layout route={route} onRoute={setRoute} lastScanEpochMs={lastScanEpochMs}>
+    <Layout route={route} onRoute={setRoute} lastScanEpochMs={lastScanEpochMs} isScanning={isScanning}>
       {route === 'dashboard' && <Overview />}
       {route === 'projects' && <Projects />}
       {route === 'sessions' && <Sessions />}
