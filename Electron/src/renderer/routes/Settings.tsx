@@ -137,7 +137,7 @@ export function Settings() {
     void runDetect();
   }, [runDetect]);
 
-  // 全量重扫（原「索引状态」页的功能并入此处）：流式进度驱动下方源卡片。
+  // 会话数据库重建（原「索引状态」页的功能并入此处）：流式进度驱动下方源卡片。
   const [rebuilding, setRebuilding] = useState(false);
   const [scanProgress, setScanProgress] = useState<ScanProgress | null>(null);
   useEffect(() => window.tokenMeter.index.onScanProgress(setScanProgress), []);
@@ -150,7 +150,7 @@ export function Settings() {
     void window.tokenMeter.index.startFullReindex()
       .then(() => window.tokenMeter.index.status().then(setIndexStatus))
       .catch((error: unknown) => {
-        setRebuildNote(`重新扫描失败：${error instanceof Error ? error.message : '未知错误'}`);
+        setRebuildNote(`数据库重建失败：${error instanceof Error ? error.message : '未知错误'}`);
       })
       .finally(() => {
         setRebuilding(false);
@@ -361,11 +361,11 @@ export function Settings() {
         </div>
         <div className="dangerzone">
           <div>
-            <b>全部重新扫描</b>
-            <div className="dz-desc">清空本地派生数据库并按启用的根目录重新扫描 · 不影响 agent 原始日志，重建期间统计数据不完整</div>
+            <b>重建会话数据库</b>
+            <div className="dz-desc">清空所有已索引的会话数据并按启用的根目录从头扫描 · 保留设置和 agent 原始日志</div>
           </div>
           <button className="btn danger" type="button" disabled={rebuilding} onClick={() => setRebuildDialog(true)}>
-            {rebuilding ? '正在重新扫描…' : '重新扫描…'}
+            {rebuilding ? '正在重建…' : '重建数据库…'}
           </button>
         </div>
         {rebuildNote ? <p className="muted" role="status">{rebuildNote}</p> : null}
@@ -422,13 +422,13 @@ export function Settings() {
       ) : null}
 
       {rebuildDialog ? (
-        <div className="dlg-mask on" role="dialog" aria-label="重建索引确认">
+        <div className="dlg-mask on" role="dialog" aria-modal="true" aria-labelledby="rebuild-database-title">
           <div className="dlg">
-            <h3>重建索引？</h3>
-            <p>将清空本地派生数据库并按启用的根目录重新扫描。agent 原始日志不受影响；重建期间统计数据不完整。</p>
+            <h3 id="rebuild-database-title">重建会话数据库</h3>
+            <p>将清空所有已索引的会话、事件、项目、源文件状态、扫描历史和汇总数据，然后按已启用目录从头扫描。保留所有设置和 agent 原始日志；重建期间统计数据不完整。</p>
             <div className="dlg-actions">
               <button className="btn" type="button" onClick={() => setRebuildDialog(false)}>取消</button>
-              <button className="btn danger" type="button" onClick={startRebuild}>开始重建</button>
+              <button className="btn danger" type="button" onClick={startRebuild}>确认重建</button>
             </div>
           </div>
         </div>

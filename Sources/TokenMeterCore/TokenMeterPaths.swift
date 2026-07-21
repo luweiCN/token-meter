@@ -35,8 +35,22 @@ public enum TokenMeterPaths {
             .appendingPathComponent("provider-snapshots.json")
     }
 
-    public static func defaultScanRoots(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> [DefaultScanRoot] {
-        [
+    public static func defaultScanRoots(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [DefaultScanRoot] {
+        let codexDirectory: URL
+        if let configured = environment["CODEX_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !configured.isEmpty {
+            codexDirectory = URL(
+                fileURLWithPath: (configured as NSString).expandingTildeInPath,
+                isDirectory: true
+            ).standardizedFileURL
+        } else {
+            codexDirectory = homeDirectory.appendingPathComponent(".codex", isDirectory: true)
+        }
+
+        return [
             DefaultScanRoot(
                 kind: .claudeJSONL,
                 rootURL: homeDirectory.appendingPathComponent(".claude/projects", isDirectory: true),
@@ -44,7 +58,7 @@ public enum TokenMeterPaths {
             ),
             DefaultScanRoot(
                 kind: .codexJSONL,
-                rootURL: homeDirectory.appendingPathComponent(".codex/sessions", isDirectory: true),
+                rootURL: codexDirectory.appendingPathComponent("sessions", isDirectory: true),
                 displayName: "Codex"
             ),
             // Codex 会把旧 session 从 .codex/sessions 移进 .codex/archived_sessions（同样是
@@ -54,7 +68,7 @@ public enum TokenMeterPaths {
             // 不是 provider 标签，用同名会让分根列表出现两个无法区分的 "Codex"。
             DefaultScanRoot(
                 kind: .codexJSONL,
-                rootURL: homeDirectory.appendingPathComponent(".codex/archived_sessions", isDirectory: true),
+                rootURL: codexDirectory.appendingPathComponent("archived_sessions", isDirectory: true),
                 displayName: "Codex (Archived)"
             ),
             DefaultScanRoot(

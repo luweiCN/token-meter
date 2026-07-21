@@ -9,6 +9,7 @@ final class UsageEventDeduplicatorTests: XCTestCase {
         requestId: String?,
         input: Int64 = 1,
         output: Int64 = 0,
+        dedupeScopeKey: String? = nil,
         isSidechain: Bool = false
     ) -> UsageEvent {
         UsageEvent(
@@ -18,6 +19,7 @@ final class UsageEventDeduplicatorTests: XCTestCase {
             // dedupeKey 现由构造者提供；这里用 requestId 合成一个「同 messageId、不同 dedupeKey」
             // 的指纹，专为驱动规则二（byMessageId）——UsageEvent 本身已不再存 requestId。
             dedupeKey: messageId.flatMap { messageId in requestId.map { "\(messageId)\u{1F}\($0)" } },
+            dedupeScopeKey: dedupeScopeKey,
             inputTokens: input,
             outputTokens: output,
             sourceOffset: Int64(seq),
@@ -123,6 +125,15 @@ final class UsageEventDeduplicatorTests: XCTestCase {
         let result = UsageEventDeduplicator.deduplicate([parent, subagent])
 
         XCTAssertEqual(result.count, 2)
+    }
+
+    func testMessageIDFallbackRespectsDedupeScope() {
+        let first = event(seq: 1, at: 100, messageId: "m1", requestId: "r1", dedupeScopeKey: "scope-a")
+        let second = event(seq: 2, at: 200, messageId: "m1", requestId: "r2", dedupeScopeKey: "scope-b")
+
+        let result = UsageEventDeduplicator.deduplicate([first, second])
+
+        XCTAssertEqual(result.count, 2, "不同作用域的同名 message id 不能在第二层回退去重时碰撞")
     }
 
     func testKeepsAllEventsWithoutDedupeKey() {

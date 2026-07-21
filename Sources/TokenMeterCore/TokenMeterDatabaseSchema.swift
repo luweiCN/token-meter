@@ -13,7 +13,9 @@ public enum TokenMeterDatabaseSchema {
     ///    历史被重复计数——实测单日虚增 18 亿 token），重建以清洗既有重复事件
     /// 9：模型归一化改为取 `/` 最后一段（codex/gpt-5.6-sol 与裸名归并，渠道前缀
     ///    不属于模型身份，用户裁定），重建以重算既有事件的 model_canonical
-    public static let derivedVersion: Int64 = 9
+    /// 10：Codex/OpenCode fork 回放改为跨 session 作用域去重，补 OpenCode v2/WAL 快照，
+    ///     并重算 Codex 的迟到模型归属。
+    public static let derivedVersion: Int64 = 10
 
     /// 用户配置。永不删除。这三张表存的是无法从会话文件重建的东西：
     /// - settings：过滤器 / 菜单栏偏好 / 自动刷新间隔
@@ -200,13 +202,15 @@ public enum TokenMeterDatabaseSchema {
       cost_usd_micros INTEGER,
       cost_source TEXT NOT NULL CHECK (cost_source IN ('reported', 'computed', 'unknown')),
       dedupe_key TEXT,
+      dedupe_scope_key TEXT,
       source_offset INTEGER NOT NULL,
       is_sidechain INTEGER NOT NULL DEFAULT 0 CHECK (is_sidechain IN (0,1)),
       UNIQUE(source_file_id, event_seq)
     );
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_dedupe
-      ON usage_events(session_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
+      ON usage_events(dedupe_scope_key, dedupe_key)
+      WHERE dedupe_scope_key IS NOT NULL AND dedupe_key IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_usage_time ON usage_events(observed_epoch_ms);
     CREATE INDEX IF NOT EXISTS idx_usage_session ON usage_events(session_id, observed_epoch_ms);
     CREATE INDEX IF NOT EXISTS idx_usage_model_time ON usage_events(model_canonical, observed_epoch_ms);

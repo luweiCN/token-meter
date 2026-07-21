@@ -31,7 +31,12 @@ public enum UsageEventDeduplicator {
     ///
     /// 输出按 `eventSeq` 升序，保证下游写入顺序确定。
     public static func deduplicate(_ events: [UsageEvent]) -> [UsageEvent] {
-        var byExactKey: [String: UsageEvent] = [:]
+        struct ExactIdentity: Hashable {
+            let scope: String?
+            let key: String
+        }
+
+        var byExactKey: [ExactIdentity: UsageEvent] = [:]
         var passthrough: [UsageEvent] = []
 
         for event in events {
@@ -39,16 +44,17 @@ public enum UsageEventDeduplicator {
                 passthrough.append(event)
                 continue
             }
-            if let existing = byExactKey[key] {
+            let identity = ExactIdentity(scope: event.dedupeScopeKey, key: key)
+            if let existing = byExactKey[identity] {
                 if replacesOnExactKey(existing, with: event) {
-                    byExactKey[key] = event
+                    byExactKey[identity] = event
                 }
             } else {
-                byExactKey[key] = event
+                byExactKey[identity] = event
             }
         }
 
-        var byMessageId: [String: UsageEvent] = [:]
+        var byMessageId: [ExactIdentity: UsageEvent] = [:]
         for event in byExactKey.values {
             guard let messageId = event.messageId else {
                 // Codex 事件带 dedupeKey 但 messageId 为 nil，会走到这里：放行是对的。
@@ -58,12 +64,13 @@ public enum UsageEventDeduplicator {
                 passthrough.append(event)
                 continue
             }
-            guard let existing = byMessageId[messageId] else {
-                byMessageId[messageId] = event
+            let identity = ExactIdentity(scope: event.dedupeScopeKey, key: messageId)
+            guard let existing = byMessageId[identity] else {
+                byMessageId[identity] = event
                 continue
             }
             if shouldReplace(existing, with: event) {
-                byMessageId[messageId] = event
+                byMessageId[identity] = event
             }
         }
 

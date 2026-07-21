@@ -19,8 +19,12 @@ public struct UsageEvent: Equatable {
     ///   requestId 时有时无，掺入会让缺它的那份逃过去重、被重复计数（见 ClaudeCodeUsageEventParser）。
     /// - Codex：`token_count` 无 message/request id，改用 timestamp + 原始 token 四元组合成
     ///   （见 CodexUsageEventParser），否则每条都是 NULL、`idx_usage_dedupe` 永不生效。
-    /// - omp / OpenCode：为 nil（OpenCode 在 adapter 内以 messageId 自去重，omp 无稳定指纹）。
+    /// - OpenCode：完整计费指纹 + embedded message id，用于跨 fork / 跨表去重。
+    /// - omp：为 nil；真实格式没有稳定的逐消息 id。
     public let dedupeKey: String?
+    /// 去重作用域。默认由 writer 取 `sourceKind:sessionKey`；Codex fork 指向父线程，
+    /// OpenCode 则在整个来源内按「指纹 + embedded id」裁决复制历史。
+    public let dedupeScopeKey: String?
     public let inputTokens: Int64
     public let outputTokens: Int64
     public let reasoningTokens: Int64
@@ -37,6 +41,7 @@ public struct UsageEvent: Equatable {
         modelName: String? = nil,
         messageId: String? = nil,
         dedupeKey: String?,
+        dedupeScopeKey: String? = nil,
         inputTokens: Int64 = 0,
         outputTokens: Int64 = 0,
         reasoningTokens: Int64 = 0,
@@ -52,6 +57,7 @@ public struct UsageEvent: Equatable {
         self.modelName = modelName
         self.messageId = messageId
         self.dedupeKey = dedupeKey
+        self.dedupeScopeKey = dedupeScopeKey
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
         self.reasoningTokens = reasoningTokens
@@ -143,6 +149,21 @@ public struct ParserState: Equatable, Codable {
     public var updatedAt: Date?
     public var rootSessionKey: String?
     public var subagentLabel: String?
+    /// 文件末尾仍有无法归属模型的事件；文件追加后必须从头重放，才能用后来的模型上下文回填。
+    public var requiresFullReplay: Bool?
+
+    // Codex fork/replay gate。使用 Optional 保持旧 parser_state 缺 key 时仍可解码。
+    public var codexForkedFromId: String?
+    public var codexChildSessionId: String?
+    public var codexReplaySessionId: String?
+    public var codexWaitingForTurnContext: Bool?
+    public var codexInheritedBaseline: CumulativeTokenTotals?
+    public var codexInheritedReportedTotal: Int64?
+    public var codexTaskStartedTurnIDs: Set<String>?
+    public var codexIsUserFork: Bool?
+    /// OpenCode 使用 WAL；主数据库文件不变时，`-wal` 仍可能新增、更新或删除消息。
+    /// 保存主库与 WAL 的轻量版本，任一变化都触发完整 SQLite 快照替换。
+    public var openCodeStorageRevision: String?
 
     /// 下次续读的起点：上一次 `readLines` 停下的字节位置（`JSONLReadResult.nextOffset`）。
     ///
@@ -164,6 +185,16 @@ public struct ParserState: Equatable, Codable {
         updatedAt: Date? = nil,
         rootSessionKey: String? = nil,
         subagentLabel: String? = nil,
+        requiresFullReplay: Bool? = nil,
+        codexForkedFromId: String? = nil,
+        codexChildSessionId: String? = nil,
+        codexReplaySessionId: String? = nil,
+        codexWaitingForTurnContext: Bool? = nil,
+        codexInheritedBaseline: CumulativeTokenTotals? = nil,
+        codexInheritedReportedTotal: Int64? = nil,
+        codexTaskStartedTurnIDs: Set<String>? = nil,
+        codexIsUserFork: Bool? = nil,
+        openCodeStorageRevision: String? = nil,
         resumeOffset: Int64 = 0
     ) {
         self.lastEventSeq = lastEventSeq
@@ -176,6 +207,16 @@ public struct ParserState: Equatable, Codable {
         self.updatedAt = updatedAt
         self.rootSessionKey = rootSessionKey
         self.subagentLabel = subagentLabel
+        self.requiresFullReplay = requiresFullReplay
+        self.codexForkedFromId = codexForkedFromId
+        self.codexChildSessionId = codexChildSessionId
+        self.codexReplaySessionId = codexReplaySessionId
+        self.codexWaitingForTurnContext = codexWaitingForTurnContext
+        self.codexInheritedBaseline = codexInheritedBaseline
+        self.codexInheritedReportedTotal = codexInheritedReportedTotal
+        self.codexTaskStartedTurnIDs = codexTaskStartedTurnIDs
+        self.codexIsUserFork = codexIsUserFork
+        self.openCodeStorageRevision = openCodeStorageRevision
         self.resumeOffset = resumeOffset
     }
 }

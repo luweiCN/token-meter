@@ -243,4 +243,42 @@ final class UsageEventWriterTests: XCTestCase {
         let sessionRow = try database.query("SELECT project_id FROM agent_sessions")[0]
         XCTAssertNotNil(sessionRow.int("project_id"))
     }
+
+    func testDedupeScopeCollapsesSiblingSessionsButNotUnrelatedSessions() throws {
+        let database = try makeDatabase()
+        let writer = UsageEventWriter(database: database, costCalculator: calculator())
+        let shared = UsageEvent(
+            eventSeq: 1, observedAt: Date(timeIntervalSince1970: 1), modelName: "claude-fable-5",
+            dedupeKey: "same-total", dedupeScopeKey: "codex:parent", inputTokens: 10, sourceOffset: 1
+        )
+        let siblingA = ParsedSession(sourceKind: .claudeJSONL, sessionKey: "child-a", projectPath: nil, cliVersion: nil,
+                                     startedAt: nil, updatedAt: nil, events: [shared], rawMeta: [:])
+        let siblingB = ParsedSession(sourceKind: .claudeJSONL, sessionKey: "child-b", projectPath: nil, cliVersion: nil,
+                                     startedAt: nil, updatedAt: nil, events: [shared], rawMeta: [:])
+        let unrelatedEvent = UsageEvent(
+            eventSeq: 1, observedAt: Date(timeIntervalSince1970: 1), modelName: "claude-fable-5",
+            dedupeKey: "same-total", dedupeScopeKey: "codex:other", inputTokens: 10, sourceOffset: 1
+        )
+        let unrelated = ParsedSession(sourceKind: .claudeJSONL, sessionKey: "other", projectPath: nil, cliVersion: nil,
+                                      startedAt: nil, updatedAt: nil, events: [unrelatedEvent], rawMeta: [:])
+
+        try writer.write(siblingA, scanRootId: 1, sourceFileId: 1, runId: nil)
+        try writer.write(siblingB, scanRootId: 1, sourceFileId: 2, runId: nil)
+        try writer.write(unrelated, scanRootId: 1, sourceFileId: 2, runId: nil)
+
+        XCTAssertEqual(try database.query("SELECT count(*) AS n FROM usage_events")[0].int("n"), 2)
+    }
+
+    func testFlattensNestedRootSessionKeys() throws {
+        let database = try makeDatabase()
+        try database.execute(
+            "INSERT INTO agent_sessions(source_kind, source_session_key, scan_root_id, provider_id, source_revision, root_session_key) VALUES ('claude_jsonl','root',1,'claude-code','r',NULL), ('claude_jsonl','child',1,'claude-code','r','root'), ('claude_jsonl','grandchild',1,'claude-code','r','child')"
+        )
+
+        let writer = UsageEventWriter(database: database, costCalculator: calculator())
+        try writer.flattenRootSessionKeys()
+
+        let root = try database.query("SELECT root_session_key FROM agent_sessions WHERE source_session_key='grandchild'")[0].string("root_session_key")
+        XCTAssertEqual(root, "root")
+    }
 }

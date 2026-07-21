@@ -106,12 +106,14 @@ final class CodexUsageEventParserTests: XCTestCase {
         XCTAssertEqual(state.lastEventSeq, 5)
     }
 
-    func testTreatsCumulativeResetAsFreshBaseline() throws {
-        // 累计值变小时（理论上的 compacted 场景），新值本身就是增量
+    func testCumulativeResetWithoutLastUsageMovesBaselineWithoutChargingSnapshot() throws {
+        // 只有 total、没有 last 时，累计值回退既可能是 compact，也可能是乱序旧快照。
+        // 保守口径：回退行只移动基线、不直接计费；下一条从新基线正常做差。
         let lines = [
             line(meta, offset: 0),
             line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":500,"cached_input_tokens":100,"output_tokens":50}}}}"#, offset: 1),
-            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:06:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":80,"cached_input_tokens":20,"output_tokens":10}}}}"#, offset: 2)
+            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:06:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":80,"cached_input_tokens":20,"output_tokens":10}}}}"#, offset: 2),
+            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:07:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"cached_input_tokens":25,"output_tokens":14}}}}"#, offset: 3)
         ]
 
         let (session, _) = try CodexUsageEventParser.parse(
@@ -119,8 +121,101 @@ final class CodexUsageEventParserTests: XCTestCase {
         )
 
         XCTAssertEqual(session.events.count, 2)
-        XCTAssertEqual(session.events[1].inputTokens, 60)   // 80 - 20，不是负数
-        XCTAssertEqual(session.events[1].outputTokens, 10)
+        XCTAssertEqual(session.events[1].inputTokens, 15)   // Δinput 20 - Δcache 5
+        XCTAssertEqual(session.events[1].cacheReadTokens, 5)
+        XCTAssertEqual(session.events[1].outputTokens, 4)
+    }
+
+    func testBuffersModelLessUsageUntilLaterTurnContext() throws {
+        let lines = [
+            line(meta, offset: 0),
+            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":20,"cached_input_tokens":5,"output_tokens":3},"last_token_usage":{"input_tokens":20,"cached_input_tokens":5,"output_tokens":3}}}}"#, offset: 1),
+            line(#"{"type":"turn_context","payload":{"model_info":{"slug":"gpt-5.6-sol"}}}"#, offset: 2)
+        ]
+
+        let (session, state) = try CodexUsageEventParser.parse(
+            lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
+        )
+
+        XCTAssertEqual(session.events.count, 1)
+        XCTAssertEqual(session.events[0].modelName, "gpt-5.6-sol")
+        XCTAssertFalse(state.requiresFullReplay ?? false)
+    }
+
+    func testUnresolvedModelRequestsFullReplayOnNextAppend() throws {
+        let lines = [
+            line(meta, offset: 0),
+            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":20,"output_tokens":3}}}}"#, offset: 1)
+        ]
+
+        let (session, state) = try CodexUsageEventParser.parse(
+            lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
+        )
+
+        XCTAssertNil(session.events[0].modelName)
+        XCTAssertEqual(state.requiresFullReplay, true)
+    }
+
+    func testForkedChildSkipsInheritedReplayAndPostContextBaseline() throws {
+        let lines = [
+            line(#"{"type":"session_meta","timestamp":"2026-07-08T01:00:00Z","payload":{"id":"019f8178-5e10-7000-8000-000000000001","forked_from_id":"019f54c2-0000-7000-8000-000000000001","cwd":"/child","source":{"subagent":{"thread_spawn":{"parent_thread_id":"019f54c2-0000-7000-8000-000000000001","agent_role":"worker"}}}}}"#, offset: 0),
+            line(#"{"type":"session_meta","timestamp":"2026-07-08T01:00:01Z","payload":{"id":"019f54c2-0000-7000-8000-000000000001","cwd":"/parent"}}"#, offset: 1),
+            line(#"{"type":"turn_context","payload":{"turn_id":"019f54c2-1000-7000-8000-000000000001","model":"gpt-parent"}}"#, offset: 2),
+            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:00:02Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":116000,"cached_input_tokens":114000,"output_tokens":1000,"total_tokens":117000},"last_token_usage":{"input_tokens":73000,"cached_input_tokens":72000,"output_tokens":500}}}}"#, offset: 3),
+            line(#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"019f8178-5e10-7000-8000-000000000002","started_at":1783472400}}"#, offset: 4),
+            line(#"{"type":"turn_context","payload":{"turn_id":"019f8178-5e10-7000-8000-000000000002","model":"gpt-5.6-sol","cwd":"/child"}}"#, offset: 5),
+            // Codex 可能在首个 child context 后再写一次继承快照；仍应跳过。
+            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:00:03Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":116000,"cached_input_tokens":114000,"output_tokens":1000,"total_tokens":117000},"last_token_usage":{"input_tokens":73000,"cached_input_tokens":72000,"output_tokens":500}}}}"#, offset: 6),
+            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:00:04Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":117500,"cached_input_tokens":115000,"output_tokens":1200,"reasoning_output_tokens":50,"total_tokens":118700},"last_token_usage":{"input_tokens":1500,"cached_input_tokens":1000,"output_tokens":200,"reasoning_output_tokens":50}}}}"#, offset: 7)
+        ]
+
+        let (session, state) = try CodexUsageEventParser.parse(
+            lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/child.jsonl"), resuming: nil
+        )
+
+        XCTAssertEqual(session.sessionKey, "019f8178-5e10-7000-8000-000000000001")
+        XCTAssertEqual(session.rootSessionKey, "019f54c2-0000-7000-8000-000000000001")
+        XCTAssertEqual(session.events.count, 1, "父历史与继承基线都不得落成 child 用量")
+        XCTAssertEqual(session.events[0].modelName, "gpt-5.6-sol")
+        XCTAssertEqual(session.events[0].inputTokens, 500)
+        XCTAssertEqual(session.events[0].cacheReadTokens, 1_000)
+        XCTAssertEqual(session.events[0].outputTokens, 200)
+        XCTAssertEqual(session.events[0].dedupeScopeKey, "codex:019f54c2-0000-7000-8000-000000000001")
+        XCTAssertEqual(state.codexWaitingForTurnContext, false)
+    }
+
+    func testRepeatedChildSessionMetaDoesNotReopenReplayGate() throws {
+        let childMeta = #"{"type":"session_meta","payload":{"id":"019f8178-5e10-7000-8000-000000000001","forked_from_id":"parent","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent"}}}}}"#
+        let lines = [
+            line(childMeta, offset: 0),
+            line(#"{"type":"turn_context","payload":{"model":"gpt-5.6-sol"}}"#, offset: 1),
+            line(childMeta, offset: 2),
+            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:00:04Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":2},"last_token_usage":{"input_tokens":10,"output_tokens":2}}}}"#, offset: 3)
+        ]
+
+        let (session, _) = try CodexUsageEventParser.parse(
+            lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/child.jsonl"), resuming: nil
+        )
+
+        XCTAssertEqual(session.events.count, 1)
+    }
+
+    func testReadsModelAndCacheAliasesAndClampsMalformedUsage() throws {
+        let lines = [
+            line(meta, offset: 0),
+            line(#"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","model_name":"gpt-5.6-sol","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":2,"cache_read_input_tokens":20,"output_tokens":-3,"reasoning_output_tokens":-1}}}}"#, offset: 1)
+        ]
+
+        let (session, _) = try CodexUsageEventParser.parse(
+            lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
+        )
+
+        XCTAssertEqual(session.events.count, 1)
+        XCTAssertEqual(session.events[0].modelName, "gpt-5.6-sol")
+        XCTAssertEqual(session.events[0].inputTokens, 0)
+        XCTAssertEqual(session.events[0].cacheReadTokens, 10, "cache 不得超过原始 input")
+        XCTAssertEqual(session.events[0].outputTokens, 0)
+        XCTAssertEqual(session.events[0].reasoningTokens, 0)
     }
 
     func testSkipsStatusOnlyEventWithZeroInputAndOutput() throws {
@@ -153,8 +248,8 @@ final class CodexUsageEventParserTests: XCTestCase {
         let event = session.events[0]
         XCTAssertEqual(
             event.dedupeKey,
-            "\(event.observedEpochMilliseconds)\u{1F}10\u{1F}0\u{1F}1\u{1F}0",
-            "回退指纹 = 毫秒时间戳 + 原始 input/cached/output/reasoning"
+            "last\u{1F}unknown\u{1F}\(event.observedEpochMilliseconds)\u{1F}10\u{1F}0\u{1F}1\u{1F}0",
+            "回退指纹 = 类型 + 模型 + 毫秒时间戳 + 原始四元组"
         )
         XCTAssertEqual(event.sourceOffset, 1)
     }

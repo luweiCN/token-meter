@@ -490,7 +490,7 @@ describe('AppShell renderer routes', () => {
     expectNoEnglishScaffold();
   });
 
-  it('starts a full rescan from the settings data section and clears the error row after it finishes', async () => {
+  it('confirms and rebuilds the session database from the settings data section', async () => {
     const user = userEvent.setup();
     const refreshedStatus: IndexStatusResult = {
       ...indexStatusResult,
@@ -503,8 +503,10 @@ describe('AppShell renderer routes', () => {
 
     await user.click(screen.getByRole('button', { name: '设置' }));
     await screen.findByText(/1 个文件解析失败/);
-    await user.click(screen.getByRole('button', { name: '重新扫描…' }));
-    await user.click(await screen.findByRole('button', { name: '开始重建' }));
+    await user.click(screen.getByRole('button', { name: '重建数据库…' }));
+    const dialog = await screen.findByRole('dialog', { name: '重建会话数据库' });
+    expect(within(dialog).getByText(/保留所有设置和 agent 原始日志/)).toBeTruthy();
+    await user.click(within(dialog).getByRole('button', { name: '确认重建' }));
 
     await waitFor(() => {
       expect(api.index.startFullReindex).toHaveBeenCalledTimes(1);

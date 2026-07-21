@@ -32,9 +32,15 @@ public final class UsageEventWriter {
                 subagentLabel: subagentLabelOverride ?? session.subagentLabel
             )
             let sessionId = try lookupSessionId(sourceKind: session.sourceKind, sessionKey: session.sessionKey)
+            let defaultDedupeScopeKey = "\(session.sourceKind.rawValue):\(session.sessionKey)"
 
             for event in UsageEventDeduplicator.deduplicate(session.events) {
-                try writeEvent(event, sessionId: sessionId, sourceFileId: sourceFileId)
+                try writeEvent(
+                    event,
+                    sessionId: sessionId,
+                    sourceFileId: sourceFileId,
+                    defaultDedupeScopeKey: defaultDedupeScopeKey
+                )
             }
 
             try database.execute("COMMIT")
@@ -51,6 +57,42 @@ public final class UsageEventWriter {
             "SELECT max(source_offset) AS max_offset FROM usage_events WHERE source_file_id = ?",
             [.int(sourceFileId)]
         ).first?.int("max_offset")
+    }
+
+    /// 把直接父引用拍平到最终根会话。Codex v2 与 OpenCode 都允许多层子代理；单个源文件
+    /// 通常只知道直接父级，所以在已知 session 图上补一次递归闭包。
+    func flattenRootSessionKeys() throws {
+        try database.execute(
+            """
+            WITH RECURSIVE lineage(child_id, source_kind, root_key, depth, visited) AS (
+              SELECT id, source_kind, root_session_key, 0, '|' || source_session_key || '|'
+              FROM agent_sessions
+              WHERE root_session_key IS NOT NULL
+              UNION ALL
+              SELECT l.child_id, l.source_kind, parent.root_session_key, l.depth + 1,
+                     l.visited || parent.source_session_key || '|'
+              FROM lineage l
+              JOIN agent_sessions parent
+                ON parent.source_kind = l.source_kind
+               AND parent.source_session_key = l.root_key
+              WHERE parent.root_session_key IS NOT NULL
+                AND l.depth < 64
+                AND instr(l.visited, '|' || parent.source_session_key || '|') = 0
+            ), ultimate AS (
+              SELECT child_id, root_key
+              FROM lineage candidate
+              WHERE depth = (
+                SELECT max(depth) FROM lineage all_depths
+                WHERE all_depths.child_id = candidate.child_id
+              )
+            )
+            UPDATE agent_sessions
+            SET root_session_key = (
+              SELECT root_key FROM ultimate WHERE child_id = agent_sessions.id
+            )
+            WHERE id IN (SELECT child_id FROM ultimate)
+            """
+        )
     }
 
     // MARK: - Project
@@ -157,9 +199,17 @@ public final class UsageEventWriter {
 
     // MARK: - Events
 
-    private func writeEvent(_ event: UsageEvent, sessionId: Int64, sourceFileId: Int64) throws {
+    private func writeEvent(
+        _ event: UsageEvent,
+        sessionId: Int64,
+        sourceFileId: Int64,
+        defaultDedupeScopeKey: String
+    ) throws {
+        let dedupeScopeKey = event.dedupeKey == nil
+            ? nil
+            : (event.dedupeScopeKey ?? defaultDedupeScopeKey)
         if let dedupeKey = event.dedupeKey {
-            // `idx_usage_dedupe` 是 UNIQUE(session_id, dedupe_key)，`INSERT OR IGNORE`
+            // `idx_usage_dedupe` 是 UNIQUE(dedupe_scope_key, dedupe_key)，`INSERT OR IGNORE`
             // 只能挡住第二次写入，但保留的是**先写入的那条**——扫描顺序（先扫到哪个文件）
             // 与事件的完整度无关。这里显式查出已有行，用 `UsageEventPrecedence`（与
             // `UsageEventDeduplicator` 同一裁决）比较：候选胜出就删旧插新，落败就丢弃候选。
@@ -168,8 +218,8 @@ public final class UsageEventWriter {
             // 彼此，只有这里能挡住——若仍「保留最早」，先落库的中间帧（output=4）会永久顶掉续读到
             // 的最终帧（output=559）。Task 14g 只修了内存那一遍，漏了这里。
             let existingRows = try database.query(
-                "SELECT id, tokens_total, observed_epoch_ms, event_seq FROM usage_events WHERE session_id = ? AND dedupe_key = ?",
-                [.int(sessionId), .text(dedupeKey)]
+                "SELECT id, tokens_total, observed_epoch_ms, event_seq FROM usage_events WHERE dedupe_scope_key = ? AND dedupe_key = ?",
+                [.text(dedupeScopeKey ?? defaultDedupeScopeKey), .text(dedupeKey)]
             )
             if let existing = existingRows.first, let existingId = existing.int("id") {
                 // 三列均为 NOT NULL（tokens_total 是生成列），兜底值只在理论上不可达的读失败时生效。
@@ -199,8 +249,8 @@ public final class UsageEventWriter {
                 model_name, model_canonical,
                 tokens_input, tokens_output, tokens_reasoning,
                 tokens_cache_read, tokens_cache_write_5m, tokens_cache_write_1h,
-                cost_usd_micros, cost_source, dedupe_key, source_offset, is_sidechain
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cost_usd_micros, cost_source, dedupe_key, dedupe_scope_key, source_offset, is_sidechain
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source_file_id, event_seq) DO UPDATE SET
                 session_id = excluded.session_id,
                 observed_epoch_ms = excluded.observed_epoch_ms,
@@ -215,6 +265,7 @@ public final class UsageEventWriter {
                 cost_usd_micros = excluded.cost_usd_micros,
                 cost_source = excluded.cost_source,
                 dedupe_key = excluded.dedupe_key,
+                dedupe_scope_key = excluded.dedupe_scope_key,
                 source_offset = excluded.source_offset,
                 is_sidechain = excluded.is_sidechain
             """,
@@ -234,6 +285,7 @@ public final class UsageEventWriter {
                 costMicros.map(SQLiteValue.int) ?? .null,
                 .text(costSource.rawValue),
                 sqliteText(event.dedupeKey),
+                sqliteText(dedupeScopeKey),
                 .int(event.sourceOffset),
                 .int(event.isSidechain ? 1 : 0)
             ]

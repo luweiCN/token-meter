@@ -119,6 +119,63 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"), 7)
     }
 
+    func testCodexLateModelAppendReplaysFileAndReplacesUnknownEvent() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("rollout.jsonl")
+        try writeJSONL(
+            """
+            {"type":"session_meta","payload":{"id":"late-model","cwd":"/repo"}}
+            {"type":"event_msg","timestamp":"2026-07-08T01:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":2},"last_token_usage":{"input_tokens":10,"output_tokens":2}}}}
+
+            """,
+            to: file
+        )
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+
+        try await scanner.scanRoot(id: 1)
+        XCTAssertNil(try database.query("SELECT model_name FROM usage_events")[0].string("model_name"))
+        XCTAssertTrue(
+            try XCTUnwrap(database.query("SELECT parser_state FROM source_files")[0].string("parser_state"))
+                .contains("requiresFullReplay")
+        )
+
+        try appendJSONL(#"{"type":"turn_context","payload":{"model_info":{"slug":"gpt-5.6-sol"}}}"#, to: file)
+        try await scanner.scanRoot(id: 1)
+
+        let rows = try database.query("SELECT model_name, tokens_total FROM usage_events")
+        XCTAssertEqual(rows.count, 1, "全量重放必须替换旧 unknown，不能新旧各留一份")
+        XCTAssertEqual(rows[0].string("model_name"), "gpt-5.6-sol")
+        XCTAssertEqual(rows[0].int("tokens_total"), 12)
+    }
+
+    func testCodexMarkerFilterKeepsTaskStartedForkBoundary() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("rollout.jsonl")
+        let child = "019f8178-5e10-7000-8000-000000000001"
+        let turn = "019f8178-5e10-7000-8000-000000000002"
+        try writeJSONL(
+            """
+            {"type":"session_meta","payload":{"id":"\(child)","forked_from_id":"parent","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent"}}}}}
+            {"type":"session_meta","payload":{"id":"parent"}}
+            {"type":"event_msg","payload":{"type":"task_started","turn_id":"\(turn)","started_at":1783472400}}
+            {"type":"turn_context","payload":{"turn_id":"\(turn)","model":"gpt-5.6-sol"}}
+            {"type":"event_msg","timestamp":"2026-07-08T01:00:00Z","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":2},"last_token_usage":{"input_tokens":10,"output_tokens":2}}}}
+
+            """,
+            to: file
+        )
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+
+        try await LocalAgentScanner(database: database).scanRoot(id: 1)
+
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1,
+                       "同毫秒 child turn 依赖 task_started；marker 预筛不得把它丢掉")
+        XCTAssertEqual(try database.query("SELECT model_name FROM usage_events")[0].string("model_name"), "gpt-5.6-sol")
+    }
+
     func testResumeIsCorrectWhenALineHasLeadingWhitespace() async throws {
         // 一行若以空格开头，从其第二字节起的残片仍是合法 JSON。
         // 用 max(source_offset)+1 续读会重复消费它，并因 eventSeq 递增而
@@ -465,7 +522,7 @@ final class LocalAgentScannerTests: XCTestCase {
                 .text("m1"),
                 .text("opencode-session-1"),
                 .text("""
-                {"id":"m1","sessionID":"opencode-session-1","modelID":"claude-sonnet","cost":0,"time":{"created":\(createdMs)},"tokens":{"input":10,"output":20,"reasoning":0,"cache":{"read":3,"write":9}}}
+                {"id":"m1","sessionID":"opencode-session-1","role":"assistant","modelID":"claude-sonnet","cost":0,"time":{"created":\(createdMs)},"tokens":{"input":10,"output":20,"reasoning":0,"cache":{"read":3,"write":9}}}
                 """)
             ]
         )
@@ -480,6 +537,80 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events"), 42)
         XCTAssertEqual(try database.query("SELECT last_successful_cursor FROM scan_roots WHERE id = 1")[0].string("last_successful_cursor"), "2026-07-03T00:10:00Z")
         XCTAssertEqual(try scalarInt(database, "SELECT files_changed AS value FROM scan_runs ORDER BY id DESC LIMIT 1"), 0)
+    }
+
+    func testOpenCodeSnapshotRemovesEventsDeletedFromSourceDatabase() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let openCodeURL = directory.appendingPathComponent("opencode.db")
+        var sourceDatabase: SQLiteDatabase? = try SQLiteDatabase(path: openCodeURL.path)
+        try sourceDatabase?.execute(
+            "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)"
+        )
+        try sourceDatabase?.execute(
+            "INSERT INTO message(id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+            [.text("m1"), .text("s1"), .int(1_000), .int(1_000),
+             .text(#"{"id":"m1","sessionID":"s1","role":"assistant","modelID":"gpt-5.5","time":{"created":1000},"tokens":{"input":10,"output":2,"cache":{"read":0,"write":0}}}"#)]
+        )
+        try sourceDatabase?.close()
+        sourceDatabase = nil
+
+        let database = try migratedDatabase(rootKind: .opencodeSQLite, rootPath: openCodeURL.path)
+        let scanner = LocalAgentScanner(database: database)
+        try await scanner.scanRoot(id: 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1)
+
+        sourceDatabase = try SQLiteDatabase(path: openCodeURL.path)
+        try sourceDatabase?.execute("DELETE FROM message WHERE id = 'm1'")
+        try sourceDatabase?.close()
+        sourceDatabase = nil
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 1_820_000_000)],
+            ofItemAtPath: openCodeURL.path
+        )
+
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 0,
+                       "源消息被删后，旧 usage_event 不得残留")
+    }
+
+    func testOpenCodeWalDeletionTriggersSnapshotWithoutMainDatabaseChange() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let openCodeURL = directory.appendingPathComponent("opencode.db")
+        let sourceDatabase = try SQLiteDatabase(path: openCodeURL.path)
+        defer { try? sourceDatabase.close() }
+        try sourceDatabase.execute("PRAGMA journal_mode = WAL")
+        try sourceDatabase.execute("PRAGMA wal_autocheckpoint = 0")
+        try sourceDatabase.execute(
+            "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)"
+        )
+        for index in 1...2 {
+            try sourceDatabase.execute(
+                "INSERT INTO message(id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)",
+                [.text("m\(index)"), .text("s1"), .int(Int64(index * 1_000)), .int(Int64(index * 1_000)),
+                 .text(#"{"id":"m\#(index)","sessionID":"s1","role":"assistant","modelID":"gpt-5.5","time":{"created":\#(index * 1_000)},"tokens":{"input":10,"output":2,"cache":{"read":0,"write":0}}}"#)]
+            )
+        }
+        try sourceDatabase.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+        let database = try migratedDatabase(rootKind: .opencodeSQLite, rootPath: openCodeURL.path)
+        let scanner = LocalAgentScanner(database: database)
+        try await scanner.scanRoot(id: 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 2)
+
+        let before = try FileManager.default.attributesOfItem(atPath: openCodeURL.path)
+        try sourceDatabase.execute("DELETE FROM message WHERE id = 'm1'")
+        let after = try FileManager.default.attributesOfItem(atPath: openCodeURL.path)
+        XCTAssertEqual(before[.size] as? NSNumber, after[.size] as? NSNumber)
+        XCTAssertEqual(before[.modificationDate] as? Date, after[.modificationDate] as? Date,
+                       "WAL 写入不应改变 scanner 当前观察的主数据库指纹")
+
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1,
+                       "仅写入 WAL 的删除也必须触发完整快照替换")
     }
 
     func testFailedOpenCodeDatabaseDoesNotMarkSourceFileParsed() async throws {
@@ -520,6 +651,7 @@ final class LocalAgentScannerTests: XCTestCase {
                 {
                   "id": "msg-1",
                   "sessionID": "opencode-session-ms",
+                  "role": "assistant",
                   "providerID": "anthropic",
                   "modelID": "claude-sonnet",
                   "time": { "created": 1783036800123 },
@@ -819,7 +951,7 @@ final class LocalAgentScannerTests: XCTestCase {
 
     func testSeedsDefaultScanRootsFromHomeDirectory() throws {
         let homeDirectory = URL(fileURLWithPath: "/tmp/token-meter-home", isDirectory: true)
-        let roots = TokenMeterPaths.defaultScanRoots(homeDirectory: homeDirectory)
+        let roots = TokenMeterPaths.defaultScanRoots(homeDirectory: homeDirectory, environment: [:])
 
         XCTAssertEqual(roots.map(\.kind), [.claudeJSONL, .codexJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL])
         XCTAssertEqual(roots.map { $0.rootURL.path }, [
@@ -832,7 +964,7 @@ final class LocalAgentScannerTests: XCTestCase {
 
         let database = try SQLiteDatabase(path: ":memory:")
         try TokenMeterDatabaseMigrator.migrate(database)
-        try LocalAgentScanner.seedDefaultScanRoots(database: database, homeDirectory: homeDirectory)
+        try LocalAgentScanner.seedDefaultScanRoots(database: database, homeDirectory: homeDirectory, environment: [:])
 
         XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM scan_roots"), 5)
         // 两个 codex root 的 stable_source_key 靠 path 区分，不撞 UNIQUE(stable_source_key)。
@@ -843,6 +975,19 @@ final class LocalAgentScannerTests: XCTestCase {
                 "codex_jsonl:/tmp/token-meter-home/.codex/archived_sessions",
                 "codex_jsonl:/tmp/token-meter-home/.codex/sessions"
             ]
+        )
+    }
+
+    func testDefaultCodexRootsHonorCodexHome() {
+        let homeDirectory = URL(fileURLWithPath: "/tmp/token-meter-home", isDirectory: true)
+        let roots = TokenMeterPaths.defaultScanRoots(
+            homeDirectory: homeDirectory,
+            environment: ["CODEX_HOME": "/tmp/custom-codex-home"]
+        )
+
+        XCTAssertEqual(
+            roots.filter { $0.kind == .codexJSONL }.map { $0.rootURL.path },
+            ["/tmp/custom-codex-home/sessions", "/tmp/custom-codex-home/archived_sessions"]
         )
     }
 
@@ -1311,6 +1456,83 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertGreaterThan(try scalarInt(database, "SELECT count(*) AS value FROM daily_rollup"), 0)
     }
 
+    func testFullRescanRecreatesAllDerivedSessionDataButPreservesConfiguration() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("stale.jsonl")
+        try writeJSONL(codexJSONL(inputTokens: 5, outputTokens: 6, sessionId: "stale-session"), to: file)
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+        try database.execute(
+            """
+            INSERT INTO settings(key, value_json, value_type, version, updated_by)
+            VALUES ('scan.autoRefreshSeconds', '60', 'int', 1, 'swift')
+            """
+        )
+        try database.execute(
+            "INSERT INTO provider_config_overrides(provider_id, display_name) VALUES ('codex', 'My Codex')"
+        )
+
+        try scanner.fullRescan()
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM agent_sessions"), 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM source_files"), 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM projects"), 1)
+
+        // 原始日志被移除后再次重建，旧会话及其所有派生元数据都不能残留。
+        try FileManager.default.removeItem(at: file)
+        try scanner.fullRescan()
+
+        for table in [
+            "usage_events", "agent_sessions", "projects", "source_files",
+            "daily_rollup", "session_rollup", "daily_active_sessions"
+        ] {
+            XCTAssertEqual(
+                try scalarInt(database, "SELECT count(*) AS value FROM \(table)"),
+                0,
+                "\(table) 必须由当前仍存在的原始日志重新创建，不能保留旧会话数据"
+            )
+        }
+        XCTAssertEqual(
+            try scalarInt(database, "SELECT count(*) AS value FROM scan_runs"),
+            1,
+            "重建前的扫描历史应被清除，只保留本次重建产生的记录"
+        )
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM settings"), 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM provider_config_overrides"), 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM scan_roots"), 1)
+    }
+
+    func testFullRescanRefusesToOverlapAnotherScan() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try writeJSONL(
+            codexJSONL(inputTokens: 5, outputTokens: 6, sessionId: "concurrent-scan"),
+            to: directory.appendingPathComponent("rollout.jsonl")
+        )
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+        let scanner = LocalAgentScanner(database: database)
+        let scanEntered = expectation(description: "first scan reached event write")
+        let scanFinished = expectation(description: "first scan finished")
+        let allowScanToFinish = DispatchSemaphore(value: 0)
+        scanner.testHookAfterEventWrite = { _ in
+            scanEntered.fulfill()
+            allowScanToFinish.wait()
+        }
+
+        DispatchQueue.global().async {
+            defer { scanFinished.fulfill() }
+            try? scanner.fullRescan()
+        }
+        wait(for: [scanEntered], timeout: 2)
+
+        XCTAssertThrowsError(try scanner.fullRescan()) { error in
+            XCTAssertEqual(error as? LocalAgentScannerError, .scanAlreadyInProgress)
+        }
+
+        allowScanToFinish.signal()
+        wait(for: [scanFinished], timeout: 2)
+    }
+
     func testFullRescanResetsParserState() throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1349,16 +1571,21 @@ final class LocalAgentScannerTests: XCTestCase {
         let baselineTotal = try scalarInt(database, "SELECT coalesce(sum(tokens_total),0) AS value FROM usage_events")
         XCTAssertEqual(baselineEvents, 2)
 
-        // 模拟「fullRescan 的清理已完成、扫描尚未开始」时进程崩溃：手工执行清理语句，不跑扫描。
+        // 模拟「fullRescan 的清理已完成、扫描尚未开始」时进程崩溃：手工执行同序清理，不跑扫描。
+        try database.execute("UPDATE source_files SET parser_state = NULL, parse_status = 'pending', parse_error = NULL")
+        try database.execute(TokenMeterDatabaseSchema.resetScanState)
         try database.execute("DELETE FROM daily_rollup")
         try database.execute("DELETE FROM session_rollup")
+        try database.execute("DELETE FROM daily_active_sessions")
         try database.execute("DELETE FROM usage_events")
-        try database.execute("UPDATE source_files SET parser_state = NULL, parse_status = 'pending'")
-        try database.execute("UPDATE scan_roots SET last_successful_cursor = NULL")
+        try database.execute("DELETE FROM agent_sessions")
+        try database.execute("DELETE FROM projects")
+        try database.execute("DELETE FROM source_files")
+        try database.execute("DELETE FROM scan_runs")
         XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 0)
 
         // 关键：普通的增量扫描——不是 fullRescan——必须把它补回来。
-        // 清理后的状态（parser_state=NULL、parse_status='pending'、无事件）与「从未扫描过」等价，
+        // 清理后的状态（根游标为空、无源文件/会话/事件）与「从未扫描过」等价，
         // 这正是 fullRescan 敢于不开事务的正当性：任何时刻崩溃，下一次增量扫描都会自愈。
         try await scanner.scanRoot(id: 1)
 

@@ -6,6 +6,7 @@ public final class LocalAgentScanner {
     private let writer: UsageEventWriter
     private let rollupBuilder: RollupBuilder
     private let isoFormatter = ISO8601DateFormatter()
+    private let scanLock = NSLock()
 
     /// 测试用 seam：在事件写入（step 2）之后、游标推进（step 3）之前调用。
     /// 让测试能模拟"事件已落库、游标尚未推进"的硬崩溃——抛错即中止，跳过 step 3。
@@ -23,9 +24,10 @@ public final class LocalAgentScanner {
 
     public static func seedDefaultScanRoots(
         database: SQLiteDatabase,
-        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws {
-        for root in TokenMeterPaths.defaultScanRoots(homeDirectory: homeDirectory) {
+        for root in TokenMeterPaths.defaultScanRoots(homeDirectory: homeDirectory, environment: environment) {
             try database.execute(
                 """
                 INSERT OR IGNORE INTO scan_roots(kind, root_path, display_name, stable_source_key)
@@ -42,25 +44,37 @@ public final class LocalAgentScanner {
     }
 
     public func scanRoot(id rootId: Int64) async throws {
-        try scan(rootId: rootId, reporter: nil)
+        try withExclusiveScan {
+            try scan(rootId: rootId, reporter: nil)
+        }
     }
 
-    /// 用户显式触发的全量重扫。清空明细与解析状态，把所有源文件重置为「从未扫描过」，再逐根重读。
+    /// 用户显式触发的数据库重建。保留配置，清空所有会话派生数据，再逐根重读原始日志。
     ///
     /// **刻意不包在一个事务里**：真实数据下要跑数分钟、写 27 万行，长写事务会把整个库锁死，
-    /// 且 WAL 会膨胀到明细表大小。安全性由自愈保证——清理之后的状态
-    ///（parser_state=NULL、parse_status='pending'、无事件）与「从未扫描过」等价，任何时刻崩溃，
-    /// 下一次增量扫描都会补全。`testInterruptedFullRescanSelfHealsOnNextIncrementalScan` 钉住这一点。
+    /// 且 WAL 会膨胀到明细表大小。安全性由自愈保证——删除前先废弃全部解析状态与根游标，
+    /// 之后无论在哪一步崩溃，下一次增量扫描都会把当前原始日志完整补回。
+    /// `testInterruptedFullRescanSelfHealsOnNextIncrementalScan` 钉住这一点。
     public func fullRescan(onProgress: @escaping (ScanProgressEvent) -> Void = { _ in }) throws {
+        try withExclusiveScan {
+            try rebuildDatabase(onProgress: onProgress)
+        }
+    }
+
+    private func rebuildDatabase(onProgress: @escaping (ScanProgressEvent) -> Void) throws {
+        // 先废弃所有续读状态，再开始删除数据。这样任一后续语句或扫描中断，下一次普通扫描
+        // 也会从原始日志完整补回；不能先删事件再清游标，否则两步之间崩溃会留下空库和旧游标。
+        try database.execute("UPDATE source_files SET parser_state = NULL, parse_status = 'pending', parse_error = NULL")
+        try database.execute(TokenMeterDatabaseSchema.resetScanState)
+
         try database.execute("DELETE FROM daily_rollup")
         try database.execute("DELETE FROM session_rollup")
+        try database.execute("DELETE FROM daily_active_sessions")
         try database.execute("DELETE FROM usage_events")
-        try database.execute("UPDATE source_files SET parser_state = NULL, parse_status = 'pending'")
-        // scan_roots 的扫描状态清回「从未扫描过」。last_successful_cursor 是关键：OpenCode 的
-        // changedSessions(after:) 用它做增量过滤，不清空它，被删掉的 OpenCode 事件在重扫时会因
-        // 「游标之后无变化」而不被重建。JSONL 的续读走 per-file parser_state，与此列无关，一并清空无害。
-        // 与 TokenMeterDatabaseMigrator 的派生重建共用同一段常量——两处清同样的列，不会漂移。
-        try database.execute(TokenMeterDatabaseSchema.resetScanState)
+        try database.execute("DELETE FROM agent_sessions")
+        try database.execute("DELETE FROM projects")
+        try database.execute("DELETE FROM source_files")
+        try database.execute("DELETE FROM scan_runs")
 
         let rootIds = try loadEnabledRootIds()
         let totals = try corpusTotals(rootIds: rootIds)
@@ -72,6 +86,12 @@ public final class LocalAgentScanner {
         }
         // 末尾一条必发，否则 UI 停在 99.x%。
         reporter.finish()
+    }
+
+    private func withExclusiveScan<T>(_ operation: () throws -> T) throws -> T {
+        guard scanLock.try() else { throw LocalAgentScannerError.scanAlreadyInProgress }
+        defer { scanLock.unlock() }
+        return try operation()
     }
 
     private func scan(rootId: Int64, reporter: FullRescanProgress?) throws {
@@ -120,6 +140,7 @@ public final class LocalAgentScanner {
 
         // 两张汇总表是 usage_events 的纯函数投影，扫完整体重建即可。全量重建是幂等的，
         // 多根扫描时每根扫完各重建一次会收敛到同一结果（Task 15 再把它提到"整轮一次"）。
+        try writer.flattenRootSessionKeys()
         try rollupBuilder.rebuildAll()
     }
 
@@ -424,6 +445,7 @@ public final class LocalAgentScanner {
         progress.filesSeen = 1
 
         let metadata = try fileMetadata(for: databaseURL)
+        let storageRevision = openCodeStorageRevision(for: databaseURL)
         reporter?.advance(bytes: metadata.sizeBytes)
         let relativePath = databaseURL.lastPathComponent.isEmpty ? databaseURL.path : databaseURL.lastPathComponent
         let existing = try existingSourceFile(rootId: root.id, relativePath: relativePath)
@@ -433,28 +455,36 @@ public final class LocalAgentScanner {
         do {
             let sourceDatabase = try SQLiteDatabase(path: databaseURL.path)
             defer { try? sourceDatabase.close() }
-            let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: sourceDatabase)
-                .changedSessions(after: root.lastSuccessfulCursor)
+            let adapter = OpenCodeUsageEventAdapter(sourceDatabase: sourceDatabase)
+            // OpenCode 使用 WAL：主 .db 的 stat 不变时，消息仍可能已新增、更新或删除。
+            // 主库 + WAL 的版本只要变化就完整替换快照；未变化则无需扫描万级消息。
+            let forceSnapshot = fingerprintChanged
+                || existing?.parseStatus != "ok"
+                || existing?.parserState?.openCodeStorageRevision != storageRevision
 
-            // .db 本身：只做指纹/解析状态跟踪，事件挂在每个 session 各自的 source_file 上。
-            _ = try upsertSourceFile(
+            guard forceSnapshot else {
+                if let existing {
+                    try markSourceFileSeen(sourceFileId: existing.id, runId: runId)
+                }
+                progress.cursorAfter = root.lastSuccessfulCursor
+                return
+            }
+            let sessions = try adapter.snapshot()
+
+            progress.filesChanged = 1
+            progress.bytesRead = metadata.sizeBytes
+
+            // 主 .db 行充当 crash-safety sentinel：先置 pending，再清旧快照并逐 session 写入；
+            // 任一步失败，下次扫描看到非 ok 会再次全量替换，不会把半份快照永久当成完成。
+            let databaseFileId = try beginSourceFile(
                 rootId: root.id,
                 relativePath: relativePath,
                 canonicalPath: metadata.canonicalPath,
                 fileType: "sqlite_db",
                 metadata: metadata,
-                runId: runId,
-                parsed: true,
-                parseStatus: "ok",
-                parseError: nil,
-                parserState: nil
+                runId: runId
             )
-
-            let changed = fingerprintChanged || !sessions.isEmpty
-            if changed {
-                progress.filesChanged = 1
-                progress.bytesRead = metadata.sizeBytes
-            }
+            try deleteEvents(scanRootId: root.id)
 
             // 每个 opencode session 各占一个 source_file：event_seq 每 session 从 1 起，
             // UNIQUE(source_file_id, event_seq) 要求不同 session 落在不同 source_file 上才不撞。
@@ -469,6 +499,16 @@ public final class LocalAgentScanner {
                 )
                 try writer.write(session, scanRootId: root.id, sourceFileId: sessionFileId, runId: runId)
             }
+
+            try finishSourceFile(
+                fileId: databaseFileId,
+                file: databaseURL,
+                metadata: metadata,
+                parseStatus: "ok",
+                parseError: nil,
+                parserState: ParserState(openCodeStorageRevision: storageRevision),
+                runId: runId
+            )
 
             progress.cursorAfter = latestCursor(in: sessions) ?? root.lastSuccessfulCursor
         } catch {
@@ -535,7 +575,7 @@ public final class LocalAgentScanner {
     private func markers(for kind: SourceKind) -> [String]? {
         switch kind {
         case .codexJSONL:
-            return ["token_count", "session_meta", "turn_context"]
+            return ["token_count", "session_meta", "turn_context", "task_started"]
         case .claudeJSONL, .ompJSONL, .opencodeSQLite:
             return nil
         }
@@ -550,6 +590,7 @@ public final class LocalAgentScanner {
     private func shouldResume(existing: ExistingSourceFile?, metadata: FileMetadata, file: URL) -> Bool {
         guard let existing,
               existing.parseStatus == "ok",
+              existing.parserState?.requiresFullReplay != true,
               metadata.sizeBytes > existing.sizeBytes,
               existing.inode == metadata.inode,
               existing.dev == metadata.dev,
@@ -561,6 +602,13 @@ public final class LocalAgentScanner {
 
     private func deleteEvents(sourceFileId: Int64) throws {
         try database.execute("DELETE FROM usage_events WHERE source_file_id = ?", [.int(sourceFileId)])
+    }
+
+    private func deleteEvents(scanRootId: Int64) throws {
+        try database.execute(
+            "DELETE FROM usage_events WHERE source_file_id IN (SELECT id FROM source_files WHERE scan_root_id = ?)",
+            [.int(scanRootId)]
+        )
     }
 
     private func startRun(rootId: Int64, runKind: String, cursorBefore: String?) throws -> Int64 {
@@ -901,6 +949,22 @@ public final class LocalAgentScanner {
         )
     }
 
+    /// 不读取消息内容，只记录 SQLite 主库和 WAL 的存储版本。OpenCode 的正常写入若尚未
+    /// checkpoint，只会改变 `-wal`；只看主库 stat 会把删除/更新误判为“无变化”。
+    private func openCodeStorageRevision(for databaseURL: URL) -> String {
+        [databaseURL, URL(fileURLWithPath: databaseURL.path + "-wal")]
+            .map { url in
+                guard let metadata = try? fileMetadata(for: url) else { return "missing" }
+                return [
+                    String(metadata.sizeBytes),
+                    String(metadata.mtimeNanoseconds),
+                    metadata.inode.map(String.init) ?? "",
+                    metadata.dev.map(String.init) ?? ""
+                ].joined(separator: ":")
+            }
+            .joined(separator: "|")
+    }
+
     /// 存进 source_files 的内容指纹，格式 `"<len>:<sha256hex>"`：
     /// len = min(4096, size) 是取样字节数，hash 是前 len 字节的摘要。
     ///
@@ -1020,6 +1084,10 @@ public final class LocalAgentScanner {
     private func sqliteText(_ value: String?) -> SQLiteValue {
         value.map(SQLiteValue.text) ?? .null
     }
+}
+
+enum LocalAgentScannerError: Error, Equatable {
+    case scanAlreadyInProgress
 }
 
 private struct JSONLRootPartialError: Error {
