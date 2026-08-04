@@ -20,6 +20,8 @@ export interface MenubarPreviewState {
     visible: boolean;
     glyphWindow: MenubarWindowChoice;
     numberWindow: MenubarWindowChoice;
+    glyphWindows?: string[];
+    numberWindows?: string[];
   }>;
 }
 
@@ -35,15 +37,18 @@ interface DemoProvider {
   w5: DemoWindow;
   /// null = 单窗家（唯一窗放 w5 之外的语义由 pick 处理；演示数据全双窗，真实端才有单窗）。
   w7: DemoWindow | null;
+  /// 第三窗（OpenCode Go 的月度）；null = 双窗家。
+  w3: DemoWindow | null;
   stale: boolean;
 }
 
-/// 演示数据（稿 data 口径）：CC 5h62/7d41 · CX 34/18 · 智谱 8/55 · OMP 过期 12m。
+/// 演示数据（稿 data 口径）：CC 5h62/7d41 · CX 34/18 · 智谱 8/55 · Go 98/100 · OMP 过期 12m。
 export const PREVIEW_PROVIDERS: DemoProvider[] = [
-  { id: 'claude', short: 'CC', mono: 'C', w5: { p: 62, c: 'ok' }, w7: { p: 41, c: 'ok' }, stale: false },
-  { id: 'codex', short: 'CX', mono: 'X', w5: { p: 34, c: 'warn' }, w7: { p: 18, c: 'warn' }, stale: false },
-  { id: 'zhipu', short: '智谱', mono: '智', w5: { p: 8, c: 'bad' }, w7: { p: 55, c: 'ok' }, stale: false },
-  { id: 'omp', short: 'OMP', mono: 'O', w5: { p: 71, c: 'ok' }, w7: { p: 30, c: 'ok' }, stale: true }
+  { id: 'claude', short: 'CC', mono: 'C', w5: { p: 62, c: 'ok' }, w7: { p: 41, c: 'ok' }, w3: null, stale: false },
+  { id: 'codex', short: 'CX', mono: 'X', w5: { p: 34, c: 'warn' }, w7: { p: 18, c: 'warn' }, w3: null, stale: false },
+  { id: 'zhipu', short: '智谱', mono: '智', w5: { p: 8, c: 'bad' }, w7: { p: 55, c: 'ok' }, w3: null, stale: false },
+  { id: 'opencodeGo', short: 'Go', mono: 'G', w5: { p: 98, c: 'ok' }, w7: { p: 100, c: 'ok' }, w3: { p: 100, c: 'ok' }, stale: false },
+  { id: 'omp', short: 'OMP', mono: 'O', w5: { p: 71, c: 'ok' }, w7: { p: 30, c: 'ok' }, w3: null, stale: true }
 ];
 
 const COL = {
@@ -53,10 +58,34 @@ const COL = {
 
 const COMPACT: Record<string, true> = { grid: true, sentinel: true, monogram: true, strip: true, tagnum: true, deck2: true };
 
-function pick(d: DemoProvider, w: MenubarWindowChoice, order: MenubarWindowOrder): DemoWindow[] {
+function allDemoWindows(d: DemoProvider): Array<{ label: string; window: DemoWindow }> {
+  const entries: Array<{ label: string; window: DemoWindow }> = [{ label: '5h', window: d.w5 }];
+  if (d.w7 !== null) entries.push({ label: '7d', window: d.w7 });
+  if (d.w3 !== null) entries.push({ label: '30d', window: d.w3 });
+  return entries;
+}
+
+function pick(
+  d: DemoProvider,
+  w: MenubarWindowChoice,
+  order: MenubarWindowOrder,
+  labels?: string[]
+): DemoWindow[] {
+  if (labels && labels.length > 0) {
+    const matched = allDemoWindows(d)
+      .filter((entry) => labels.includes(entry.label))
+      .map((entry) => entry.window);
+    if (matched.length > 0) {
+      return order === 'shortFirst' ? matched : [...matched].reverse();
+    }
+  }
   if (d.w7 === null) return [d.w5];
   if (w === 'short') return [d.w5];
   if (w === 'long') return [d.w7];
+  if (w === 'all' && d.w3 !== null) {
+    const ordered = [d.w5, d.w7, d.w3];
+    return order === 'shortFirst' ? ordered : [...ordered].reverse();
+  }
   return order === 'shortFirst' ? [d.w5, d.w7] : [d.w7, d.w5];
 }
 
@@ -78,11 +107,13 @@ function providerConfig(state: MenubarPreviewState, id: string) {
 }
 
 function gwins(ctx: CellContext, d: DemoProvider): DemoWindow[] {
-  return pick(d, providerConfig(ctx.state, d.id)?.glyphWindow ?? 'both', ctx.state.windowOrder);
+  const config = providerConfig(ctx.state, d.id);
+  return pick(d, config?.glyphWindow ?? 'both', ctx.state.windowOrder, config?.glyphWindows);
 }
 
 function nwins(ctx: CellContext, d: DemoProvider): DemoWindow[] {
-  return pick(d, providerConfig(ctx.state, d.id)?.numberWindow ?? 'both', ctx.state.windowOrder);
+  const config = providerConfig(ctx.state, d.id);
+  return pick(d, config?.numberWindow ?? 'both', ctx.state.windowOrder, config?.numberWindows);
 }
 
 /// 数字组：stale → "—"；双数字各自染所属窗口色（与 Swift CellNumbersView 同裁定）。

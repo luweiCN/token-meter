@@ -86,14 +86,14 @@ describe('MenubarAppearance', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Codex 菜单栏显示' }));
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ providerMenubarVisible: { codex: false } }));
 
-    // Codex 行的图形窗口切 5h
+    // Codex 行的图形窗口多选：默认全选（5h+7d），点 5h 取消 → 只剩 7d
     const codexRow = screen.getByRole('button', { name: 'Codex 菜单栏显示' }).closest('tr');
     expect(codexRow).not.toBeNull();
     const seg = codexRow?.querySelectorAll('.seg.mini')[0];
     const shortButton = Array.from(seg?.querySelectorAll('button') ?? []).find((b) => b.textContent === '5h');
     expect(shortButton).toBeTruthy();
     fireEvent.click(shortButton as HTMLButtonElement);
-    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ providerGlyphWindow: { codex: 'short' } }));
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ providerGlyphWindows: { codex: ['7d'] } }));
   });
 
   it('window order segment patches menubarWindowOrder', async () => {

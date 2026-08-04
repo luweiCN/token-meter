@@ -58,11 +58,13 @@ export function currentStyleName(snapshot: SettingsSnapshot): string {
 }
 
 /// 菜单栏行清单：真实 providerId ↔ 预览 demo id（PREVIEW_PROVIDERS）。
+/// windows = 该家菜单栏可选的窗口标签（首=短窗、末=长窗；三窗家多一个「全部」档）。
 /// 与 Settings.tsx 的 QUOTA_PROVIDERS 同名单（那份服务于额度接入卡，不复用避免循环 import）。
-const MENUBAR_PROVIDERS: Array<{ id: string; name: string; demoId: string; short: string }> = [
+const MENUBAR_PROVIDERS: Array<{ id: string; name: string; demoId: string; short: string; windows?: string[] }> = [
   { id: 'claude-code', name: 'Claude Code', demoId: 'claude', short: 'CC' },
   { id: 'codex', name: 'Codex', demoId: 'codex', short: 'CX' },
-  { id: 'zhipu', name: '智谱 GLM', demoId: 'zhipu', short: '智谱' }
+  { id: 'zhipu', name: '智谱 GLM', demoId: 'zhipu', short: '智谱' },
+  { id: 'opencode-go', name: 'OpenCode Go', demoId: 'opencodeGo', short: 'Go', windows: ['5h', '7d', '30d'] }
 ];
 
 /// settings → 预览状态：真实 override 映射到 demo 家；OMP 无真实映射，恒显示（演示密度）。
@@ -83,8 +85,10 @@ export function previewStateFromSettings(snapshot: SettingsSnapshot): MenubarPre
       return {
         id: demo.id,
         visible: override?.showInMenuBar ?? true,
-        glyphWindow: override?.menubarGlyphWindow ?? 'both',
-        numberWindow: override?.menubarNumberWindow ?? 'both'
+        glyphWindow: override?.menubarGlyphWindow ?? 'all',
+        numberWindow: override?.menubarNumberWindow ?? 'all',
+        glyphWindows: override?.menubarGlyphWindows,
+        numberWindows: override?.menubarNumberWindows
       };
     })
   };
@@ -336,30 +340,46 @@ export function MenubarAppearance({ onBack }: { onBack: () => void }) {
     );
   };
 
+  /// 多选窗口控件：勾选窗口标签（至少一个）+「全部」一键全选。
   const windowSeg = (
-    provider: { id: string },
+    provider: { id: string; windows?: string[] },
     column: 'glyph' | 'number',
     disabled: boolean
   ) => {
     const override = settings.providerOverrides.find((o) => o.providerId === provider.id);
-    const value = (column === 'glyph' ? override?.menubarGlyphWindow : override?.menubarNumberWindow) ?? 'both';
-    const patchKey = column === 'glyph' ? 'providerGlyphWindow' : 'providerNumberWindow';
-    const options: Array<{ v: MenubarWindowChoice; label: string }> = [
-      { v: 'short', label: '5h' },
-      { v: 'long', label: '7d' },
-      { v: 'both', label: '双' }
-    ];
+    const patchKey = column === 'glyph' ? 'providerGlyphWindows' : 'providerNumberWindows';
+    const all = provider.windows ?? ['5h', '7d'];
+    // 新多选优先；旧 choice 映射为等价标签集（short=首窗、long=末窗、both=首+末、all=全部）。
+    const saved = column === 'glyph' ? override?.menubarGlyphWindows : override?.menubarNumberWindows;
+    const savedChoice = column === 'glyph' ? override?.menubarGlyphWindow : override?.menubarNumberWindow;
+    const selected = (() => {
+      if (saved && saved.length > 0) return saved.filter((label) => all.includes(label));
+      if (savedChoice === 'short') return [all[0]];
+      if (savedChoice === 'long') return [all[all.length - 1]];
+      if (savedChoice === 'both') return [all[0], all[all.length - 1]];
+      return all;
+    })();
+    const effective = selected.length > 0 ? selected : all;
+
+    const commit = (labels: string[]) => {
+      const next = labels.length === 0 ? [effective[0]] : labels;
+      apply({ [patchKey]: { [provider.id]: next } } as SettingsPatch);
+    };
+    const toggle = (label: string) => {
+      commit(effective.includes(label) ? effective.filter((l) => l !== label) : [...effective, label]);
+    };
+
     return (
       <div className={disabled ? 'seg mini dis' : 'seg mini'} role="group">
-        {options.map((option) => (
+        {all.map((label) => (
           <button
-            key={option.v}
+            key={label}
             type="button"
-            className={value === option.v ? 'on' : ''}
-            aria-pressed={value === option.v}
-            onClick={() => apply({ [patchKey]: { [provider.id]: option.v } } as SettingsPatch)}
+            className={effective.includes(label) ? 'on' : ''}
+            aria-pressed={effective.includes(label)}
+            onClick={() => toggle(label)}
           >
-            {option.label}
+            {label}
           </button>
         ))}
       </div>

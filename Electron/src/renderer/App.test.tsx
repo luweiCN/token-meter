@@ -114,6 +114,11 @@ interface TokenMeterApi {
   agents: {
     detect: Mock<() => Promise<Array<{ kind: string; found: boolean; path?: string | null; version?: string | null }> | null>>;
   };
+  opencodeGo: {
+    login: Mock<() => Promise<{ ok: boolean; reason: string; swiftRefresh?: boolean }>>;
+    status: Mock<() => Promise<{ configured: boolean; workspaceId: string | null }>>;
+    logout: Mock<() => Promise<void>>;
+  };
   credentials: {
     set: Mock<(providerId: string, token: string) => Promise<boolean>>;
     state: Mock<(providerId: string) => Promise<boolean | null>>;
@@ -303,6 +308,11 @@ function installTokenMeterApi(): TokenMeterApi {
         { kind: 'omp', found: true, path: '/opt/homebrew/bin/omp', version: 'omp/16.4.8' },
         { kind: 'opencode', found: true, path: '/opt/homebrew/bin/opencode', version: '1.17.18' }
       ])
+    },
+    opencodeGo: {
+      login: vi.fn(async () => ({ ok: false, reason: 'cancelled' })),
+      status: vi.fn(async () => ({ configured: false, workspaceId: null })),
+      logout: vi.fn(async () => {})
     },
     credentials: {
       set: vi.fn<(providerId: string, token: string) => Promise<boolean>>(async (_id, token) => token !== ''),

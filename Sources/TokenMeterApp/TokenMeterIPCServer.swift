@@ -208,6 +208,10 @@ final class TokenMeterIPCServer {
                     error: nil
                 )
             }
+        case "quota.refresh":
+            // 绕过节流立即刷新额度（OpenCode Go 登录态写盘后由设置页触发）。
+            await store.refreshNow()
+            return IPCResponse(id: request.id, ok: true, result: ["status": "refreshed"], error: nil)
         case "credentials.set":
             let params = request.params ?? [:]
             guard let providerId = params["providerId"], !providerId.isEmpty else {

@@ -46,6 +46,16 @@ public enum TokenMeterDatabaseMigrator {
                 "ALTER TABLE provider_config_overrides ADD COLUMN menubar_number_window TEXT CHECK (menubar_number_window IN ('short','long','both'))"
             )
         }
+        if !columns.contains("menubar_glyph_windows") {
+            try database.execute(
+                "ALTER TABLE provider_config_overrides ADD COLUMN menubar_glyph_windows TEXT"
+            )
+        }
+        if !columns.contains("menubar_number_windows") {
+            try database.execute(
+                "ALTER TABLE provider_config_overrides ADD COLUMN menubar_number_windows TEXT"
+            )
+        }
     }
 
     private static func rebuildDerivedTables(_ database: SQLiteDatabase) throws {

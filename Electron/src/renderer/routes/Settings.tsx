@@ -20,11 +20,12 @@ const AGENT_KINDS: Array<{ id: string; label: string; how: string }> = [
 ];
 
 /// 供应商额度接入（OpenDesign 稿 B 区）。keyed = 支持应用内填 API Key（存钥匙串，
-/// 优先于环境变量）；凭证来源按当前真实实现描述。
-const QUOTA_PROVIDERS: Array<{ id: string; name: string; pill: string; how: string; src: string; keyed?: boolean }> = [
+/// 优先于环境变量）；login = 走 WebView 登录流程（OpenCode Go）。
+const QUOTA_PROVIDERS: Array<{ id: string; name: string; pill: string; how: string; src: string; keyed?: boolean; login?: boolean }> = [
   { id: 'codex', name: 'Codex', pill: '自动接入', how: '自动读取本机登录凭证', src: '~/.codex/auth.json' },
   { id: 'claude-code', name: 'Claude Code', pill: '自动接入', how: '自动读取本机登录凭证', src: '钥匙串 · Claude Code-credentials' },
-  { id: 'zhipu', name: '智谱 GLM', pill: '环境变量', how: 'API Key · 应用内填写或读取环境变量', src: 'ZHIPU_API_KEY', keyed: true }
+  { id: 'zhipu', name: '智谱 GLM', pill: '环境变量', how: 'API Key · 应用内填写或读取环境变量', src: 'ZHIPU_API_KEY', keyed: true },
+  { id: 'opencode-go', name: 'OpenCode Go', pill: '自动接入', how: 'WebView 登录 opencode.ai · 登录态一年有效', src: '~/.config/opencode/opencode-quota/opencode-go.json', login: true }
 ];
 
 const SCAN_INTERVALS: Array<{ seconds: number; label: string }> = [
@@ -446,7 +447,7 @@ function QuotaProviderRow({
   onSave,
   onToggle
 }: {
-  provider: { id: string; name: string; pill: string; how: string; src: string; keyed?: boolean };
+  provider: { id: string; name: string; pill: string; how: string; src: string; keyed?: boolean; login?: boolean };
   savedName: string;
   enabled: boolean;
   onSave: (name: string) => void;
@@ -465,6 +466,40 @@ function QuotaProviderRow({
     if (!provider.keyed) return;
     void window.tokenMeter.credentials.state(provider.id).then(setHasKey).catch(() => setHasKey(null));
   }, [provider.id, provider.keyed]);
+
+  // OpenCode Go 登录态：configured null = 状态未知。
+  const [goConfigured, setGoConfigured] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!provider.login) return;
+    void window.tokenMeter.opencodeGo.status().then((state) => setGoConfigured(state.configured))
+      .catch(() => setGoConfigured(null));
+  }, [provider.id, provider.login]);
+
+  const startGoLogin = () => {
+    void window.tokenMeter.opencodeGo.login()
+      .then((result) => {
+        if (result.ok) {
+          setGoConfigured(true);
+          showToast('ok', 'OpenCode Go 已登录，用量已刷新');
+        } else if (result.reason === 'missing-cookie') {
+          showToast('error', '登录态未捕获：请在弹窗中完成登录并停留在用量页');
+        } else {
+          showToast('error', '登录已取消');
+        }
+      })
+      .catch((error: unknown) => {
+        showToast('error', `登录失败：${error instanceof Error ? error.message : '未知错误'}`);
+      });
+  };
+
+  const logoutGo = () => {
+    void window.tokenMeter.opencodeGo.logout()
+      .then(() => {
+        setGoConfigured(false);
+        showToast('ok', '已退出 OpenCode Go');
+      })
+      .catch(() => setGoConfigured(false));
+  };
 
   const saveKey = (token: string) => {
     void window.tokenMeter.credentials.set(provider.id, token)
@@ -531,6 +566,19 @@ function QuotaProviderRow({
             </button>
             {hasKey ? (
               <button className="btn" type="button" onClick={() => saveKey('')}>清除</button>
+            ) : null}
+          </div>
+        ) : null}
+        {provider.login ? (
+          <div className="qcred qkeyrow">
+            <button className="btn savebtn" type="button" onClick={startGoLogin}>登录 OpenCode Go</button>
+            {goConfigured === true ? (
+              <>
+                <span className="pill">已配置</span>
+                <button className="btn" type="button" onClick={logoutGo}>退出</button>
+              </>
+            ) : goConfigured === false ? (
+              <span className="pill">未配置</span>
             ) : null}
           </div>
         ) : null}

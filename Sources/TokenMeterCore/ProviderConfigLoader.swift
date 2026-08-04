@@ -32,7 +32,7 @@ public enum ProviderConfigLoader {
                     id: "opencode-go",
                     type: .opencodeGo,
                     displayName: "OpenCode Go",
-                    enabled: false,
+                    enabled: true,
                     credential: nil,
                     endpoint: nil,
                     manualUsage: nil

@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, ipcMain, session } from 'electron';
 import { DashboardRepository } from './dashboardRepository.js';
 import { IndexStatusRepository } from './indexStatusRepository.js';
 import { ModelsRepository } from './modelsRepository.js';
@@ -6,6 +6,11 @@ import { OverviewRepository } from './overviewRepository.js';
 import { SessionsRepository } from './sessionsRepository.js';
 
 import { openTokenMeterDatabase } from './database.js';
+import {
+  clearCredentials,
+  openLoginWindow,
+  readCredentials
+} from './opencodeGoLogin.js';
 import { ProjectsRepository } from './projectsRepository.js';
 import { SettingsRepository } from './settingsRepository.js';
 import { notifySwift, requestFullRescan, subscribeEvents } from './tokenMeterSocketClient.js';
@@ -85,10 +90,47 @@ export function registerIpcHandlers() {
       return null;
     }
   });
+  // OpenCode Go 登录：主进程开 WebView 登录 opencode.ai，捕获 auth cookie +
+  // workspaceId 写入 ~/.config/opencode/opencode-quota/opencode-go.json，
+  // 随后通知 Swift 绕过节流立即刷新额度（menu bar 秒级可见）。
+  ipcMain.handle('opencodeGo:login', async () => {
+    const result = await openLoginWindow();
+    if (result.ok) {
+      try {
+        const response = await notifySwift('quota.refresh');
+        if (!response.ok) {
+          return { ...result, swiftRefresh: false };
+        }
+      } catch {
+        return { ...result, swiftRefresh: false };
+      }
+    }
+    return result;
+  });
+  ipcMain.handle('opencodeGo:status', async () => {
+    const credentials = readCredentials();
+    return credentials
+      ? { configured: true, workspaceId: credentials.workspaceId }
+      : { configured: false, workspaceId: null };
+  });
+  ipcMain.handle('opencodeGo:logout', async () => {
+    clearCredentials();
+    // 持久 WebView 里的登录 cookie 也要清，否则「退出后再登录」窗口仍带着旧账号
+    // 直接进 dashboard，没有重新选择账号的机会。
+    try {
+      await session.fromPartition('persist:opencode-go').clearStorageData({ storages: ['cookies'] });
+    } catch {
+      // 清理失败不阻塞退出流程
+    }
+    try {
+      await notifySwift('quota.refresh');
+    } catch {
+      // Swift 未运行时忽略，下次启动自然读到空配置
+    }
+  });
   // agent CLI 检测由 Swift 执行（登录 shell PATH + --version 探测），设置页 A 区消费。
   // Swift 未运行时返回 null，页面按「检测不可用」展示。
-  ipcMain.handle('agents:detect', async () => {
-    try {
+  ipcMain.handle('agents:detect', async () => {    try {
       // 4 个 CLI 串行 --version 最多几秒到 20s（node 启动慢），放宽超时。
       const response = await notifySwift('agents.detect', {}, { timeoutMs: 30_000 });
       return JSON.parse(response.result?.agents ?? '[]');

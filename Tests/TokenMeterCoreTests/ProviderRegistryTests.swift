@@ -8,6 +8,7 @@ final class ProviderRegistryTests: XCTestCase {
         XCTAssertEqual(providers.map(\.id), [
             "codex",
             "claude-code",
+            "opencode-go",
             "zhipu"
         ])
     }

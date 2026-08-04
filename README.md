@@ -58,6 +58,7 @@
 | Claude Code | 钥匙串（本机登录态） |
 | Codex | `~/.codex/auth.json` |
 | 智谱 GLM | 应用内填写（存钥匙串）或 `ZHIPU_API_KEY` |
+| OpenCode Go | 设置页「登录 OpenCode Go」（WebView 登录，登录态一年有效） |
 
 ## 架构
 

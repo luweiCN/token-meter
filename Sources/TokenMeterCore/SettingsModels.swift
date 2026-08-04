@@ -16,6 +16,10 @@ public struct ProviderConfigOverride: Codable, Equatable {
     public let showInCharts: Bool?
     public let menuBarGlyphWindow: MenuBarWindowChoice?
     public let menuBarNumberWindow: MenuBarWindowChoice?
+    /// 多选窗口标签（如 ["5h", "30d"]）：设置页新交互写入，优先于 menuBarGlyphWindow。
+    /// 独立列存储（menubar_glyph_windows），避免旧列 CHECK 约束限制。
+    public let menuBarGlyphWindows: [String]?
+    public let menuBarNumberWindows: [String]?
 
     public init(
         providerId: String,
@@ -25,7 +29,9 @@ public struct ProviderConfigOverride: Codable, Equatable {
         showInMenuBar: Bool?,
         showInCharts: Bool?,
         menuBarGlyphWindow: MenuBarWindowChoice? = nil,
-        menuBarNumberWindow: MenuBarWindowChoice? = nil
+        menuBarNumberWindow: MenuBarWindowChoice? = nil,
+        menuBarGlyphWindows: [String]? = nil,
+        menuBarNumberWindows: [String]? = nil
     ) {
         self.providerId = providerId
         self.enabled = enabled
@@ -35,6 +41,8 @@ public struct ProviderConfigOverride: Codable, Equatable {
         self.showInCharts = showInCharts
         self.menuBarGlyphWindow = menuBarGlyphWindow
         self.menuBarNumberWindow = menuBarNumberWindow
+        self.menuBarGlyphWindows = menuBarGlyphWindows
+        self.menuBarNumberWindows = menuBarNumberWindows
     }
 }
 
@@ -44,9 +52,10 @@ public enum MenuBarStyleId: String, Codable, Equatable, CaseIterable {
     case grid, sentinel, monogram, strip, tagnum, deck2, ringdeck, barsdeck
 }
 
-/// 按家窗口选择：short = 5h 类短窗、long = 7d 类长窗。图形与数字各自独立。
+/// 按家窗口选择：short = 5h 类短窗、long = 7d 类长窗、both = 短窗+长窗两只、
+/// all = 全部窗口（OpenCode Go 的 5h/周/月三只平级）。图形与数字各自独立。
 public enum MenuBarWindowChoice: String, Codable, Equatable {
-    case short, long, both
+    case short, long, both, all
 }
 
 public enum MenuBarUsageTail: String, Codable, Equatable {

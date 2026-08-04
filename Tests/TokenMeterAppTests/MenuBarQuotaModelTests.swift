@@ -82,19 +82,34 @@ final class MenuBarQuotaModelTests: XCTestCase {
         mono: String = "C",
         short: (Double, UsageMetricTone)? = nil,
         long: (Double, UsageMetricTone),
+        all: [(Double, UsageMetricTone)]? = nil,
         staleMinutes: Int? = nil,
-        glyphChoice: MenuBarWindowChoice = .both,
-        numberChoice: MenuBarWindowChoice = .both
+        glyphChoice: MenuBarWindowChoice = .all,
+        numberChoice: MenuBarWindowChoice = .all
     ) -> MenuBarQuotaModel.Cell {
-        MenuBarQuotaModel.Cell(
+        let allWindows: [MenuBarQuotaModel.Window]
+        if let all {
+            allWindows = all.map { MenuBarQuotaModel.Window(label: "w", remainingPercent: $0.0, tone: $0.1) }
+        } else if let short {
+            allWindows = [
+                MenuBarQuotaModel.Window(label: "5h", remainingPercent: short.0, tone: short.1),
+                MenuBarQuotaModel.Window(label: "7d", remainingPercent: long.0, tone: long.1)
+            ]
+        } else {
+            allWindows = [MenuBarQuotaModel.Window(label: "7d", remainingPercent: long.0, tone: long.1)]
+        }
+        return MenuBarQuotaModel.Cell(
             providerId: providerId,
             badge: badge,
             mono: mono,
             shortWindow: short.map { MenuBarQuotaModel.Window(label: "5h", remainingPercent: $0.0, tone: $0.1) },
             longWindow: MenuBarQuotaModel.Window(label: "7d", remainingPercent: long.0, tone: long.1),
+            allWindows: allWindows,
             staleMinutes: staleMinutes,
             glyphChoice: glyphChoice,
-            numberChoice: numberChoice
+            numberChoice: numberChoice,
+            glyphWindowLabels: nil,
+            numberWindowLabels: nil
         )
     }
 

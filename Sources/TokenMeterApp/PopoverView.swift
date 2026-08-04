@@ -771,14 +771,15 @@ struct QuotaDisplayModel {
         let staleSeconds = now.timeIntervalSince(snapshot.fetchedAt)
         staleMinutes = staleSeconds >= 600 ? Int(staleSeconds / 60) : nil
 
-        // 环＝主组（组名与 provider 同名）的主窗口，至多两只；其余——主组的第三个
-        // 起（如智谱 MCP）和全部模型级次要组（Spark/Fable）——一律水平条，次要额度
-        // 不和主额度平起平坐。展示值统一为【剩余】：此前环里是已用（22%）、折叠行
-        // 与 tmux 段是剩余（78%），一屏两种语义。
+        // 环＝主组（组名与 provider 同名）的主窗口，至多三只（OpenCode Go 的
+        // 5h/周/月三窗口平级全环）；其余——主组的第四个起（如智谱 MCP）和
+        // 全部模型级次要组（Spark/Fable）——一律水平条，次要额度不和主额度平起平坐。
+        // 展示值统一为【剩余】：此前环里是已用（22%）、折叠行与 tmux 段是剩余（78%），
+        // 一屏两种语义。
         let percentMetrics = labeledMetrics.filter { $0.metric.usedPercent != nil }
-        var ringMetrics = Array(percentMetrics.filter(\.isPrimary).prefix(2))
+        var ringMetrics = Array(percentMetrics.filter(\.isPrimary).prefix(3))
         if ringMetrics.isEmpty {
-            ringMetrics = Array(percentMetrics.prefix(2))
+            ringMetrics = Array(percentMetrics.prefix(3))
         }
         let ringIds = Set(ringMetrics.map(\.metric.id))
         // 状态异常/用尽直接红；其余交给时间进度感知的 pace 逻辑。

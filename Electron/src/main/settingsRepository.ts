@@ -5,7 +5,7 @@ export const MENUBAR_STYLE_IDS = [
   'grid', 'sentinel', 'monogram', 'strip', 'tagnum', 'deck2', 'ringdeck', 'barsdeck'
 ] as const;
 export type MenubarStyleId = (typeof MENUBAR_STYLE_IDS)[number];
-export type MenubarWindowChoice = 'short' | 'long' | 'both';
+export type MenubarWindowChoice = 'short' | 'long' | 'both' | 'all';
 export type MenubarUsageTail = 'off' | 'tok' | 'cost';
 export type MenubarWindowOrder = 'longFirst' | 'shortFirst';
 
@@ -28,6 +28,9 @@ export interface ProviderConfigOverride {
   showInCharts?: boolean;
   menubarGlyphWindow?: MenubarWindowChoice;
   menubarNumberWindow?: MenubarWindowChoice;
+  /// 多选窗口标签（新交互；优先于 menubarGlyphWindow）。
+  menubarGlyphWindows?: string[];
+  menubarNumberWindows?: string[];
 }
 
 export interface SettingsSnapshot {
@@ -61,9 +64,12 @@ export interface SettingsPatch {
   providerMenubarVisible?: Record<string, boolean>;
   providerGlyphWindow?: Record<string, MenubarWindowChoice>;
   providerNumberWindow?: Record<string, MenubarWindowChoice>;
+  /// 多选窗口标签（如 ['5h', '30d']）：写 menubar_glyph_windows 列，优先于单选框。
+  providerGlyphWindows?: Record<string, string[]>;
+  providerNumberWindows?: Record<string, string[]>;
 }
 
-const MENUBAR_WINDOW_CHOICES = ['short', 'long', 'both'] as const;
+const MENUBAR_WINDOW_CHOICES = ['short', 'long', 'both', 'all'] as const;
 const MENUBAR_USAGE_TAILS = ['off', 'tok', 'cost'] as const;
 const MENUBAR_WINDOW_ORDERS = ['longFirst', 'shortFirst'] as const;
 
@@ -93,6 +99,8 @@ interface ProviderOverrideRow {
   show_in_charts: 0 | 1 | null;
   menubar_glyph_window: string | null;
   menubar_number_window: string | null;
+  menubar_glyph_windows: string | null;
+  menubar_number_windows: string | null;
 }
 
 export class SettingsRepository {
@@ -114,6 +122,12 @@ export class SettingsRepository {
       this.db.exec(
         "ALTER TABLE provider_config_overrides ADD COLUMN menubar_number_window TEXT CHECK (menubar_number_window IN ('short','long','both'))"
       );
+    }
+    if (!cols.includes('menubar_glyph_windows')) {
+      this.db.exec('ALTER TABLE provider_config_overrides ADD COLUMN menubar_glyph_windows TEXT');
+    }
+    if (!cols.includes('menubar_number_windows')) {
+      this.db.exec('ALTER TABLE provider_config_overrides ADD COLUMN menubar_number_windows TEXT');
     }
   }
 
@@ -245,12 +259,34 @@ export class SettingsRepository {
           upsert.run(providerId, choice);
         }
       }
+      if (validatedPatch.providerGlyphWindows !== undefined) {
+        const upsert = this.db.prepare(
+          `INSERT INTO provider_config_overrides (provider_id, menubar_glyph_windows, updated_at)
+           VALUES (?, ?, datetime('now'))
+           ON CONFLICT(provider_id) DO UPDATE SET menubar_glyph_windows = excluded.menubar_glyph_windows, updated_at = excluded.updated_at`
+        );
+        for (const [providerId, labels] of Object.entries(validatedPatch.providerGlyphWindows)) {
+          upsert.run(providerId, JSON.stringify(labels));
+        }
+      }
+      if (validatedPatch.providerNumberWindows !== undefined) {
+        const upsert = this.db.prepare(
+          `INSERT INTO provider_config_overrides (provider_id, menubar_number_windows, updated_at)
+           VALUES (?, ?, datetime('now'))
+           ON CONFLICT(provider_id) DO UPDATE SET menubar_number_windows = excluded.menubar_number_windows, updated_at = excluded.updated_at`
+        );
+        for (const [providerId, labels] of Object.entries(validatedPatch.providerNumberWindows)) {
+          upsert.run(providerId, JSON.stringify(labels));
+        }
+      }
       if (
         validatedPatch.providerDisplayNames !== undefined ||
         validatedPatch.providerEnabled !== undefined ||
         validatedPatch.providerMenubarVisible !== undefined ||
         validatedPatch.providerGlyphWindow !== undefined ||
-        validatedPatch.providerNumberWindow !== undefined
+        validatedPatch.providerNumberWindow !== undefined ||
+        validatedPatch.providerGlyphWindows !== undefined ||
+        validatedPatch.providerNumberWindows !== undefined
       ) {
         // overrides 不在 settings 表里，写一个哨兵键推进 version——否则乐观锁
         // 版本不前进，Swift 端 settingsChanged(version) 的对账会判为落后而失败。
@@ -301,7 +337,7 @@ export class SettingsRepository {
     const rows = this.db
       .prepare(
         `SELECT provider_id, enabled, display_name, menu_rank, show_in_menu_bar, show_in_charts,
-                menubar_glyph_window, menubar_number_window
+                menubar_glyph_window, menubar_number_window, menubar_glyph_windows, menubar_number_windows
          FROM provider_config_overrides
          ORDER BY menu_rank ASC, provider_id ASC`
       )
@@ -311,6 +347,19 @@ export class SettingsRepository {
       value !== null && (MENUBAR_WINDOW_CHOICES as readonly string[]).includes(value)
         ? (value as MenubarWindowChoice)
         : undefined;
+
+    const windowLabels = (value: string | null): string[] | undefined => {
+      if (value === null) return undefined;
+      try {
+        const parsed: unknown = JSON.parse(value);
+        if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((item) => typeof item === 'string')) {
+          return parsed as string[];
+        }
+      } catch {
+        // 非 JSON 列值（旧 choice）走 windowChoice 分支
+      }
+      return undefined;
+    };
 
     return rows.map((row) => ({
       providerId: row.provider_id,
@@ -324,7 +373,13 @@ export class SettingsRepository {
         : { menubarGlyphWindow: windowChoice(row.menubar_glyph_window) }),
       ...(windowChoice(row.menubar_number_window) === undefined
         ? {}
-        : { menubarNumberWindow: windowChoice(row.menubar_number_window) })
+        : { menubarNumberWindow: windowChoice(row.menubar_number_window) }),
+      ...(windowLabels(row.menubar_glyph_windows) === undefined
+        ? {}
+        : { menubarGlyphWindows: windowLabels(row.menubar_glyph_windows) }),
+      ...(windowLabels(row.menubar_number_windows) === undefined
+        ? {}
+        : { menubarNumberWindows: windowLabels(row.menubar_number_windows) })
     }));
   }
 
@@ -462,6 +517,24 @@ function validateSettingsPatch(patch: unknown): SettingsPatch {
       validated[key] = entries as Record<string, MenubarWindowChoice>;
     }
   }
+  for (const key of ['providerGlyphWindows', 'providerNumberWindows'] as const) {
+    if (key in candidate) {
+      const entries = candidate[key];
+      if (typeof entries !== 'object' || entries === null || Array.isArray(entries)) {
+        throw new Error(`${key} must be an object`);
+      }
+      for (const [providerId, labels] of Object.entries(entries)) {
+        if (
+          !Array.isArray(labels) ||
+          labels.length === 0 ||
+          !labels.every((label) => typeof label === 'string' && label.length > 0)
+        ) {
+          throw new Error(`${key} has invalid window labels for provider: ${providerId}`);
+        }
+      }
+      validated[key] = entries as Record<string, string[]>;
+    }
+  }
 
   return validated;
 }
@@ -489,6 +562,8 @@ function hasPatchChanges(patch: SettingsPatch) {
     patch.menubarWindowOrder !== undefined ||
     patch.providerMenubarVisible !== undefined ||
     patch.providerGlyphWindow !== undefined ||
-    patch.providerNumberWindow !== undefined
+    patch.providerNumberWindow !== undefined ||
+    patch.providerGlyphWindows !== undefined ||
+    patch.providerNumberWindows !== undefined
   );
 }

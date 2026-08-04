@@ -58,6 +58,7 @@ Heavy coding-agent users ask the same three questions every day: **How many toke
 | Claude Code | Keychain (local login) |
 | Codex | `~/.codex/auth.json` |
 | Zhipu GLM | In-app key (stored in Keychain) or `ZHIPU_API_KEY` |
+| OpenCode Go | In-app "Sign in with OpenCode Go" (WebView login, valid 1 year) |
 
 ## Architecture
 

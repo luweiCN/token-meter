@@ -155,6 +155,13 @@ final class ProviderStore: ObservableObject {
         isRefreshing = false
     }
 
+    /// 绕过节流立即刷新一次：设置页完成 OpenCode Go 登录后调用，登录态
+    /// 写盘即可见，不用等 5 分钟轮询窗口。
+    func refreshNow() async {
+        refreshGate = RefreshGate(minimumInterval: refreshGate.minimumInterval)
+        await refresh()
+    }
+
     func refreshNotificationAuthorizationState() async {
         notificationAuthorizationState = await notificationCenter?.authorizationState() ?? .unknown
     }

@@ -22,28 +22,51 @@ enum MenuBarQuotaModel {
         /// 短窗（5h 类）；单窗家为 nil——唯一窗恒放 longWindow（沿现状「last = 最长窗」口径）。
         let shortWindow: Window?
         let longWindow: Window
+        /// 全部窗口（OpenCode Go 的 5h/周/月三只平级）；双窗家与 short+long 同构。
+        let allWindows: [Window]
         /// 快照超时分钟数（QuotaDisplayModel 口径：≥10 分钟才非 nil）。
         let staleMinutes: Int?
         let glyphChoice: MenuBarWindowChoice
         let numberChoice: MenuBarWindowChoice
+        /// 多选窗口标签（设置页新交互，优先于 choice）：按 label 在全部窗口里筛选。
+        let glyphWindowLabels: [String]?
+        let numberWindowLabels: [String]?
 
         var isStale: Bool { staleMinutes != nil }
         var isSingleWindow: Bool { shortWindow == nil }
 
-        /// 窗口展开：单窗家无视 choice 恒取唯一窗；both 顺序由 windowOrder 决定。
-        func windows(for choice: MenuBarWindowChoice, order: MenuBarWindowOrder) -> [Window] {
+        /// 窗口展开：多选标签优先（按 label 匹配全部窗口）；否则单窗家恒取唯一窗，
+        /// 双窗/全部按 choice 与 order。
+        func windows(for choice: MenuBarWindowChoice, order: MenuBarWindowOrder, labels: [String]? = nil) -> [Window] {
+            if let labels, !labels.isEmpty {
+                let matched = allWindows.filter { labels.contains($0.label) }
+                if !matched.isEmpty {
+                    return order == .shortFirst ? matched : matched.reversed()
+                }
+            }
             guard let shortWindow else { return [longWindow] }
             switch choice {
             case .short: return [shortWindow]
             case .long: return [longWindow]
             case .both: return order == .shortFirst ? [shortWindow, longWindow] : [longWindow, shortWindow]
+            case .all:
+                let ordered = allWindows.isEmpty ? [shortWindow, longWindow] : allWindows
+                return order == .shortFirst ? ordered : ordered.reversed()
             }
         }
 
-        func glyphWindows(order: MenuBarWindowOrder) -> [Window] { windows(for: glyphChoice, order: order) }
-        func numberWindows(order: MenuBarWindowOrder) -> [Window] { windows(for: numberChoice, order: order) }
-        var worstNumberWindow: Window { MenuBarQuotaModel.worst(of: windows(for: numberChoice, order: .longFirst)) }
-        var worstGlyphWindow: Window { MenuBarQuotaModel.worst(of: windows(for: glyphChoice, order: .longFirst)) }
+        func glyphWindows(order: MenuBarWindowOrder) -> [Window] {
+            windows(for: glyphChoice, order: order, labels: glyphWindowLabels)
+        }
+        func numberWindows(order: MenuBarWindowOrder) -> [Window] {
+            windows(for: numberChoice, order: order, labels: numberWindowLabels)
+        }
+        var worstNumberWindow: Window {
+            MenuBarQuotaModel.worst(of: windows(for: numberChoice, order: .longFirst, labels: numberWindowLabels))
+        }
+        var worstGlyphWindow: Window {
+            MenuBarQuotaModel.worst(of: windows(for: glyphChoice, order: .longFirst, labels: glyphWindowLabels))
+        }
     }
 
     static func worst(of windows: [Window]) -> Window {
@@ -116,8 +139,10 @@ enum MenuBarQuotaModel {
     }
 
     /// 文字样式的超宽降级（spec §2）：CJK 短名 + 双窗数字 + 名称开启 → 数字降最险单窗。
+    /// both 与 all（三窗家）同属多窗口径，都触发降级。
     static func numbersDegradeToWorst(style: MenuBarStyleId, cell: Cell, showName: Bool) -> Bool {
-        guard style == .digits, showName, !cell.isSingleWindow, cell.numberChoice == .both else { return false }
+        guard style == .digits, showName, !cell.isSingleWindow,
+              cell.numberChoice == .both || cell.numberChoice == .all else { return false }
         return cell.badge.unicodeScalars.contains { $0.value >= 0x4E00 && $0.value <= 0x9FFF }
     }
 
@@ -176,9 +201,13 @@ enum MenuBarQuotaModel {
                 mono: "",
                 shortWindow: windows.count > 1 ? windows.first : nil,
                 longWindow: longWindow,
+                allWindows: windows,
                 staleMinutes: model.staleMinutes,
-                glyphChoice: providerOverride?.menuBarGlyphWindow ?? .both,
-                numberChoice: providerOverride?.menuBarNumberWindow ?? .both
+                // 默认 all：三窗家（OpenCode Go）菜单栏平级全显；双窗家 all 与 both 同构。
+                glyphChoice: providerOverride?.menuBarGlyphWindow ?? .all,
+                numberChoice: providerOverride?.menuBarNumberWindow ?? .all,
+                glyphWindowLabels: providerOverride?.menuBarGlyphWindows,
+                numberWindowLabels: providerOverride?.menuBarNumberWindows
             )
         }
         let monos = monograms(for: cells.map(\.badge))
@@ -189,9 +218,12 @@ enum MenuBarQuotaModel {
                 mono: mono,
                 shortWindow: cell.shortWindow,
                 longWindow: cell.longWindow,
+                allWindows: cell.allWindows,
                 staleMinutes: cell.staleMinutes,
                 glyphChoice: cell.glyphChoice,
-                numberChoice: cell.numberChoice
+                numberChoice: cell.numberChoice,
+                glyphWindowLabels: cell.glyphWindowLabels,
+                numberWindowLabels: cell.numberWindowLabels
             )
         }
 

@@ -33,6 +33,8 @@ export interface ProviderConfigOverride {
   showInCharts?: boolean;
   menubarGlyphWindow?: MenubarWindowChoice;
   menubarNumberWindow?: MenubarWindowChoice;
+  menubarGlyphWindows?: string[];
+  menubarNumberWindows?: string[];
 }
 
 /// 菜单栏样式族（与主进程 settingsRepository / Swift MenuBarStyleId 同名单；
@@ -42,7 +44,7 @@ export const MENUBAR_STYLE_IDS = [
   'grid', 'sentinel', 'monogram', 'strip', 'tagnum', 'deck2', 'ringdeck', 'barsdeck'
 ] as const;
 export type MenubarStyleId = (typeof MENUBAR_STYLE_IDS)[number];
-export type MenubarWindowChoice = 'short' | 'long' | 'both';
+export type MenubarWindowChoice = 'short' | 'long' | 'both' | 'all';
 export type MenubarUsageTail = 'off' | 'tok' | 'cost';
 export type MenubarWindowOrder = 'longFirst' | 'shortFirst';
 
@@ -86,6 +88,8 @@ export interface SettingsPatch {
   providerMenubarVisible?: Record<string, boolean>;
   providerGlyphWindow?: Record<string, MenubarWindowChoice>;
   providerNumberWindow?: Record<string, MenubarWindowChoice>;
+  providerGlyphWindows?: Record<string, string[]>;
+  providerNumberWindows?: Record<string, string[]>;
 }
 
 export const MENUBAR_APPEARANCE_DEFAULT: MenubarAppearance = {
@@ -377,6 +381,12 @@ declare global {
       agents: {
         /// null = 检测不可用（菜单栏应用未运行）。
         detect(): Promise<AgentBinaryStatus[] | null>;
+      };
+      opencodeGo: {
+        /// 打开 WebView 登录窗，成功时凭证已写盘并触发额度刷新。
+        login(): Promise<{ ok: boolean; reason: 'captured' | 'cancelled' | 'missing-cookie' | 'no-workspace'; swiftRefresh?: boolean }>;
+        status(): Promise<{ configured: boolean; workspaceId: string | null }>;
+        logout(): Promise<void>;
       };
       credentials: {
         /// 存/清应用内 API Key（token 空串 = 清除）。返回操作后是否已配置。

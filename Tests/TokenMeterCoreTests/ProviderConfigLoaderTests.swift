@@ -8,6 +8,7 @@ final class ProviderConfigLoaderTests: XCTestCase {
         XCTAssertEqual(config.providers.filter(\.enabled).map(\.id), [
             "codex",
             "claude-code",
+            "opencode-go",
             "zhipu"
         ])
 

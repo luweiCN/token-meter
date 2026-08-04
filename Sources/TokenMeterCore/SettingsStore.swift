@@ -55,7 +55,7 @@ public final class SettingsStore {
         let providerRows = try database.query(
             """
             SELECT provider_id, enabled, display_name, menu_rank, show_in_menu_bar, show_in_charts,
-                   menubar_glyph_window, menubar_number_window
+                   menubar_glyph_window, menubar_number_window, menubar_glyph_windows, menubar_number_windows
             FROM provider_config_overrides
             ORDER BY menu_rank ASC, provider_id ASC
             """
@@ -69,7 +69,9 @@ public final class SettingsStore {
                 showInMenuBar: row.int("show_in_menu_bar").map { $0 == 1 },
                 showInCharts: row.int("show_in_charts").map { $0 == 1 },
                 menuBarGlyphWindow: row.string("menubar_glyph_window").flatMap(MenuBarWindowChoice.init(rawValue:)),
-                menuBarNumberWindow: row.string("menubar_number_window").flatMap(MenuBarWindowChoice.init(rawValue:))
+                menuBarNumberWindow: row.string("menubar_number_window").flatMap(MenuBarWindowChoice.init(rawValue:)),
+                menuBarGlyphWindows: Self.windowLabels(from: row.string("menubar_glyph_windows")),
+                menuBarNumberWindows: Self.windowLabels(from: row.string("menubar_number_windows"))
             )
         }
 
@@ -82,6 +84,17 @@ public final class SettingsStore {
             quotaUsedThresholdPercent: Int(try settingInt("notifications.quotaUsedThresholdPercent") ?? 0),
             menuBarAppearance: menuBarAppearance()
         )
+    }
+
+    /// 窗口多选列（JSON 数组字符串）→ 标签列表；空/非法返回 nil。
+    private static func windowLabels(from json: String?) -> [String]? {
+        guard let json,
+              let data = json.data(using: .utf8),
+              let array = try? JSONSerialization.jsonObject(with: data) as? [String],
+              !array.isEmpty else {
+            return nil
+        }
+        return array
     }
 
     /// 菜单栏外观 kv：缺失/非法一律回默认（未来加样式后回滚旧版也安全）。

@@ -56,6 +56,11 @@ contextBridge.exposeInMainWorld('tokenMeter', {
   agents: {
     detect: () => ipcRenderer.invoke('agents:detect')
   },
+  opencodeGo: {
+    login: () => ipcRenderer.invoke('opencodeGo:login'),
+    status: () => ipcRenderer.invoke('opencodeGo:status'),
+    logout: () => ipcRenderer.invoke('opencodeGo:logout')
+  },
   credentials: {
     set: (providerId: string, token: string) => ipcRenderer.invoke('credentials:set', providerId, token),
     state: (providerId: string) => ipcRenderer.invoke('credentials:state', providerId)

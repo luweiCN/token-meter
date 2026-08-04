@@ -432,69 +432,116 @@ public struct OpenCodeGoUsageProvider: UsageProvider {
 
     private let environment: [String: String]
 
-    public init(config: ProviderConfig, environment: [String: String] = ProcessInfo.processInfo.environment) {
+    public init(
+        config: ProviderConfig,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) {
         self.id = config.id
         self.displayName = config.displayName
         self.environment = environment
     }
 
     public func fetchUsage() async -> UsageSnapshot {
-        let resolvedConfig = OpenCodeGoConfigParser.resolve(environment: environment)
-        let workspaceId = resolvedConfig?.workspaceId
-        let authCookie = resolvedConfig?.authCookie
-
-        guard let workspaceId, !workspaceId.isEmpty else {
-            return errorSnapshot("缺少 OPENCODE_GO_WORKSPACE_ID")
-        }
-
-        guard let authCookie, !authCookie.isEmpty else {
-            return errorSnapshot("缺少 OPENCODE_GO_AUTH_COOKIE")
-        }
-
-        var components = URLComponents()
-        components.scheme = "https"
-        components.host = "opencode.ai"
-        components.path = "/workspace/\(workspaceId)/go"
-
-        guard let url = components.url else {
-            return errorSnapshot("OpenCode Go workspace URL 无效")
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("text/html", forHTTPHeaderField: "Accept")
-        request.setValue("auth=\(authCookie)", forHTTPHeaderField: "Cookie")
-        request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/148.0",
-            forHTTPHeaderField: "User-Agent"
-        )
-
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse,
-               !(200..<300).contains(httpResponse.statusCode) {
-                return errorSnapshot("OpenCode Go dashboard 返回 \(httpResponse.statusCode)")
-            }
-
-            let html = String(decoding: data, as: UTF8.self)
-            return try OpenCodeGoParser.parse(html: html, providerId: id, displayName: displayName)
-        } catch {
-            return errorSnapshot(error.localizedDescription)
-        }
+        await fetchProviderUsage().legacySnapshot
     }
 
-    private func errorSnapshot(_ message: String) -> UsageSnapshot {
-        UsageSnapshot(
-            providerId: id,
+    /// 在线读取：隐藏 WKWebView 加载控制台用量页，读渲染后的 DOM。
+    /// 服务端用量数据是客户端 hydrate 后才由 server action 拉取的，
+    /// 静态 HTML 只有 pending 占位，必须走真实浏览器内核。
+    public func fetchProviderUsage() async -> ProviderUsageSnapshot {
+        let resolvedConfig = OpenCodeGoConfigParser.resolve(environment: environment)
+
+        guard let workspaceId = resolvedConfig?.workspaceId, !workspaceId.isEmpty else {
+            return providerErrorSnapshot(
+                providerId: id,
+                displayName: displayName,
+                message: "未配置 OpenCode Go：请在主界面 设置 → 供应商额度 点「登录 OpenCode Go」"
+            )
+        }
+
+        guard let authCookie = resolvedConfig?.authCookie, !authCookie.isEmpty else {
+            return providerErrorSnapshot(
+                providerId: id,
+                displayName: displayName,
+                message: "OpenCode Go 登录态缺失：请在设置页重新登录"
+            )
+        }
+
+        do {
+            let windows = try await OpenCodeGoDashboardClient.shared.fetchUsage(
+                workspaceId: workspaceId,
+                authCookie: authCookie
+            )
+            return OpenCodeGoSnapshotBuilder.snapshot(
+                windows: windows,
+                providerId: id,
+                displayName: displayName
+            )
+        } catch {
+            return providerErrorSnapshot(
+                providerId: id,
+                displayName: displayName,
+                message: ProviderErrorMessage.sanitized(providerName: displayName, errorMessage: error.localizedDescription)
+            )
+        }
+    }
+}
+
+/// 把控制台窗口数据组装为 ProviderUsageSnapshot（纯函数，可测）。
+/// 主组三窗（5h + Weekly + Monthly）：弹窗环平级三只；
+/// 菜单栏取首尾（short=5h、long=月度）。
+public enum OpenCodeGoSnapshotBuilder {
+    public static func snapshot(
+        windows: [OpenCodeGoUsageWindowData],
+        providerId: String,
+        displayName: String
+    ) -> ProviderUsageSnapshot {
+        let fiveHour = windows.first { $0.label == "5h" }
+        let weekly = windows.first { $0.label == "Weekly" }
+        let monthly = windows.first { $0.label == "Monthly" }
+
+        func metric(_ window: OpenCodeGoUsageWindowData, id: String, label: String, minutes: Int) -> UsageMetric {
+            UsageMetric(
+                id: id,
+                label: label,
+                kind: .quota,
+                usedPercent: window.usagePercent,
+                remainingPercent: max(0, 100 - window.usagePercent),
+                resetText: nil,
+                status: .ok,
+                detail: nil,
+                windowDurationMinutes: minutes
+            )
+        }
+
+        var items: [UsageMetric] = []
+        if let fiveHour {
+            items.append(metric(fiveHour, id: "\(providerId)-5h", label: "5h", minutes: 5 * 60))
+        }
+        if let weekly {
+            items.append(metric(weekly, id: "\(providerId)-weekly", label: "7d", minutes: 7 * 24 * 60))
+        }
+        if let monthly {
+            items.append(metric(monthly, id: "\(providerId)-monthly", label: "Monthly", minutes: 30 * 24 * 60))
+        }
+        if items.isEmpty, let first = windows.first {
+            items.append(metric(first, id: "\(providerId)-\(first.label)", label: first.label, minutes: 5 * 60))
+        }
+
+        let message = windows
+            .map { "\($0.label) \(UsageFormatter.numberText(100 - $0.usagePercent))%" }
+            .joined(separator: " · ")
+
+        return ProviderUsageSnapshot(
+            providerId: providerId,
             displayName: displayName,
-            status: .error,
-            label: "额度",
-            used: nil,
-            remaining: nil,
-            total: nil,
-            unit: "%",
+            status: .ok,
             fetchedAt: Date(),
-            message: message
+            summary: message,
+            message: message,
+            groups: [
+                UsageGroup(id: providerId, title: displayName, subtitle: nil, items: items)
+            ]
         )
     }
 }
@@ -559,128 +606,6 @@ public enum OpenCodeGoConfigParser {
     }
 }
 
-public enum OpenCodeGoParser {
-    public enum ParseError: LocalizedError {
-        case missingUsageWindows
-
-        public var errorDescription: String? {
-            "没有从 OpenCode Go dashboard 解析到 rolling/weekly/monthly usage"
-        }
-    }
-
-    public static func parse(html: String, providerId: String, displayName: String) throws -> UsageSnapshot {
-        var windows = [
-            window(html: html, key: "rollingUsage", label: "5h"),
-            window(html: html, key: "weeklyUsage", label: "Weekly"),
-            window(html: html, key: "monthlyUsage", label: "Monthly")
-        ].compactMap { $0 }
-
-        if windows.isEmpty {
-            windows = dataSlotWindows(html: html)
-        }
-
-        guard let first = windows.first else {
-            throw ParseError.missingUsageWindows
-        }
-
-        let message = windows
-            .map { "\($0.label) \(UsageFormatter.numberText(100 - $0.usagePercent))%" }
-            .joined(separator: " · ")
-
-        return UsageSnapshot(
-            providerId: providerId,
-            displayName: displayName,
-            status: .ok,
-            label: first.label,
-            used: first.usagePercent,
-            remaining: 100 - first.usagePercent,
-            total: 100,
-            unit: "%",
-            fetchedAt: Date(),
-            message: message
-        )
-    }
-
-    private struct Window {
-        let label: String
-        let usagePercent: Double
-    }
-
-    private static func window(html: String, key: String, label: String) -> Window? {
-        let number = #"(-?\d+(?:\.\d+)?)"#
-        let percentFirst = "\(key):\\$R\\[\\d+\\]=\\{[^}]*usagePercent:\(number)[^}]*resetInSec:\(number)[^}]*\\}"
-        let resetFirst = "\(key):\\$R\\[\\d+\\]=\\{[^}]*resetInSec:\(number)[^}]*usagePercent:\(number)[^}]*\\}"
-
-        if let match = firstMatch(in: html, pattern: percentFirst, group: 1) {
-            return Window(label: label, usagePercent: match)
-        }
-
-        if let match = firstMatch(in: html, pattern: resetFirst, group: 2) {
-            return Window(label: label, usagePercent: match)
-        }
-
-        return nil
-    }
-
-    private static func dataSlotWindows(html: String) -> [Window] {
-        let parts = html.components(separatedBy: #"data-slot="usage-item""#)
-        guard parts.count > 1 else {
-            return []
-        }
-
-        var windows: [Window] = []
-        for content in parts.dropFirst() {
-            guard let label = firstStringMatch(
-                in: content,
-                pattern: #"data-slot="usage-label">([^<]+)<"#,
-                group: 1
-            )?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
-                continue
-            }
-
-            guard let usagePercent = firstMatch(
-                in: content,
-                pattern: #"data-slot="usage-value">[^0-9]*(\d+(?:\.\d+)?)"#,
-                group: 1
-            ) else {
-                continue
-            }
-
-            if label.contains("rolling") {
-                windows.append(Window(label: "5h", usagePercent: usagePercent))
-            } else if label.contains("weekly") {
-                windows.append(Window(label: "Weekly", usagePercent: usagePercent))
-            } else if label.contains("monthly") {
-                windows.append(Window(label: "Monthly", usagePercent: usagePercent))
-            }
-        }
-
-        return windows
-    }
-
-    private static func firstMatch(in text: String, pattern: String, group: Int) -> Double? {
-        guard let value = firstStringMatch(in: text, pattern: pattern, group: group) else {
-            return nil
-        }
-
-        return Double(value)
-    }
-
-    private static func firstStringMatch(in text: String, pattern: String, group: Int) -> String? {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
-            return nil
-        }
-
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        guard let match = regex.firstMatch(in: text, range: range),
-              match.numberOfRanges > group,
-              let valueRange = Range(match.range(at: group), in: text) else {
-            return nil
-        }
-
-        return String(text[valueRange])
-    }
-}
 
 public enum ShellQuotaParser {
     public enum ParseError: LocalizedError {
@@ -794,11 +719,7 @@ public struct QuotaCacheUsageProvider: UsageProvider {
     }
 
     private func missingCacheMessage(for providerId: String) -> String {
-        if providerId == "opencode-go" {
-            return "需要 OpenCode Go workspace ID 和 auth cookie"
-        }
-
-        return "未找到 \(providerId) quota 缓存"
+        "未找到 \(providerId) quota 缓存"
     }
 }
 
@@ -1742,7 +1663,7 @@ private func normalizedCredentialToken(_ value: String?) -> String? {
     return token
 }
 
-private func expandHome(_ path: String) -> String {
+func expandHome(_ path: String) -> String {
     guard path == "~" || path.hasPrefix("~/") else {
         return path
     }
