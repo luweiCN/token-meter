@@ -251,19 +251,20 @@ final class PricingTests: XCTestCase {
         XCTAssertEqual(transition?.at, Self.utcDate(2026, 9, 21, 1, 0))
     }
 
-    func testSchedulePhaseShowsStyleBeforeEffectiveDate() {
+    func testSchedulePhaseIgnoresEffectiveDate() {
         let tier = peakTier(weekdaysOnly: true)
         // 生效前的工作日高峰窗（北京 8/14 周五 9:30 = UTC 01:30）：
-        // 显示层照样给「峰」，计价层仍按 notYetEffective 走基础价。
+        // 时刻表口径给「峰」，计价口径仍按 notYetEffective 走基础价。
+        // 菜单栏/弹窗只按计价口径显示：生效前完全不出现。
         let date = Self.utcDate(2026, 8, 14, 1, 30)
         XCTAssertEqual(tier.schedulePhase(at: date), .peak)
         XCTAssertEqual(tier.phase(at: date), .notYetEffective)
     }
 
-    func testNextTransitionIgnoresEffectiveDateForDisplay() {
+    func testNextTransitionFindsNextHourlySwitch() {
         let tier = peakTier()
-        // 生效前（8/16 15:00 UTC = 北京 23:00 空闲）：下一个切换按小时走，
-        // 是北京次日 9:00（UTC 8/17 01:00）进高峰，不再预告生效时刻。
+        // 8/16 15:00 UTC = 北京 23:00 空闲：下一个切换是北京次日 9:00
+        // （UTC 8/17 01:00）进高峰。
         let transition = tier.nextTransition(after: Self.utcDate(2026, 8, 16, 15, 0))
         XCTAssertEqual(transition?.phase, .peak)
         XCTAssertEqual(transition?.at, Self.utcDate(2026, 8, 17, 1, 0))

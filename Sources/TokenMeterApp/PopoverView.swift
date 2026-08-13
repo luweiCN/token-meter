@@ -232,7 +232,7 @@ struct PopoverView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Color.clear.frame(height: 6)
 
-                    if !store.peakPricingRows.isEmpty {
+                    if store.peakPricingRows.contains(where: { $0.tier.phase(at: Date()) != .notYetEffective }) {
                         SectionBlock(title: "峰谷时段") {
                             PeakPricingSection(rows: store.peakPricingRows)
                         }
@@ -631,15 +631,19 @@ private struct SectionBlock<Content: View>: View {
 
 /// 独立区块：每个采用峰谷定价的品牌一行，显示当前峰/谷与下次切换时刻。
 /// 设计成按定价品牌归并而不是绑死 DeepSeek——后续厂商上分时价时，
-/// ProviderStore.peakPricingRows 长出几行这里就多显示几行。
+/// ProviderStore.peakPricingRows 长出几行这里就多显示几行。生效前整块
+/// 完全不显示、不做预告，到生效时刻起才出现。
 private struct PeakPricingSection: View {
     let rows: [PeakPricingRow]
 
     var body: some View {
-        VStack(spacing: 0) {
-            TimelineView(.periodic(from: .now, by: 60)) { context in
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let active = rows.filter { $0.tier.phase(at: context.date) != .notYetEffective }
+            if active.isEmpty {
+                EmptyView()
+            } else {
                 VStack(spacing: 0) {
-                    ForEach(rows) { row in
+                    ForEach(active) { row in
                         PeakPhaseRow(row: row, now: context.date)
                     }
                 }
@@ -653,7 +657,7 @@ private struct PeakPhaseRow: View {
     let now: Date
     @Environment(\.mbTheme) private var theme
 
-    private var phase: PeakOffPeakPhase { row.tier.schedulePhase(at: now) }
+    private var phase: PeakOffPeakPhase { row.tier.phase(at: now) }
 
     var body: some View {
         HStack(spacing: 9) {

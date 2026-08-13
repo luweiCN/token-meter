@@ -50,8 +50,9 @@ enum MenuBarToneColor {
 /// 明细在弹窗的「峰谷时段」区块里展开，菜单栏只留这一个聚合哨位。
 ///
 /// 用 TimelineView 每分钟自判档位——峰/谷在北京整点切换，不必等额度轮询、
-/// 也不用重建整个投影。只看时刻表不看生效日期：没生效也照常显示样式，
-/// 到生效时刻同一显示自然变成真实档位。色点随档位：高峰黄（更贵）、空闲绿。
+/// 也不用重建整个投影。按实际生效时间显示：生效前完全不显示、不做任何预告，
+/// 到生效时刻起自动出现（用户裁定 2026-08-14：没生效就不该有样式预览）。
+/// 色点随档位：高峰黄（更贵）、空闲绿。
 struct PeakPhaseBadge: View {
     let tiers: [MenuBarQuotaModel.MenuBarProjection.PeakTierEntry]
     let style: PeakBadgeStyle
@@ -59,16 +60,21 @@ struct PeakPhaseBadge: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let phase = aggregatePhase(at: context.date)
-            badge(phase)
-                .fixedSize()
-                .help(helpText(phase))
+            if phase == .notYetEffective {
+                EmptyView()
+            } else {
+                badge(phase)
+                    .fixedSize()
+                    .help(helpText(phase))
+            }
         }
     }
 
     private func aggregatePhase(at date: Date) -> PeakOffPeakPhase {
-        let phases = tiers.map { $0.tier.schedulePhase(at: date) }
+        let phases = tiers.map { $0.tier.phase(at: date) }
         if phases.contains(.peak) { return .peak }
-        return .offPeak
+        if phases.contains(.offPeak) { return .offPeak }
+        return .notYetEffective
     }
 
     @ViewBuilder
