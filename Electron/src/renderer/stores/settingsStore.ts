@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'react';
 export type { SettingsApplyRequest, SettingsSnapshot } from '../api.js';
 import { MENUBAR_APPEARANCE_DEFAULT } from '../api.js';
 import type { SettingsApplyRequest, SettingsPatch, SettingsSnapshot } from '../api.js';
+import { setMoneyDisplay } from '../format.js';
 
 const initialSnapshot: SettingsSnapshot = {
   version: 0,
@@ -10,7 +11,10 @@ const initialSnapshot: SettingsSnapshot = {
   enabledAgentKinds: [],
   providerOverrides: [],
   quotaUsedThresholdPercent: 0,
-  menubarAppearance: MENUBAR_APPEARANCE_DEFAULT
+  menubarAppearance: MENUBAR_APPEARANCE_DEFAULT,
+  // 加载完成前的占位：与 format.ts 的默认美元口径一致，加载后按设置切人民币。
+  displayCurrency: 'usd',
+  exchangeRateUsdToCny: 6.76
 };
 
 let snapshot = initialSnapshot;
@@ -19,6 +23,7 @@ let listeners: Array<() => void> = [];
 export const settingsStore = {
   async load() {
     snapshot = await window.tokenMeter.settings.get();
+    setMoneyDisplay(snapshot.displayCurrency, snapshot.exchangeRateUsdToCny);
     emit();
   },
 

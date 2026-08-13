@@ -93,8 +93,11 @@ describe('SettingsRepository', () => {
         showGlyph: true,
         showNumber: true,
         usage: 'tok',
-        windowOrder: 'longFirst'
+        windowOrder: 'longFirst',
+        showPeakBadge: true,
+        peakBadgeStyle: 'dotWord'
       },
+      displayCurrency: 'cny',
       enabledAgentKinds: ['claudeCode', 'codex'],
       providerOverrides: [
         {
@@ -204,6 +207,12 @@ describe('SettingsRepository', () => {
     expect(settingRows(db)).toEqual(before);
   });
 
+  it('accepts reasonix in enabledAgentKinds (parity with Swift defaults)', () => {
+    const { repo } = openRepo();
+    repo.update({ enabledAgentKinds: ['claudeCode', 'codex', 'opencode', 'omp', 'reasonix'] }, 3);
+    expect(repo.get().enabledAgentKinds).toEqual(['claudeCode', 'codex', 'opencode', 'omp', 'reasonix']);
+  });
+
   it('stores provider enable flags into overrides and bumps the settings version', () => {
     const { repo } = openRepo();
 
@@ -236,6 +245,19 @@ describe('SettingsRepository', () => {
     expect(() => repo.update({ quotaUsedThresholdPercent: 85.5 }, 5)).toThrow(/quotaUsedThresholdPercent/);
   });
 
+  it('defaults display currency to cny, stores it, and validates its values', () => {
+    const { repo } = openRepo();
+    expect(repo.get().displayCurrency).toBe('cny');   // 未设置 = 人民币
+
+    repo.update({ displayCurrency: 'usd' }, 3);
+    expect(repo.get().displayCurrency).toBe('usd');
+
+    repo.update({ displayCurrency: 'cny' }, 4);
+    expect(repo.get().displayCurrency).toBe('cny');
+
+    expect(() => repo.update({ displayCurrency: 'eur' } as never, 5)).toThrow(/displayCurrency/);
+  });
+
   describe('menubar appearance settings', () => {
     it('returns defaults when nothing stored', () => {
       const { repo } = openRepo();
@@ -245,8 +267,24 @@ describe('SettingsRepository', () => {
         showGlyph: true,
         showNumber: true,
         usage: 'tok',
-        windowOrder: 'longFirst'
+        windowOrder: 'longFirst',
+        showPeakBadge: true,
+        peakBadgeStyle: 'dotWord'
       });
+    });
+
+    it('stores the peak badge switch and style and validates them', () => {
+      const { repo } = openRepo();
+      repo.update({ menubarShowPeakBadge: false, menubarPeakBadgeStyle: 'pill' }, 3);
+      expect(repo.get().menubarAppearance.showPeakBadge).toBe(false);
+      expect(repo.get().menubarAppearance.peakBadgeStyle).toBe('pill');
+
+      repo.update({ menubarShowPeakBadge: true, menubarPeakBadgeStyle: 'word' }, 4);
+      expect(repo.get().menubarAppearance.showPeakBadge).toBe(true);
+      expect(repo.get().menubarAppearance.peakBadgeStyle).toBe('word');
+
+      expect(() => repo.update({ menubarShowPeakBadge: 'yes' } as never, 5)).toThrow(/menubarShowPeakBadge/);
+      expect(() => repo.update({ menubarPeakBadgeStyle: 'banner' } as never, 5)).toThrow(/menubarPeakBadgeStyle/);
     });
 
     it('adds menubar columns to a legacy overrides table (idempotent)', () => {

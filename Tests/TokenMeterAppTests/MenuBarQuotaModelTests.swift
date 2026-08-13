@@ -59,6 +59,8 @@ final class MenuBarQuotaModelTests: XCTestCase {
         number: Bool = true,
         usage: MenuBarUsageTail = .tok,
         order: MenuBarWindowOrder = .longFirst,
+        showPeakBadge: Bool = true,
+        peakBadgeStyle: PeakBadgeStyle = .dotWord,
         overrides: [ProviderConfigOverride] = []
     ) -> SettingsSnapshot {
         SettingsSnapshot(
@@ -70,7 +72,8 @@ final class MenuBarQuotaModelTests: XCTestCase {
             quotaUsedThresholdPercent: 0,
             menuBarAppearance: MenuBarAppearanceSettings(
                 style: style, showName: name, showGlyph: glyph, showNumber: number,
-                usage: usage, windowOrder: order
+                usage: usage, windowOrder: order,
+                showPeakBadge: showPeakBadge, peakBadgeStyle: peakBadgeStyle
             )
         )
     }
@@ -110,6 +113,19 @@ final class MenuBarQuotaModelTests: XCTestCase {
             numberChoice: numberChoice,
             glyphWindowLabels: nil,
             numberWindowLabels: nil
+        )
+    }
+
+    private func peakTier() -> PeakOffPeakPricing {
+        func rate(_ input: Double) -> RateCard {
+            RateCard(inputPerMTok: input, outputPerMTok: input * 2, cacheReadPerMTok: 0,
+                     cacheWrite5mPerMTok: 0, cacheWrite1hPerMTok: 0)
+        }
+        return PeakOffPeakPricing(
+            effectiveAfter: Date(timeIntervalSince1970: 0),
+            peakHoursUTC: [1, 2, 3, 6, 7, 8, 9],
+            peak: rate(0.44),
+            offPeak: rate(0.22)
         )
     }
 
@@ -340,5 +356,109 @@ final class MenuBarQuotaModelTests: XCTestCase {
 
         projection = MenuBarQuotaModel.projection(snapshots: [], settings: settings(usage: .tok), todaySummary: .empty)
         XCTAssertEqual(projection.tail, .hidden)
+    }
+
+    func testTailCostUsesDisplayCurrencyAndRate() {
+        let summary = MenuBarTodaySummary(
+            tokens: 0, costUsdMicros: 196_440_000, sessions: 0, unknownEvents: 0, perProvider: []
+        )
+        // 人民币：$196.44 × 6.76 = ¥1327.93（四舍五入两位）。
+        let projection = MenuBarQuotaModel.projection(
+            snapshots: [],
+            settings: settings(usage: .cost),
+            todaySummary: summary,
+            displayCurrency: .cny,
+            usdToCny: 6.76
+        )
+        XCTAssertEqual(projection.tail, .text("¥1327.93"))
+    }
+
+    // MARK: - OpenCode Go 峰谷标识
+
+    func testPeakTierAttachedOnlyWhenOpenCodeGoVisible() {
+        let tier = peakTier()
+        let entry = MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(providerId: "opencode-go", tier: tier)
+        let opencode = twoWindowSnapshot("opencode-go", "OpenCode Go", shortRemaining: 80, longRemaining: 60)
+        let claude = twoWindowSnapshot("claude-code", "Claude Code", shortRemaining: 90, longRemaining: 70)
+
+        // OpenCode Go 可见 + 时刻表存在 → 透传给菜单栏渲染峰/谷标识
+        var projection = MenuBarQuotaModel.projection(
+            snapshots: [opencode, claude],
+            settings: nil,
+            todaySummary: .empty,
+            peakTiers: [entry]
+        )
+        XCTAssertEqual(projection.peakTiers, [entry])
+
+        // 菜单栏没有 OpenCode Go → 时刻表被丢弃，标识不渲染
+        projection = MenuBarQuotaModel.projection(
+            snapshots: [claude],
+            settings: nil,
+            todaySummary: .empty,
+            peakTiers: [entry]
+        )
+        XCTAssertTrue(projection.peakTiers.isEmpty)
+
+        // OpenCode Go 可见但快照缺峰谷时刻表 → 空，退化为无标识
+        projection = MenuBarQuotaModel.projection(
+            snapshots: [opencode],
+            settings: nil,
+            todaySummary: .empty,
+            peakTiers: []
+        )
+        XCTAssertTrue(projection.peakTiers.isEmpty)
+    }
+
+    func testPeakTierSuppressedWhenOpenCodeHiddenByOverride() {
+        // showInMenuBar=false 时 OpenCode Go 不出 cell，标识同样不出现。
+        let overrides = [
+            ProviderConfigOverride(
+                providerId: "opencode-go", enabled: nil, displayName: nil, menuRank: nil,
+                showInMenuBar: false, showInCharts: nil
+            )
+        ]
+        let projection = MenuBarQuotaModel.projection(
+            snapshots: [twoWindowSnapshot("opencode-go", "OpenCode Go", shortRemaining: 80, longRemaining: 60)],
+            settings: settings(overrides: overrides),
+            todaySummary: .empty,
+            peakTiers: [
+                MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(providerId: "opencode-go", tier: peakTier())
+            ]
+        )
+        XCTAssertTrue(projection.cells.isEmpty)
+        XCTAssertTrue(projection.peakTiers.isEmpty)
+    }
+
+    func testPeakBadgeCanBeHiddenAndStyled() {
+        let entry = MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(providerId: "opencode-go", tier: peakTier())
+        let opencode = twoWindowSnapshot("opencode-go", "OpenCode Go", shortRemaining: 80, longRemaining: 60)
+
+        // 默认显示 + 默认样式（点 + 字）
+        var projection = MenuBarQuotaModel.projection(
+            snapshots: [opencode],
+            settings: settings(),
+            todaySummary: .empty,
+            peakTiers: [entry]
+        )
+        XCTAssertEqual(projection.peakTiers, [entry])
+        XCTAssertEqual(projection.peakBadgeStyle, .dotWord)
+
+        // 设置页关掉「显示峰/谷标识」→ 时刻表被整体收走，菜单栏不渲染
+        projection = MenuBarQuotaModel.projection(
+            snapshots: [opencode],
+            settings: settings(showPeakBadge: false),
+            todaySummary: .empty,
+            peakTiers: [entry]
+        )
+        XCTAssertTrue(projection.peakTiers.isEmpty)
+
+        // 样式透传给渲染层
+        projection = MenuBarQuotaModel.projection(
+            snapshots: [opencode],
+            settings: settings(peakBadgeStyle: .pill),
+            todaySummary: .empty,
+            peakTiers: [entry]
+        )
+        XCTAssertEqual(projection.peakBadgeStyle, .pill)
     }
 }

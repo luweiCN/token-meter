@@ -54,6 +54,7 @@
   --s2: #a277ff;
   --s3: #44ffb1;
   --s4: #ffe073;
+  --s5: #ff7a5c;
 
   /* Chart segment fills (StackedBarChart reads these via --seg-*). Assigned to
      keep adjacent stack segments far apart in hue and to give the dominant
@@ -127,6 +128,7 @@
   --s2: #7a4fe0;
   --s3: #0f9d6e;
   --s4: #9a7500;
+  --s5: #c2542e;
 
   --seg-input: #0895bd;
   --seg-cache-write: #0f9d6e;
@@ -2375,6 +2377,12 @@ th.sort.desc::after{content:"↓";opacity:1;color:var(--accent)}
 .mbar.mblight .g-ok{color:#0f9d6e}.mbar.mblight .g-warn{color:#9a7500}.mbar.mblight .g-bad{color:#c92a2a}.mbar.mblight .g-off{color:rgba(0,0,0,.32)}
 .mbar.mbdark .mbcell .nm{color:#fff}
 .mbar.mblight .mbcell .nm{color:#000}
+/* 峰/谷标识（高峰黄演示）：点 / 着色字 / 胶囊底 */
+.mbpeak-dot{width:6px;height:6px;border-radius:50%;background:#ffe073}
+.mbar.mblight .mbpeak-dot{background:#9a7500}
+.mbpeak-word{font-size:11px;font-weight:600;font-style:normal}
+.mbpeak-pill{font-size:10px;font-weight:600;font-style:normal;line-height:1;padding:2px 4px;border-radius:999px;background:#ffe073;color:#000}
+.mbar.mblight .mbpeak-pill{background:#9a7500;color:#fff}
 .mbar.mbdark .mb-deck2 .u b,.mbar.mbdark .mb-tagnum .u b{color:#fff}
 .mbar.mblight .mb-deck2 .u b,.mbar.mblight .mb-tagnum .u b{color:#000}
 .mbglyph{display:inline-flex}

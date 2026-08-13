@@ -12,6 +12,8 @@ const base: MenubarPreviewState = {
   showNumber: true,
   usage: 'tok',
   windowOrder: 'longFirst',
+  showPeakBadge: false,
+  peakBadgeStyle: 'dotWord',
   providers: PREVIEW_PROVIDERS.map((p) => ({
     id: p.id,
     visible: p.id !== 'omp',
@@ -31,6 +33,16 @@ describe('MenubarPreviewBar', () => {
     expect(container.querySelectorAll('.mbcell').length).toBe(5);
     expect(container.querySelectorAll('svg').length).toBeGreaterThan(0);
     expect(screen.getByText('214.8M')).toBeTruthy();
+  });
+
+  it('renders the peak badge preview only when enabled, in the chosen style', () => {
+    const hidden = render(<MenubarPreviewBar mode="dark" state={base} />);
+    expect(hidden.container.querySelector('.mbpeak-dot, .mbpeak-pill')).toBeNull();
+
+    const pill = render(
+      <MenubarPreviewBar mode="dark" state={{ ...base, showPeakBadge: true, peakBadgeStyle: 'pill' }} />
+    );
+    expect(pill.container.querySelector('.mbpeak-pill')?.textContent).toBe('峰');
   });
 
   it('digits style renders no glyph and honors window order', () => {

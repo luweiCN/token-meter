@@ -2,6 +2,27 @@ import Combine
 import Foundation
 import TokenMeterCore
 
+/// 带峰谷价的模型、定价品牌与上报它的服务商。峰谷是【模型品牌】的定价策略
+/// （今天是 DeepSeek），服务商只是计费通道——展示层按品牌归行，不按服务商。
+/// 之后再有厂商采用分时定价，在 ProviderStore.tieredModelBrands 里补一条即可。
+struct TieredPricingEntry: Equatable, Identifiable {
+    let providerId: String
+    let brandName: String
+    let modelName: String
+    let tier: PeakOffPeakPricing
+
+    var id: String { "\(providerId)/\(modelName)" }
+}
+
+/// 弹窗「峰谷时段」区块的一行：同一定价品牌下所有带峰谷价的模型归并成一行。
+struct PeakPricingRow: Equatable, Identifiable {
+    let brandName: String
+    let modelNames: [String]
+    let tier: PeakOffPeakPricing
+
+    var id: String { brandName }
+}
+
 @MainActor
 final class ProviderStore: ObservableObject {
     @Published private(set) var snapshots: [UsageSnapshot] = []
@@ -13,6 +34,8 @@ final class ProviderStore: ObservableObject {
     /// 弹窗头部「今日」汇总（OpenDesign 稿）；本地索引每次更新后重查。
     @Published private(set) var todaySummary: MenuBarTodaySummary = .empty
     @Published private(set) var localIndexUpdatedAt: Date?
+    /// 当前显示汇率（USD→CNY）。启动先读缓存/兜底，随后按需刷新。
+    @Published private(set) var exchangeRate: ExchangeRate
     /// 弹窗底部「暂停扫描」（OpenDesign 稿）：暂停期间定时器照跳，但两类刷新都短路。
     @Published var isScanPaused = false
     /// refreshLocalAgentIndex 的 in-flight 互斥（MainActor 串行，但 await 让出时可重入）。
@@ -27,6 +50,15 @@ final class ProviderStore: ObservableObject {
     private let settingsStore: SettingsStore?
     private let scanner: LocalAgentScanner?
     private let liveSessions: LiveSessionStore?
+    /// 所有带峰谷价的模型（含品牌与服务商归属）。随包快照读取；加载失败时为空，
+    /// 菜单栏标识与弹窗「峰谷时段」区块随之隐藏，不影响额度显示。
+    let tieredPricingEntries: [TieredPricingEntry]
+    /// 峰谷价模型 → (上报服务商, 定价品牌)。上游快照只按模型计价，模型本身
+    /// 不标品牌/服务商，这里补归属；未来有别的厂商上分时价时加映射即可。
+    static let tieredModelBrands: [String: (providerId: String, brandName: String)] = [
+        "deepseek-v4-flash": ("opencode-go", "DeepSeek"),
+        "deepseek-v4-pro": ("opencode-go", "DeepSeek"),
+    ]
 
     convenience init() {
         self.init(config: ProviderStore.loadConfig())
@@ -67,6 +99,8 @@ final class ProviderStore: ObservableObject {
         self.settingsStore = openedDatabase.map(SettingsStore.init(database:))
         self.scanner = openedDatabase.map(LocalAgentScanner.init(database:))
         self.liveSessions = openedDatabase.map(LiveSessionStore.init(database:))
+        self.tieredPricingEntries = ProviderStore.loadTieredPricingEntries()
+        self.exchangeRate = ExchangeRateProvider.cachedOrFallback()
 
         if let openedDatabase, let settingsStore {
             do {
@@ -86,6 +120,54 @@ final class ProviderStore: ObservableObject {
         let cachedSnapshots = (try? ProviderSnapshotDiskCache.read(from: snapshotCacheURL)) ?? []
         self.providerSnapshots = cachedSnapshots
         self.snapshots = cachedSnapshots.map(\.legacySnapshot)
+    }
+
+    /// 金额显示币种（设置页写入，Swift 只读）。默认人民币。
+    var displayCurrency: DisplayCurrency {
+        settingsSnapshot?.displayCurrency ?? .cny
+    }
+
+    /// 缓存过期才联网；失败退回缓存/兜底，绝不阻塞额度显示。
+    func refreshExchangeRate() async {
+        exchangeRate = await ExchangeRateProvider.refreshIfNeeded()
+    }
+
+    private static func loadTieredPricingEntries() -> [TieredPricingEntry] {
+        guard let snapshot = try? PricingSnapshot.loadBundled() else { return [] }
+        let entries = tieredModelBrands.compactMap { modelName, owner -> TieredPricingEntry? in
+            snapshot.models[modelName]?.tiered.map {
+                TieredPricingEntry(
+                    providerId: owner.providerId,
+                    brandName: owner.brandName,
+                    modelName: modelName,
+                    tier: $0
+                )
+            }
+        }
+        return entries.sorted { $0.id < $1.id }
+    }
+
+    /// 弹窗「峰谷时段」区块的展示行：只在对应服务商启用且出了额度卡时出现，
+    /// 同一品牌（DeepSeek 的 flash/pro）归并成一行。
+    var peakPricingRows: [PeakPricingRow] {
+        let visibleProviderIds = Set(displayProviderSnapshots.map(\.providerId))
+        var grouped: [String: (models: [String], tier: PeakOffPeakPricing)] = [:]
+        for entry in tieredPricingEntries {
+            guard visibleProviderIds.contains(entry.providerId) else { continue }
+            if var existing = grouped[entry.brandName] {
+                existing.models.append(entry.modelName)
+            } else {
+                grouped[entry.brandName] = ([entry.modelName], entry.tier)
+            }
+        }
+        return grouped.map { brandName, value in
+            PeakPricingRow(
+                brandName: brandName,
+                modelNames: value.models.sorted(),
+                tier: value.tier
+            )
+        }
+        .sorted { $0.brandName < $1.brandName }
     }
 
     /// 设置页的供应商启停（provider_config_overrides.enabled）。没写过 override 的默认启用。
@@ -320,7 +402,7 @@ final class ProviderStore: ObservableObject {
 
 private extension SourceKind {
     static var allCasesForLocalIndex: [SourceKind] {
-        [.claudeJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL]
+        [.claudeJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL, .reasonixStats]
     }
 }
 
@@ -335,6 +417,8 @@ private extension LocalAgentKind {
             .opencodeSQLite
         case .omp:
             .ompJSONL
+        case .reasonix:
+            .reasonixStats
         }
     }
 }

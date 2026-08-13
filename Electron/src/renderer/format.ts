@@ -1,5 +1,14 @@
 /// 概览页各处共用的格式化。放一处，避免 KPI、排行、会话列表各写一份漂移。
 
+/// 金额显示口径：美元照存储值直出，人民币按主进程注入的日更汇率换算。
+/// settingsStore.load() 每次拿到设置后同步进来；未加载前默认美元，
+/// 避免初始化一闪而过的人民币估值。
+let moneyDisplay: { currency: 'usd' | 'cny'; usdToCny: number } = { currency: 'usd', usdToCny: 6.76 };
+
+export function setMoneyDisplay(currency: 'usd' | 'cny', usdToCny: number): void {
+  moneyDisplay = { currency, usdToCny };
+}
+
 export function formatCount(value: number): string {
   return new Intl.NumberFormat('en-US').format(value);
 }
@@ -19,7 +28,14 @@ export function formatTokens(value: number, dailyScale = false): string {
 /// 成本以微美元存储。成本从 rollup 读出来永远是数字（NULL 已被折成 0），看不出是否完整——
 /// 「部分未知」由 costUnknownEvents 单独表达，见 formatUnknownCostNote 与各处调用点。
 export function formatUsdMicros(micros: number): string {
-  return `$${(micros / 1_000_000).toLocaleString('en-US', {
+  const usd = micros / 1_000_000;
+  if (moneyDisplay.currency === 'cny') {
+    return `¥${(usd * moneyDisplay.usdToCny).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    })}`;
+  }
+  return `$${usd.toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })}`;

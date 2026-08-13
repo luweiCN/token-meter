@@ -953,20 +953,21 @@ final class LocalAgentScannerTests: XCTestCase {
         let homeDirectory = URL(fileURLWithPath: "/tmp/token-meter-home", isDirectory: true)
         let roots = TokenMeterPaths.defaultScanRoots(homeDirectory: homeDirectory, environment: [:])
 
-        XCTAssertEqual(roots.map(\.kind), [.claudeJSONL, .codexJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL])
+        XCTAssertEqual(roots.map(\.kind), [.claudeJSONL, .codexJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL, .reasonixStats])
         XCTAssertEqual(roots.map { $0.rootURL.path }, [
             "/tmp/token-meter-home/.claude/projects",
             "/tmp/token-meter-home/.codex/sessions",
             "/tmp/token-meter-home/.codex/archived_sessions",
             "/tmp/token-meter-home/.local/share/opencode/opencode.db",
-            "/tmp/token-meter-home/.omp/agent/sessions"
+            "/tmp/token-meter-home/.omp/agent/sessions",
+            "/tmp/token-meter-home/.reasonix/stats"
         ])
 
         let database = try SQLiteDatabase(path: ":memory:")
         try TokenMeterDatabaseMigrator.migrate(database)
         try LocalAgentScanner.seedDefaultScanRoots(database: database, homeDirectory: homeDirectory, environment: [:])
 
-        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM scan_roots"), 5)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM scan_roots"), 6)
         // 两个 codex root 的 stable_source_key 靠 path 区分，不撞 UNIQUE(stable_source_key)。
         XCTAssertEqual(
             try database.query("SELECT stable_source_key FROM scan_roots WHERE kind = ? ORDER BY root_path", [.text(SourceKind.codexJSONL.rawValue)])

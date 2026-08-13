@@ -1,3 +1,5 @@
+import Foundation
+
 public enum TokenMeterDatabaseMigrator {
     /// 永不删除的配置表。其余出现在库里的一切都被当作派生数据看待。
     static let configTableNames: Set<String> = ["settings", "provider_config_overrides", "scan_roots"]
@@ -20,6 +22,8 @@ public enum TokenMeterDatabaseMigrator {
         try database.execute(TokenMeterDatabaseSchema.configTables)
         // 配置表不参与版本重建，新增列走幂等 additive 迁移（必须每次跑，不受版本短路影响）。
         try ensureConfigColumns(database)
+        try ensureScanRootsKind(database)
+        try ensureNewAgentDefaults(database)
 
         let currentVersion = try database.query("PRAGMA user_version")[0].int("user_version") ?? 0
         if currentVersion != TokenMeterDatabaseSchema.derivedVersion {
@@ -56,6 +60,84 @@ public enum TokenMeterDatabaseMigrator {
                 "ALTER TABLE provider_config_overrides ADD COLUMN menubar_number_windows TEXT"
             )
         }
+    }
+
+    /// scan_roots.kind 的 CHECK 约束无法 ALTER：新增 kind（如 reasonix_stats）时旧库
+    /// 会拒绝插入。幂等重建——建新表（最新 CHECK）、原样搬行、换名。列定义与
+    /// TokenMeterDatabaseSchema.configTables 的 scan_roots 保持同构。
+    /// 全程关外键：source_files 引用 scan_root_id，开着外键 DROP 会被引用检查绊住；
+    /// source_files 属派生数据，随后按需重建。
+    private static func ensureScanRootsKind(_ database: SQLiteDatabase) throws {
+        let createSQL = try database.query(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'scan_roots'"
+        )[0].string("sql") ?? ""
+        guard !createSQL.contains("reasonix_stats") else { return }
+
+        try database.execute("PRAGMA foreign_keys = OFF")
+        defer { try? database.execute("PRAGMA foreign_keys = ON") }
+        try database.execute(
+            """
+            CREATE TABLE scan_roots_new (
+              id INTEGER PRIMARY KEY,
+              kind TEXT NOT NULL CHECK (kind IN ('claude_jsonl', 'codex_jsonl', 'omp_jsonl', 'opencode_sqlite', 'reasonix_stats')),
+              root_path TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+              scan_mode TEXT NOT NULL DEFAULT 'incremental' CHECK (scan_mode IN ('incremental', 'full', 'disabled')),
+              file_glob TEXT,
+              source_db_path TEXT,
+              stable_source_key TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              last_scan_started_at TEXT,
+              last_scan_finished_at TEXT,
+              last_successful_cursor TEXT,
+              last_error TEXT,
+              UNIQUE(kind, root_path),
+              UNIQUE(stable_source_key)
+            )
+            """
+        )
+        try database.execute(
+            """
+            INSERT INTO scan_roots_new (
+              id, kind, root_path, display_name, enabled, scan_mode, file_glob, source_db_path,
+              stable_source_key, created_at, updated_at, last_scan_started_at,
+              last_scan_finished_at, last_successful_cursor, last_error
+            )
+            SELECT id, kind, root_path, display_name, enabled, scan_mode, file_glob, source_db_path,
+                   stable_source_key, created_at, updated_at, last_scan_started_at,
+                   last_scan_finished_at, last_successful_cursor, last_error
+            FROM scan_roots
+            """
+        )
+        try database.execute("DROP TABLE scan_roots")
+        try database.execute("ALTER TABLE scan_roots_new RENAME TO scan_roots")
+    }
+
+    /// 老库的 enabledAgentKinds 是导入时的默认集（不含后来新增的 agent）：
+    /// 仅当数组恰好等于旧默认全集（没被用户改过）时，把新 agent（reasonix）补进默认启用列表。
+    /// 用户手动调整过（关掉某个 agent、或关掉 reasonix 后又重启）数组就不再等于旧全集，
+    /// 不会被反复加回来——这是幂等的关键。
+    private static func ensureNewAgentDefaults(_ database: SQLiteDatabase) throws {
+        let legacyDefaults = Set(["claudeCode", "codex", "opencode", "omp"])
+        let rows = try database.query(
+            "SELECT value_json FROM settings WHERE key = 'filters.enabledAgentKinds'"
+        )
+        guard let json = rows.first?.string("value_json"),
+              let data = json.data(using: .utf8),
+              var kinds = try? JSONSerialization.jsonObject(with: data) as? [String],
+              Set(kinds) == legacyDefaults else {
+            return
+        }
+        kinds.append("reasonix")
+        guard let updated = String(data: try JSONSerialization.data(withJSONObject: kinds), encoding: .utf8) else {
+            return
+        }
+        try database.execute(
+            "UPDATE settings SET value_json = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'filters.enabledAgentKinds'",
+            [.text(updated)]
+        )
     }
 
     private static func rebuildDerivedTables(_ database: SQLiteDatabase) throws {

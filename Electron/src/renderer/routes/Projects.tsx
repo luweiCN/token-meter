@@ -4,6 +4,15 @@ import type { ProjectCard, ProjectDetail, SessionItem, SessionsFilter } from '..
 import { chartAnimationDelay } from '../charts/chartMotion.js';
 import { Pager, Select } from '../components/ui.js';
 import { formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
+
+/// agent 显示名（与总览 PROVIDER_LABEL 同名单；名单外回落原始 id）。
+const AGENT_LABEL: Record<string, string> = {
+  'claude-code': 'Claude Code',
+  codex: 'Codex CLI',
+  omp: 'OMP',
+  opencode: 'OpenCode',
+  reasonix: 'Reasonix'
+};
 import { SessionCell, SessionDetail } from './Sessions.js';
 
 /// 项目页（OpenDesign 稿 view-projects / view-project-detail）：
@@ -238,7 +247,7 @@ function ProjectDetailView({ card, onBack }: { card: ProjectCard; onBack: () => 
             <div>
               {detail!.agents.map((a, index) => (
                 <div className="mbar dist-row" key={a.providerId}>
-                  <span className="mname dist-name">{a.providerId}</span>
+                  <span className="mname dist-name">{AGENT_LABEL[a.providerId] ?? a.providerId}</span>
                   <div className="bar">
                     <i
                       className="chart-bar-x-in"

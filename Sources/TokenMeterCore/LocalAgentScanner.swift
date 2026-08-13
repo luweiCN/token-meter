@@ -107,7 +107,7 @@ public final class LocalAgentScanner {
 
         do {
             switch root.kind {
-            case .claudeJSONL, .codexJSONL, .ompJSONL:
+            case .claudeJSONL, .codexJSONL, .ompJSONL, .reasonixStats:
                 try scanJSONLRoot(root, runId: runId, progress: progress, reporter: reporter)
 
             case .opencodeSQLite:
@@ -187,7 +187,7 @@ public final class LocalAgentScanner {
         for rootId in rootIds {
             guard let root = try loadEnabledRoot(id: rootId) else { continue }
             switch root.kind {
-            case .claudeJSONL, .codexJSONL, .ompJSONL:
+            case .claudeJSONL, .codexJSONL, .ompJSONL, .reasonixStats:
                 for file in try jsonlFiles(under: root.rootURL) {
                     files += 1
                     bytes += (try? fileMetadata(for: file).sizeBytes) ?? 0
@@ -563,6 +563,8 @@ public final class LocalAgentScanner {
             return CodexUsageEventParser(resuming: state)
         case .ompJSONL:
             return OmpUsageEventParser(resuming: state)
+        case .reasonixStats:
+            return ReasonixStatsParser(resuming: state)
         case .opencodeSQLite:
             throw LocalAgentParserError.unsupportedFormat
         }
@@ -576,7 +578,7 @@ public final class LocalAgentScanner {
         switch kind {
         case .codexJSONL:
             return ["token_count", "session_meta", "turn_context", "task_started"]
-        case .claudeJSONL, .ompJSONL, .opencodeSQLite:
+        case .claudeJSONL, .ompJSONL, .opencodeSQLite, .reasonixStats:
             return nil
         }
     }

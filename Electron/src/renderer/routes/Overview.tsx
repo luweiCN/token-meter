@@ -45,7 +45,8 @@ const PROVIDER_LABEL: Record<string, string> = {
   'claude-code': 'Claude Code',
   codex: 'Codex CLI',
   omp: 'OMP',
-  opencode: 'OpenCode'
+  opencode: 'OpenCode',
+  reasonix: 'Reasonix'
 };
 
 function providerLabel(id: string | null, names: Record<string, string>): string {

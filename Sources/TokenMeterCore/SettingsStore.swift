@@ -17,7 +17,7 @@ public final class SettingsStore {
         do {
             try set("menuBar.primaryProviderId", value: .text(config.menuBar.primaryProviderId ?? ""), version: 1, updatedBy: .importer)
             try set("scan.autoRefreshSeconds", value: .int(300), version: 1, updatedBy: .importer)
-            try setJSON("filters.enabledAgentKinds", json: jsonString(["claudeCode", "codex", "opencode", "omp"]), version: 1, updatedBy: .importer)
+            try setJSON("filters.enabledAgentKinds", json: jsonString(["claudeCode", "codex", "opencode", "omp", "reasonix"]), version: 1, updatedBy: .importer)
             for (index, provider) in config.providers.enumerated() {
                 try database.execute(
                     """
@@ -82,7 +82,9 @@ public final class SettingsStore {
             enabledAgentKinds: enabledAgentKinds,
             providerOverrides: providerOverrides,
             quotaUsedThresholdPercent: Int(try settingInt("notifications.quotaUsedThresholdPercent") ?? 0),
-            menuBarAppearance: menuBarAppearance()
+            menuBarAppearance: menuBarAppearance(),
+            displayCurrency: (try? settingString("display.currency"))
+                .flatMap(DisplayCurrency.init(rawValue:)) ?? .cny
         )
     }
 
@@ -111,7 +113,9 @@ public final class SettingsStore {
             showGlyph: flag("menubar.showGlyph"),
             showNumber: flag("menubar.showNumber"),
             usage: string("menubar.usage").flatMap(MenuBarUsageTail.init(rawValue:)) ?? .tok,
-            windowOrder: string("menubar.windowOrder").flatMap(MenuBarWindowOrder.init(rawValue:)) ?? .longFirst
+            windowOrder: string("menubar.windowOrder").flatMap(MenuBarWindowOrder.init(rawValue:)) ?? .longFirst,
+            showPeakBadge: flag("menubar.showPeakBadge"),
+            peakBadgeStyle: string("menubar.peakBadgeStyle").flatMap(PeakBadgeStyle.init(rawValue:)) ?? .dotWord
         )
     }
 

@@ -488,7 +488,7 @@ public struct OpenCodeGoUsageProvider: UsageProvider {
 }
 
 /// 把控制台窗口数据组装为 ProviderUsageSnapshot（纯函数，可测）。
-/// 主组三窗（5h + Weekly + Monthly）：弹窗环平级三只；
+/// 主组三窗（5h + Weekly + Monthly）：弹窗环两只（5h + 7d）、月度降为水平条；
 /// 菜单栏取首尾（short=5h、long=月度）。
 public enum OpenCodeGoSnapshotBuilder {
     public static func snapshot(
@@ -501,15 +501,19 @@ public enum OpenCodeGoSnapshotBuilder {
         let monthly = windows.first { $0.label == "Monthly" }
 
         func metric(_ window: OpenCodeGoUsageWindowData, id: String, label: String, minutes: Int) -> UsageMetric {
-            UsageMetric(
+            // dashboard 的「重置于 X」是页面渲染时算好的倒计时；抓取时刻再加一
+            // 次瞬时偏差即可当作重置时刻（弹窗环下方与其他套餐同款显示倒计时）。
+            let resetAt = window.resetsInSeconds.map { Date().addingTimeInterval($0) }
+            return UsageMetric(
                 id: id,
                 label: label,
                 kind: .quota,
                 usedPercent: window.usagePercent,
                 remainingPercent: max(0, 100 - window.usagePercent),
-                resetText: nil,
+                resetText: resetAt.map(countdownText),
                 status: .ok,
                 detail: nil,
+                resetAt: resetAt,
                 windowDurationMinutes: minutes
             )
         }

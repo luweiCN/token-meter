@@ -43,6 +43,7 @@ struct MBTheme: Equatable {
         case "codex": return self == .light ? Color(hex: 0x7A4FE0) : Color(hex: 0xA277FF)
         case "omp": return ok
         case "opencode": return warn
+        case "reasonix": return self == .light ? Color(hex: 0xC2542E) : Color(hex: 0xFF7A5C)
         default: return muted
         }
     }
@@ -137,6 +138,7 @@ enum MenuBarProviderName {
         case "codex": return "Codex CLI"
         case "omp": return "OMP"
         case "opencode": return "OpenCode"
+        case "reasonix": return "Reasonix"
         default: return providerId
         }
     }
@@ -148,8 +150,14 @@ enum MenuBarNumberFormat {
         UsageFormatter.compactTokens(value)
     }
 
-    static func usd(_ micros: Int64) -> String {
-        String(format: "$%.2f", Double(micros) / 1_000_000)
+    /// 金额显示：美元直接用存储值，人民币按当前汇率换算。两位小数。
+    static func money(_ micros: Int64, currency: DisplayCurrency, usdToCny: Double) -> String {
+        switch currency {
+        case .usd:
+            return String(format: "$%.2f", Double(micros) / 1_000_000)
+        case .cny:
+            return String(format: "¥%.2f", Double(micros) / 1_000_000 * usdToCny)
+        }
     }
 }
 
@@ -196,7 +204,11 @@ struct PopoverView: View {
             // 吸顶头部：毛玻璃 + surface 叠加，滚动内容从下面穿过时层次分明。
             VStack(spacing: 0) {
                 PanelHead(store: store, themeName: $themeName)
-                TodayBlock(summary: store.todaySummary)
+                TodayBlock(
+                    summary: store.todaySummary,
+                    displayCurrency: store.displayCurrency,
+                    usdToCny: store.exchangeRate.usdToCny
+                )
                 SourceLine(text: sourceLineText)
                 PanelDivider()
             }
@@ -220,11 +232,22 @@ struct PopoverView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Color.clear.frame(height: 6)
 
+                    if !store.peakPricingRows.isEmpty {
+                        SectionBlock(title: "峰谷时段") {
+                            PeakPricingSection(rows: store.peakPricingRows)
+                        }
+                        PanelDivider()
+                    }
+
                     if !store.todaySummary.perProvider.isEmpty {
                         SectionBlock(title: "Agent") {
                             VStack(spacing: 0) {
                                 ForEach(store.todaySummary.perProvider, id: \.providerId) { row in
-                                    ProviderRow(row: row)
+                                    ProviderRow(
+                                        row: row,
+                                        displayCurrency: store.displayCurrency,
+                                        usdToCny: store.exchangeRate.usdToCny
+                                    )
                                 }
                             }
                         }
@@ -233,7 +256,11 @@ struct PopoverView: View {
 
                     if !store.todaySummary.perModel.isEmpty {
                         SectionBlock(title: "模型") {
-                            ModelListBlock(models: store.todaySummary.perModel)
+                            ModelListBlock(
+                                models: store.todaySummary.perModel,
+                                displayCurrency: store.displayCurrency,
+                                usdToCny: store.exchangeRate.usdToCny
+                            )
                         }
                         PanelDivider()
                     }
@@ -428,6 +455,8 @@ private extension View {
 
 private struct TodayBlock: View {
     let summary: MenuBarTodaySummary
+    let displayCurrency: DisplayCurrency
+    let usdToCny: Double
     @Environment(\.mbTheme) private var theme
 
     var body: some View {
@@ -444,7 +473,8 @@ private struct TodayBlock: View {
             }
 
             (Text("花费 ")
-                + Text(MenuBarNumberFormat.usd(summary.costUsdMicros)).foregroundColor(theme.fg2)
+                + Text(MenuBarNumberFormat.money(summary.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny))
+                    .foregroundColor(theme.fg2)
                 + Text(" · ")
                 + Text("\(summary.sessions)").foregroundColor(theme.fg2)
                 + Text(" 个会话"))
@@ -597,10 +627,117 @@ private struct SectionBlock<Content: View>: View {
     }
 }
 
+// MARK: - .sec 峰谷时段：分时计价的当前档位与下次切换
+
+/// 独立区块：每个采用峰谷定价的品牌一行，显示当前峰/谷与下次切换时刻。
+/// 设计成按定价品牌归并而不是绑死 DeepSeek——后续厂商上分时价时，
+/// ProviderStore.peakPricingRows 长出几行这里就多显示几行。
+private struct PeakPricingSection: View {
+    let rows: [PeakPricingRow]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                VStack(spacing: 0) {
+                    ForEach(rows) { row in
+                        PeakPhaseRow(row: row, now: context.date)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct PeakPhaseRow: View {
+    let row: PeakPricingRow
+    let now: Date
+    @Environment(\.mbTheme) private var theme
+
+    private var phase: PeakOffPeakPhase { row.tier.schedulePhase(at: now) }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Circle()
+                .fill(dotColor)
+                .frame(width: 7, height: 7)
+
+            HStack(spacing: 6) {
+                Text(row.brandName)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(theme.fg)
+                    .lineLimit(1)
+                Text(phaseLabel)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(dotColor)
+            }
+
+            Spacer(minLength: 8)
+
+            Text(transitionText)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(theme.muted)
+                .monospacedDigit()
+                .fixedSize()
+        }
+        .padding(.vertical, 5)
+        .help(helpText)
+    }
+
+    private var dotColor: Color {
+        switch phase {
+        case .peak: return theme.warn
+        case .offPeak, .notYetEffective: return theme.ok
+        }
+    }
+
+    private var phaseLabel: String {
+        switch phase {
+        case .peak: return "峰"
+        case .offPeak, .notYetEffective: return "谷"
+        }
+    }
+
+    private var transitionText: String {
+        guard let transition = row.tier.nextTransition(after: now) else { return "" }
+        let time = Self.timeText(transition.at, sameDayAs: now)
+        switch transition.phase {
+        case .peak: return "\(time) 转峰"
+        case .offPeak, .notYetEffective: return "\(time) 转谷"
+        }
+    }
+
+    /// 时段说明收进悬停提示，行内只留明确标识。
+    private var helpText: String {
+        let windows = row.tier.beijingPeakRanges.map { start, end in
+            String(format: "%d:00–%d:00", start, end)
+        }
+        .joined(separator: "、")
+        var lines = [
+            "\(row.brandName)：\(row.modelNames.joined(separator: " / "))",
+            "高峰：\(windows)（北京时间）",
+        ]
+        if row.tier.weekdaysOnly {
+            lines.append("仅工作日；周末与法定节假日整天空闲")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// 同一天只显示时刻，跨天带日期与星期（用户机器时区，通常是北京）。
+    private static func timeText(_ date: Date, sameDayAs now: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = .current
+        formatter.dateFormat = Calendar.current.isDate(date, inSameDayAs: now) ? "HH:mm" : "M/d (EEE) HH:mm"
+        return formatter.string(from: date)
+    }
+}
+
 // MARK: - .prow：今日按服务商行
 
 private struct ProviderRow: View {
     let row: MenuBarTodaySummary.ProviderToday
+    let displayCurrency: DisplayCurrency
+    let usdToCny: Double
     @Environment(\.mbTheme) private var theme
 
     var body: some View {
@@ -622,7 +759,7 @@ private struct ProviderRow: View {
                 .monospacedDigit()
                 .rollingNumber(value: row.tokens)
 
-            Text("\(MenuBarNumberFormat.usd(row.costUsdMicros)) · \(row.sessions) 会话")
+            Text("\(MenuBarNumberFormat.money(row.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny)) · \(row.sessions) 会话")
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(theme.muted)
                 .monospacedDigit()
@@ -640,6 +777,8 @@ private struct ProviderRow: View {
 /// 与订阅额度手风琴同款行为。弹窗每次打开重建视图 → 每次都回到收起态。
 private struct ModelListBlock: View {
     let models: [MenuBarTodaySummary.ModelToday]
+    let displayCurrency: DisplayCurrency
+    let usdToCny: Double
     @Environment(\.mbTheme) private var theme
     @State private var expanded = false
 
@@ -648,7 +787,7 @@ private struct ModelListBlock: View {
     var body: some View {
         VStack(spacing: 0) {
             ForEach(expanded ? models : Array(models.prefix(Self.visibleCount)), id: \.model) { row in
-                ModelRow(row: row)
+                ModelRow(row: row, displayCurrency: displayCurrency, usdToCny: usdToCny)
             }
 
             if models.count > Self.visibleCount {
@@ -679,6 +818,8 @@ private struct ModelListBlock: View {
 /// 不显示会话数——按模型数会话会重复计（一个会话可用多个模型，既有裁定）。
 private struct ModelRow: View {
     let row: MenuBarTodaySummary.ModelToday
+    let displayCurrency: DisplayCurrency
+    let usdToCny: Double
     @Environment(\.mbTheme) private var theme
 
     var body: some View {
@@ -697,7 +838,7 @@ private struct ModelRow: View {
                 .monospacedDigit()
                 .rollingNumber(value: row.tokens)
 
-            Text(MenuBarNumberFormat.usd(row.costUsdMicros))
+            Text(MenuBarNumberFormat.money(row.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny))
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(theme.muted)
                 .monospacedDigit()
@@ -771,15 +912,21 @@ struct QuotaDisplayModel {
         let staleSeconds = now.timeIntervalSince(snapshot.fetchedAt)
         staleMinutes = staleSeconds >= 600 ? Int(staleSeconds / 60) : nil
 
-        // 环＝主组（组名与 provider 同名）的主窗口，至多三只（OpenCode Go 的
-        // 5h/周/月三窗口平级全环）；其余——主组的第四个起（如智谱 MCP）和
-        // 全部模型级次要组（Spark/Fable）——一律水平条，次要额度不和主额度平起平坐。
+        // 环＝主组（组名与 provider 同名）的主窗口，至多两只（一行放不下第三只：
+        // 三环并排每卡只剩 ~29pt 放标签/倒计时，用户裁定 OpenCode 的 30d 与智谱
+        // MCP 这类第三额度一律降为水平条）；主组里没有窗口时长的额度（智谱 MCP
+        // 这类按次数计的额度）同样降为水平条，不和主额度平起平坐；其余——主组的
+        // 第三个起和全部模型级次要组（Spark/Fable）——也一律水平条。
         // 展示值统一为【剩余】：此前环里是已用（22%）、折叠行与 tmux 段是剩余（78%），
         // 一屏两种语义。
         let percentMetrics = labeledMetrics.filter { $0.metric.usedPercent != nil }
-        var ringMetrics = Array(percentMetrics.filter(\.isPrimary).prefix(3))
+        var ringMetrics = percentMetrics.filter { $0.isPrimary && $0.metric.windowDurationMinutes != nil }
         if ringMetrics.isEmpty {
-            ringMetrics = Array(percentMetrics.prefix(3))
+            ringMetrics = percentMetrics.filter(\.isPrimary)
+        }
+        ringMetrics = Array(ringMetrics.prefix(2))
+        if ringMetrics.isEmpty {
+            ringMetrics = Array(percentMetrics.prefix(2))
         }
         let ringIds = Set(ringMetrics.map(\.metric.id))
         // 状态异常/用尽直接红；其余交给时间进度感知的 pace 逻辑。
@@ -1163,11 +1310,15 @@ private struct QRingCard: View {
                 Text(ring.label)
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(theme.fg)
+                    .lineLimit(1)
                 if let reset = ring.resetText {
                     Text(reset)
                         .font(.system(size: 10))
                         .foregroundStyle(theme.muted)
                         .lineLimit(1)
+                        // 三环并排时 VStack 只剩 ~29pt（OpenCode 的 27d18h 需要 ~33pt）：
+                        // 放不下先缩字体而不是截成「27d…」，倒计时信息要完整。
+                        .minimumScaleFactor(0.75)
                 }
             }
             Spacer(minLength: 0)
@@ -1499,4 +1650,3 @@ private extension View {
         }
     }
 }
-

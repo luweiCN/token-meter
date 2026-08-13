@@ -160,6 +160,26 @@ class OverrideTests(unittest.TestCase):
         "cacheWrite5mPerMTok": 0.0,
         "cacheWrite1hPerMTok": 0.0,
     }
+    TIERED = {
+        "effectiveAfter": "2026-08-16T16:00:00Z",
+        "peakHoursUTC": [1, 2, 3, 6, 7, 8, 9],
+        "weekdaysOnly": True,
+        "holidays": [{"year": 2026, "month": 10, "day": 1}],
+        "peak": {
+            "inputPerMTok": 0.44,
+            "outputPerMTok": 1.32,
+            "cacheReadPerMTok": 0.014,
+            "cacheWrite5mPerMTok": 0.0,
+            "cacheWrite1hPerMTok": 0.28,
+        },
+        "offPeak": {
+            "inputPerMTok": 0.22,
+            "outputPerMTok": 0.66,
+            "cacheReadPerMTok": 0.007,
+            "cacheWrite5mPerMTok": 0.0,
+            "cacheWrite1hPerMTok": 0.28,
+        },
+    }
 
     def test_fills_model_missing_upstream(self):
         models = apply_overrides({}, {"glm-5.2": {**self.PRICE, "note": "出处备忘"}})
@@ -178,6 +198,45 @@ class OverrideTests(unittest.TestCase):
     def test_dies_on_missing_price_field(self):
         with self.assertRaises(SystemExit):
             apply_overrides({}, {"glm-5.2": {"inputPerMTok": 1.4}})
+
+    def test_tiered_passes_through_and_suppresses_upstream_warning(self):
+        # 上游收录同名模型也只有 flat 价，表达不了峰谷价；tiered override
+        # 无条件优先是刻意的，不该再催人删掉它改用上游价。
+        import contextlib, io
+        upstream = {"deepseek/deepseek-v4-flash": {**self.PRICE, "inputPerMTok": 0.5}}
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            models = apply_overrides(upstream, {"deepseek-v4-flash": {**self.PRICE, "tiered": self.TIERED}})
+        self.assertEqual(models["deepseek-v4-flash"]["tiered"], self.TIERED)
+        self.assertNotIn("考虑删除这条 override", stderr.getvalue())
+
+    def test_tiered_dies_on_missing_key(self):
+        bad = {**self.PRICE, "tiered": {"peakHoursUTC": [1], "peak": self.PRICE, "offPeak": self.PRICE}}
+        with self.assertRaises(SystemExit):
+            apply_overrides({}, {"m": bad})
+
+    def test_tiered_dies_on_hour_out_of_range(self):
+        tiered = {**self.TIERED, "peakHoursUTC": [1, 24]}
+        with self.assertRaises(SystemExit):
+            apply_overrides({}, {"m": {**self.PRICE, "tiered": tiered}})
+
+    def test_tiered_dies_on_missing_price_field(self):
+        tiered = {**self.TIERED, "peak": {"inputPerMTok": 0.44}}
+        with self.assertRaises(SystemExit):
+            apply_overrides({}, {"m": {**self.PRICE, "tiered": tiered}})
+
+    def test_tiered_defaults_weekdays_only_off_when_absent(self):
+        # 老式 override 没写 weekdaysOnly/holidays：按每天切价、无节假日豁免，
+        # 输出补齐两个键，旧快照语义不变。
+        tiered = {k: v for k, v in self.TIERED.items() if k not in ("weekdaysOnly", "holidays")}
+        models = apply_overrides({}, {"m": {**self.PRICE, "tiered": tiered}})
+        self.assertEqual(models["m"]["tiered"]["weekdaysOnly"], False)
+        self.assertEqual(models["m"]["tiered"]["holidays"], [])
+
+    def test_tiered_dies_on_bad_holiday(self):
+        tiered = {**self.TIERED, "holidays": [{"year": 2026, "month": 13, "day": 1}]}
+        with self.assertRaises(SystemExit):
+            apply_overrides({}, {"m": {**self.PRICE, "tiered": tiered}})
 
 
 class DivergentCollisionTests(unittest.TestCase):

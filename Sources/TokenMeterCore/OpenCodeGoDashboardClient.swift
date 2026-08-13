@@ -6,18 +6,23 @@ import WebKit
 public struct OpenCodeGoUsageWindowData: Equatable {
     public let label: String
     public let usagePercent: Double
+    /// 页面上的「重置于 X」倒计时换算成的秒数；页面没有该行时为 nil。
+    public let resetsInSeconds: TimeInterval?
 
-    public init(label: String, usagePercent: Double) {
+    public init(label: String, usagePercent: Double, resetsInSeconds: TimeInterval? = nil) {
         self.label = label
         self.usagePercent = usagePercent
+        self.resetsInSeconds = resetsInSeconds
     }
 }
 
 /// 把控制台 DOM 里的 usage-item 行解析为窗口数据（纯函数，可测）。
 /// 标签是 i18n 文案，中英文都出现过（页面语言跟随系统）：
 /// Rolling Usage / Weekly Usage / Monthly Usage 与 滚动用量 / 每周用量 / 每月用量。
+/// reset 文本同样是 i18n（「重置于 1 小时 49 分钟」/「Resets in 1h 49m」），
+/// 统一解析成剩余秒数，不再依赖具体语言。
 public enum OpenCodeGoDashboardParser {
-    public static func parse(items: [(label: String, value: String)]) -> [OpenCodeGoUsageWindowData] {
+    public static func parse(items: [(label: String, value: String, reset: String?)]) -> [OpenCodeGoUsageWindowData] {
         var windows: [OpenCodeGoUsageWindowData] = []
         for item in items {
             let label = item.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -35,9 +40,39 @@ public enum OpenCodeGoDashboardParser {
             } else {
                 continue
             }
-            windows.append(OpenCodeGoUsageWindowData(label: windowLabel, usagePercent: percent))
+            windows.append(OpenCodeGoUsageWindowData(
+                label: windowLabel,
+                usagePercent: percent,
+                resetsInSeconds: resetsInSeconds(from: item.reset)
+            ))
         }
         return windows
+    }
+
+    /// 把「重置于 X 天 Y 小时 / Resets in Xh Ym」这类倒计时文本换算成剩余秒数。
+    /// 只认「数字 + 时间单位」对，单位中英文均可；认不出任何单位返回 nil。
+    static func resetsInSeconds(from text: String?) -> TimeInterval? {
+        guard let text, !text.isEmpty else { return nil }
+        let pattern = #"(\d+(?:\.\d+)?)\s*(天|小时|分钟|秒|日|days?|hours?|minutes?|seconds?|h|m|s|d)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let ns = text as NSString
+        var total: TimeInterval = 0
+        var matched = false
+        for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            guard let value = Double(ns.substring(with: match.range(at: 1))) else { continue }
+            let unit = ns.substring(with: match.range(at: 2))
+            let factor: TimeInterval
+            switch unit {
+            case "天", "日", "d", "day", "days": factor = 86_400
+            case "小时", "h", "hour", "hours": factor = 3_600
+            case "分钟", "m", "minute", "minutes": factor = 60
+            case "秒", "s", "second", "seconds": factor = 1
+            default: continue
+            }
+            total += value * factor
+            matched = true
+        }
+        return matched ? total : nil
     }
 }
 
@@ -159,12 +194,13 @@ public final class OpenCodeGoDashboardClient: NSObject {
         }
         throw FetchError.dataTimeout
     }
-
-    /// 读取渲染后的 usage-item 行（label/value），未渲染时返回空数组。
-    private func readUsageItems() async -> [(label: String, value: String)] {        let script = """
+    /// 读取渲染后的 usage-item 行（label/value/reset），未渲染时返回空数组。
+    private func readUsageItems() async -> [(label: String, value: String, reset: String?)] {
+        let script = """
         JSON.stringify([...document.querySelectorAll('[data-slot="usage-item"]')].map(el => ({
           label: (el.querySelector('[data-slot="usage-label"]')?.textContent || '').trim(),
-          value: (el.querySelector('[data-slot="usage-value"]')?.textContent || '').trim()
+          value: (el.querySelector('[data-slot="usage-value"]')?.textContent || '').trim(),
+          reset: (el.querySelector('[data-slot="reset-time"]')?.textContent || '').trim()
         })))
         """
 
@@ -186,7 +222,7 @@ public final class OpenCodeGoDashboardClient: NSObject {
                   let value = object["value"] as? String else {
                 return nil
             }
-            return (label, value)
+            return (label, value, object["reset"] as? String)
         }
     }
 }

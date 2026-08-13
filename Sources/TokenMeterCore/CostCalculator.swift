@@ -38,12 +38,25 @@ public struct CostCalculator {
             return (nil, .unknown)
         }
 
+        // 峰谷价（如 DeepSeek）：生效时刻之后按事件发生时刻选高峰/空闲价；
+        // 生效时刻之前的存量事件仍按基础价计，重扫历史数据时不会把旧账算成新价。
+        let rate: RateCard
+        if let tiered = pricing.tiered {
+            switch tiered.phase(at: event.observedAt) {
+            case .peak: rate = tiered.peak
+            case .offPeak: rate = tiered.offPeak
+            case .notYetEffective: rate = pricing.rate
+            }
+        } else {
+            rate = pricing.rate
+        }
+
         let usd =
-            perMillion(event.inputTokens, pricing.inputPerMTok) +
-            perMillion(event.outputTokens, pricing.outputPerMTok) +
-            perMillion(event.cacheReadTokens, pricing.cacheReadPerMTok) +
-            perMillion(event.cacheWrite5mTokens, pricing.cacheWrite5mPerMTok) +
-            perMillion(event.cacheWrite1hTokens, pricing.cacheWrite1hPerMTok)
+            perMillion(event.inputTokens, rate.inputPerMTok) +
+            perMillion(event.outputTokens, rate.outputPerMTok) +
+            perMillion(event.cacheReadTokens, rate.cacheReadPerMTok) +
+            perMillion(event.cacheWrite5mTokens, rate.cacheWrite5mPerMTok) +
+            perMillion(event.cacheWrite1hTokens, rate.cacheWrite1hPerMTok)
 
         return (Int64((usd * 1_000_000).rounded()), .computed)
     }

@@ -16,7 +16,8 @@ const AGENT_KINDS: Array<{ id: string; label: string; how: string }> = [
   { id: 'claudeCode', label: 'Claude Code', how: '会话 hooks 写入 ~/.claude' },
   { id: 'codex', label: 'Codex CLI', how: 'hooks 写入 ~/.codex/hooks.json' },
   { id: 'omp', label: 'OMP', how: '插件安装到 ~/.omp/agent/extensions' },
-  { id: 'opencode', label: 'OpenCode', how: '暂无集成 · 仅统计开关' }
+  { id: 'opencode', label: 'OpenCode', how: '暂无集成 · 仅统计开关' },
+  { id: 'reasonix', label: 'Reasonix', how: '自动统计 ~/.reasonix/stats 用量流水' }
 ];
 
 /// 供应商额度接入（OpenDesign 稿 B 区）。keyed = 支持应用内填 API Key（存钥匙串，
@@ -286,6 +287,36 @@ export function Settings() {
                 }}
               >
                 {interval.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* 金额显示：美元为计价基准，人民币按每日汇率在显示层换算 */}
+      <div className="card" aria-label="金额显示">
+        <div className="chead">
+          <div>
+            <h2>金额显示</h2>
+            <div className="desc">美元为计价基准，人民币按每日汇率换算</div>
+          </div>
+          <span className={savedTick === 'currency' ? 'savetick show' : 'savetick'}>已保存 ✓</span>
+        </div>
+        <div className="setrow">
+          <span>显示币种</span>
+          <div className="grow" />
+          <div className="seg" role="group" aria-label="显示币种">
+            {([['usd', '美元'], ['cny', '人民币']] as const).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={settings.displayCurrency === value ? 'on' : ''}
+                aria-pressed={settings.displayCurrency === value}
+                onClick={() => {
+                  apply(settingsStore.applyPatch({ displayCurrency: value }), 'currency');
+                }}
+              >
+                {label}
               </button>
             ))}
           </div>

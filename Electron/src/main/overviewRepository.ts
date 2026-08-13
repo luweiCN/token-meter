@@ -337,6 +337,7 @@ export class OverviewRepository {
                     WHEN 'codex' THEN 'codex_jsonl'
                     WHEN 'omp' THEN 'omp_jsonl'
                     WHEN 'opencode' THEN 'opencode_sqlite'
+                    WHEN 'reasonix' THEN 'reasonix_stats'
                   END AS lkind
              FROM live_sessions ls
             WHERE ls.last_seen_at >= datetime('now', '-5 minutes')
@@ -373,6 +374,7 @@ export class OverviewRepository {
                 WHEN 'codex' THEN 'codex_jsonl'
                 WHEN 'omp' THEN 'omp_jsonl'
                 WHEN 'opencode' THEN 'opencode_sqlite'
+                WHEN 'reasonix' THEN 'reasonix_stats'
               END AS sourceKind
          FROM live_sessions ls
         WHERE ls.state = 'running'
@@ -386,6 +388,7 @@ export class OverviewRepository {
                          WHEN 'codex' THEN 'codex_jsonl'
                          WHEN 'omp' THEN 'omp_jsonl'
                          WHEN 'opencode' THEN 'opencode_sqlite'
+                         WHEN 'reasonix' THEN 'reasonix_stats'
                        END)
      ORDER BY ls.last_seen_at DESC`
     ).all() as Array<{

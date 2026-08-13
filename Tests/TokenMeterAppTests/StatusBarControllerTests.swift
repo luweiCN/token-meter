@@ -60,7 +60,12 @@ final class StatusBarControllerTests: XCTestCase {
         let expected = MenuBarQuotaModel.projection(
             snapshots: store.displayProviderSnapshots,
             settings: store.settingsSnapshot,
-            todaySummary: store.todaySummary
+            todaySummary: store.todaySummary,
+            peakTiers: store.tieredPricingEntries.map {
+                MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(providerId: $0.providerId, tier: $0.tier)
+            },
+            displayCurrency: store.displayCurrency,
+            usdToCny: store.exchangeRate.usdToCny
         )
         XCTAssertEqual(controller.projectionForTesting, expected)
         XCTAssertEqual(controller.projectionForTesting.style, .rings)

@@ -5,6 +5,28 @@ import XCTest
 
 @MainActor
 final class ProviderStoreLocalIndexTests: XCTestCase {
+    func testTieredPricingEntriesLoadFromBundledSnapshot() {
+        let homeDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: homeDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: homeDirectory) }
+
+        let store = ProviderStore(
+            config: TokenMeterConfig(menuBar: MenuBarConfig(primaryProviderId: nil), providers: []),
+            notificationCenter: nil,
+            databaseURL: homeDirectory.appendingPathComponent("tokenmeter.sqlite")
+        )
+
+        XCTAssertEqual(store.tieredPricingEntries.count, 2)
+        XCTAssertTrue(store.tieredPricingEntries.allSatisfy { $0.providerId == "opencode-go" })
+        XCTAssertTrue(store.tieredPricingEntries.allSatisfy { $0.brandName == "DeepSeek" })
+        XCTAssertTrue(store.tieredPricingEntries.allSatisfy { $0.tier.weekdaysOnly })
+        // 区块行只有服务商出了额度卡才生成；本机磁盘缓存里有没有 opencode-go
+        // 不确定，但任何生成的行都必须落在已知的品牌映射上（DeepSeek）。
+        XCTAssertTrue(store.peakPricingRows.allSatisfy { $0.brandName == "DeepSeek" })
+        XCTAssertTrue(store.peakPricingRows.allSatisfy { !$0.modelNames.isEmpty })
+    }
+
     /// 并发单飞：await scanner 让出 MainActor 时重入的第二个调用必须被挡回
     ///（否则增量扫描会堆叠——实测 16 路并发把 CPU 顶到 150%+）。
     func testConcurrentRefreshCallsCoalesceIntoOneScan() async throws {

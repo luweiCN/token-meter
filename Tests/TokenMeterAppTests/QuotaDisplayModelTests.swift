@@ -52,6 +52,70 @@ final class QuotaDisplayModelTests: XCTestCase {
         XCTAssertEqual(model.bars.map(\.percent), [56.0, 91.0])
     }
 
+    /// 智谱主组 5h/7d/MCP 三指标只有前两个有窗口时长（MCP 是次数额度）：
+    /// 环只给 5h/7d，MCP 降为水平条、保留 detail（已用/总次数）。
+    func testZhipuMcpBecomesBarNotRing() {
+        let mcp = UsageMetric(
+            id: "zhipu-mcp", label: "MCP", kind: .quota,
+            usedPercent: 3, remainingPercent: 97, resetText: "10d15h", status: .ok,
+            detail: "152/4000 次", resetAt: Date(), windowDurationMinutes: nil
+        )
+        let snapshot = ProviderUsageSnapshot(
+            providerId: "zhipu",
+            displayName: "智谱",
+            status: .ok,
+            fetchedAt: Date(),
+            summary: "",
+            message: nil,
+            groups: [
+                UsageGroup(id: "zhipu-coding-plan", title: "智谱", subtitle: nil, items: [
+                    metric(id: "zhipu-5h", used: 18, windowMinutes: 300),
+                    metric(id: "zhipu-7d", used: 34, windowMinutes: 10_080),
+                    mcp
+                ])
+            ]
+        )
+
+        let model = QuotaDisplayModel(snapshot: snapshot)
+
+        XCTAssertEqual(model.rings.map(\.label), ["5h", "7d"])
+        XCTAssertEqual(model.bars.map(\.label), ["MCP"])
+        XCTAssertEqual(model.bars.map(\.percent), [97.0])
+        XCTAssertEqual(model.bars.first?.note, "152/4000 次")
+    }
+
+    /// OpenCode 主组 5h/7d/Monthly 三指标都有窗口时长，但一行最多两只环：
+    /// 5h/7d 进环，Monthly（30d）降为水平条、note 带重置倒计时。
+    func testOpenCodeMonthlyBecomesBarNotRing() {
+        let snapshot = ProviderUsageSnapshot(
+            providerId: "opencode-go",
+            displayName: "OpenCode Go",
+            status: .ok,
+            fetchedAt: Date(),
+            summary: "",
+            message: nil,
+            groups: [
+                UsageGroup(id: "opencode-go", title: "OpenCode Go", subtitle: nil, items: [
+                    metric(id: "opencode-go-5h", used: 1, windowMinutes: 300),
+                    metric(id: "opencode-go-weekly", used: 9, windowMinutes: 10_080),
+                    UsageMetric(
+                        id: "opencode-go-monthly", label: "Monthly", kind: .quota,
+                        usedPercent: 4, remainingPercent: 96, resetText: "26d12h", status: .ok,
+                        detail: nil, resetAt: Date(), windowDurationMinutes: 43_200
+                    )
+                ])
+            ]
+        )
+
+        let model = QuotaDisplayModel(snapshot: snapshot)
+
+        XCTAssertEqual(model.rings.map(\.label), ["5h", "7d"])
+        XCTAssertEqual(model.rings.map(\.percent), [99.0, 91.0])
+        XCTAssertEqual(model.bars.map(\.label), ["30d"])
+        XCTAssertEqual(model.bars.map(\.percent), [96.0])
+        XCTAssertEqual(model.bars.first?.note, "26d12h")
+    }
+
     private func pacedMetric(id: String, used: Double, windowMinutes: Int, secondsLeft: TimeInterval) -> UsageMetric {
         UsageMetric(
             id: id,

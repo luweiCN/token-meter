@@ -16,7 +16,8 @@ const TREND_PROVIDERS: TrendSeriesDef[] = [
   { id: 'claude-code', label: 'Claude Code', color: 'var(--s1)' },
   { id: 'codex', label: 'Codex CLI', color: 'var(--s2)' },
   { id: 'omp', label: 'OMP', color: 'var(--s3)' },
-  { id: 'opencode', label: 'OpenCode', color: 'var(--s4)' }
+  { id: 'opencode', label: 'OpenCode', color: 'var(--s4)' },
+  { id: 'reasonix', label: 'Reasonix', color: 'var(--s5)' }
 ];
 const TREND_OTHER: TrendSeriesDef = { id: '__other', label: '其他', color: 'var(--muted)' };
 

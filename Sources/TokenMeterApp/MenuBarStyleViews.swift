@@ -45,6 +45,88 @@ enum MenuBarToneColor {
     }
 }
 
+/// 可见服务商的峰谷聚合标识：色点 + 单字，独占菜单栏最右一块。
+/// 任意一家在高峰 → 显示「峰」，否则显示「谷」。多家厂商的分时状态
+/// 明细在弹窗的「峰谷时段」区块里展开，菜单栏只留这一个聚合哨位。
+///
+/// 用 TimelineView 每分钟自判档位——峰/谷在北京整点切换，不必等额度轮询、
+/// 也不用重建整个投影。只看时刻表不看生效日期：没生效也照常显示样式，
+/// 到生效时刻同一显示自然变成真实档位。色点随档位：高峰黄（更贵）、空闲绿。
+struct PeakPhaseBadge: View {
+    let tiers: [MenuBarQuotaModel.MenuBarProjection.PeakTierEntry]
+    let style: PeakBadgeStyle
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let phase = aggregatePhase(at: context.date)
+            badge(phase)
+                .fixedSize()
+                .help(helpText(phase))
+        }
+    }
+
+    private func aggregatePhase(at date: Date) -> PeakOffPeakPhase {
+        let phases = tiers.map { $0.tier.schedulePhase(at: date) }
+        if phases.contains(.peak) { return .peak }
+        return .offPeak
+    }
+
+    @ViewBuilder
+    private func badge(_ phase: PeakOffPeakPhase) -> some View {
+        let color = dotColor(phase)
+        switch style {
+        case .dotWord:
+            HStack(spacing: 2.5) {
+                Circle().fill(color).frame(width: 5, height: 5)
+                Text(label(phase))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(MenuBarToneColor.text)
+            }
+        case .dot:
+            Circle().fill(color).frame(width: 6, height: 6)
+        case .word:
+            Text(label(phase))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(color)
+        case .pill:
+            Text(label(phase))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Self.pillInk)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(color))
+        }
+    }
+
+    /// 胶囊底上的字色：深色菜单栏用黑字、浅色菜单栏用白字（黄/绿底都够对比度）。
+    private static let pillInk = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .black : .white
+    })
+
+    private func dotColor(_ phase: PeakOffPeakPhase) -> Color {
+        switch phase {
+        case .peak: return MenuBarToneColor.warn
+        case .offPeak: return MenuBarToneColor.ok
+        case .notYetEffective: return MenuBarToneColor.color(.muted)
+        }
+    }
+
+    private func label(_ phase: PeakOffPeakPhase) -> String {
+        switch phase {
+        case .peak: return "峰"
+        case .offPeak, .notYetEffective: return "谷"
+        }
+    }
+
+    private func helpText(_ phase: PeakOffPeakPhase) -> String {
+        switch phase {
+        case .peak: return "峰谷定价：当前高峰时段（工作日北京 9:00–12:00、14:00–18:00）"
+        case .offPeak: return "峰谷定价：当前空闲时段，价格为高峰价一半"
+        case .notYetEffective: return ""
+        }
+    }
+}
+
 /// 品牌短名（11pt semibold，纯白/纯黑——用户裁定不要 label 灰调）。
 struct CellNameText: View {
     let badge: String

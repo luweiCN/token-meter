@@ -1,6 +1,13 @@
 import { useState } from 'react';
 
-import type { MenubarAppearance as MenubarAppearanceModel, MenubarStyleId, MenubarWindowChoice, SettingsPatch, SettingsSnapshot } from '../api.js';
+import type {
+  MenubarAppearance as MenubarAppearanceModel,
+  MenubarStyleId,
+  MenubarWindowChoice,
+  PeakBadgeStyle,
+  SettingsPatch,
+  SettingsSnapshot
+} from '../api.js';
 import { settingsStore, useSettings } from '../stores/settingsStore.js';
 import type { SettingsApplyRequest } from '../stores/settingsStore.js';
 import { MenubarPreviewBar, PREVIEW_PROVIDERS, type MenubarPreviewState } from './MenubarPreview.js';
@@ -77,6 +84,8 @@ export function previewStateFromSettings(snapshot: SettingsSnapshot): MenubarPre
     showNumber: snapshot.menubarAppearance.showNumber,
     usage: snapshot.menubarAppearance.usage,
     windowOrder: snapshot.menubarAppearance.windowOrder,
+    showPeakBadge: snapshot.menubarAppearance.showPeakBadge,
+    peakBadgeStyle: snapshot.menubarAppearance.peakBadgeStyle,
     providers: PREVIEW_PROVIDERS.map((demo) => {
       const realId = byDemoId.get(demo.id);
       const override = realId === undefined
@@ -500,6 +509,46 @@ export function MenubarAppearance({ onBack }: { onBack: () => void }) {
                 花费
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card" aria-label="峰谷标识">
+        <div className="chead">
+          <div>
+            <h2>峰/谷标识</h2>
+            <div className="desc">有峰谷定价的服务商可见时显示 · 高峰黄色 / 空闲绿色</div>
+          </div>
+          <span className={savedTick ? 'savetick show' : 'savetick'}>已保存 ✓</span>
+        </div>
+        <div className="setrow">
+          <button
+            type="button"
+            className={appearance.showPeakBadge ? 'sw on' : 'sw'}
+            aria-pressed={appearance.showPeakBadge}
+            aria-label="显示峰谷标识"
+            onClick={() => apply({ menubarShowPeakBadge: !appearance.showPeakBadge })}
+          />
+          <span>在菜单栏显示</span>
+          <div className="grow" />
+          <div className="seg" role="group" aria-label="峰谷标识样式">
+            {([
+              ['dotWord', '点 + 字'],
+              ['dot', '仅圆点'],
+              ['word', '仅文字'],
+              ['pill', '胶囊']
+            ] as Array<[PeakBadgeStyle, string]>).map(([styleId, label]) => (
+              <button
+                key={styleId}
+                type="button"
+                className={appearance.peakBadgeStyle === styleId ? 'on' : ''}
+                aria-pressed={appearance.peakBadgeStyle === styleId}
+                disabled={!appearance.showPeakBadge}
+                onClick={() => apply({ menubarPeakBadgeStyle: styleId })}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
       </div>

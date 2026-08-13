@@ -47,6 +47,7 @@ export type MenubarStyleId = (typeof MENUBAR_STYLE_IDS)[number];
 export type MenubarWindowChoice = 'short' | 'long' | 'both' | 'all';
 export type MenubarUsageTail = 'off' | 'tok' | 'cost';
 export type MenubarWindowOrder = 'longFirst' | 'shortFirst';
+export type PeakBadgeStyle = 'dotWord' | 'dot' | 'word' | 'pill';
 
 export interface MenubarAppearance {
   style: MenubarStyleId;
@@ -55,6 +56,8 @@ export interface MenubarAppearance {
   showNumber: boolean;
   usage: MenubarUsageTail;
   windowOrder: MenubarWindowOrder;
+  showPeakBadge: boolean;
+  peakBadgeStyle: PeakBadgeStyle;
 }
 
 export interface SettingsSnapshot {
@@ -66,6 +69,10 @@ export interface SettingsSnapshot {
   /// 额度用量告警阈值（usedPercent 达到即通知）。0 = 关闭，有效值 50~100。
   quotaUsedThresholdPercent: number;
   menubarAppearance: MenubarAppearance;
+  /// 金额显示币种（美元存储，人民币只在显示层换算）。
+  displayCurrency: 'usd' | 'cny';
+  /// 主进程注入的 USD→CNY 显示汇率（Swift 日更缓存；不可用时为兜底值）。
+  exchangeRateUsdToCny: number;
 }
 
 export interface SettingsPatch {
@@ -84,6 +91,9 @@ export interface SettingsPatch {
   menubarShowNumber?: boolean;
   menubarUsage?: MenubarUsageTail;
   menubarWindowOrder?: MenubarWindowOrder;
+  menubarShowPeakBadge?: boolean;
+  menubarPeakBadgeStyle?: PeakBadgeStyle;
+  displayCurrency?: 'usd' | 'cny';
   /// providerId → 菜单栏显示（show_in_menu_bar；独立于 enabled 的数据启停）。
   providerMenubarVisible?: Record<string, boolean>;
   providerGlyphWindow?: Record<string, MenubarWindowChoice>;
@@ -98,7 +108,9 @@ export const MENUBAR_APPEARANCE_DEFAULT: MenubarAppearance = {
   showGlyph: true,
   showNumber: true,
   usage: 'tok',
-  windowOrder: 'longFirst'
+  windowOrder: 'longFirst',
+  showPeakBadge: true,
+  peakBadgeStyle: 'dotWord'
 };
 
 /// macOS 通知授权状态（Swift UNUserNotificationCenter 经 IPC 转发）。

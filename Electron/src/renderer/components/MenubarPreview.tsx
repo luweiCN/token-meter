@@ -1,6 +1,6 @@
 import { Fragment } from 'react';
 
-import type { MenubarStyleId, MenubarUsageTail, MenubarWindowChoice, MenubarWindowOrder } from '../api.js';
+import type { MenubarStyleId, MenubarUsageTail, MenubarWindowChoice, MenubarWindowOrder, PeakBadgeStyle } from '../api.js';
 
 /// 菜单栏预览渲染器：演示口径数据（与 OpenDesign 稿同源），不接真实快照。
 /// 规则权威 = spec §2-3；Swift MenuBarStyleViews 是真渲染，此处视觉近似一致：
@@ -15,6 +15,8 @@ export interface MenubarPreviewState {
   showNumber: boolean;
   usage: MenubarUsageTail;
   windowOrder: MenubarWindowOrder;
+  showPeakBadge: boolean;
+  peakBadgeStyle: PeakBadgeStyle;
   providers: Array<{
     id: string;
     visible: boolean;
@@ -23,6 +25,31 @@ export interface MenubarPreviewState {
     glyphWindows?: string[];
     numberWindows?: string[];
   }>;
+}
+
+/// 峰/谷标识的样式预览：演示固定用高峰档（黄色）。
+function PeakBadgePreview({ style }: { style: PeakBadgeStyle }) {
+  const dot = <span className="mbpeak-dot" />;
+  const word = <b className="mbpeak-word g-warn">峰</b>;
+  switch (style) {
+    case 'dotWord':
+      return (
+        <span className="mbcell">
+          {dot}
+          <b className="nm">峰</b>
+        </span>
+      );
+    case 'dot':
+      return <span className="mbcell">{dot}</span>;
+    case 'word':
+      return <span className="mbcell">{word}</span>;
+    case 'pill':
+      return (
+        <span className="mbcell">
+          <b className="mbpeak-pill">峰</b>
+        </span>
+      );
+  }
 }
 
 interface DemoWindow {
@@ -417,12 +444,14 @@ export function MenubarPreviewBar({ mode, state }: { mode: 'dark' | 'light'; sta
       </span>
     ) : null;
 
-  const empty = cells.length === 0 && tail === null;
+  const peakBadge = state.showPeakBadge ? <PeakBadgePreview style={state.peakBadgeStyle} key="peak" /> : null;
+  const empty = cells.length === 0 && tail === null && peakBadge === null;
 
   return (
     <div className={`mbar ${mode === 'dark' ? 'mbdark' : 'mblight'}`}>
       {cells}
       {tail}
+      {peakBadge}
       {empty ? (
         <span className="mbcell">
           <span className="pct" style={{ opacity: 0.5 }}>

@@ -8,6 +8,8 @@ export type MenubarStyleId = (typeof MENUBAR_STYLE_IDS)[number];
 export type MenubarWindowChoice = 'short' | 'long' | 'both' | 'all';
 export type MenubarUsageTail = 'off' | 'tok' | 'cost';
 export type MenubarWindowOrder = 'longFirst' | 'shortFirst';
+export type DisplayCurrency = 'usd' | 'cny';
+export type PeakBadgeStyle = 'dotWord' | 'dot' | 'word' | 'pill';
 
 /// 菜单栏外观（样式/元素/今日尾巴/窗口顺序）。Swift 端 MenuBarAppearanceSettings 同构。
 export interface MenubarAppearance {
@@ -17,6 +19,8 @@ export interface MenubarAppearance {
   showNumber: boolean;
   usage: MenubarUsageTail;
   windowOrder: MenubarWindowOrder;
+  showPeakBadge: boolean;
+  peakBadgeStyle: PeakBadgeStyle;
 }
 
 export interface ProviderConfigOverride {
@@ -42,6 +46,8 @@ export interface SettingsSnapshot {
   /// 额度用量告警阈值（usedPercent 达到即通知）。0 = 关闭，有效值 50~100。
   quotaUsedThresholdPercent: number;
   menubarAppearance: MenubarAppearance;
+  /// 金额显示币种（美元存储，人民币只在显示层换算）。
+  displayCurrency: DisplayCurrency;
 }
 
 export interface SettingsPatch {
@@ -60,6 +66,9 @@ export interface SettingsPatch {
   menubarShowNumber?: boolean;
   menubarUsage?: MenubarUsageTail;
   menubarWindowOrder?: MenubarWindowOrder;
+  menubarShowPeakBadge?: boolean;
+  menubarPeakBadgeStyle?: PeakBadgeStyle;
+  displayCurrency?: DisplayCurrency;
   /// providerId → 菜单栏显示（写 show_in_menu_bar；独立于 enabled 的数据启停）。
   providerMenubarVisible?: Record<string, boolean>;
   providerGlyphWindow?: Record<string, MenubarWindowChoice>;
@@ -72,12 +81,15 @@ export interface SettingsPatch {
 const MENUBAR_WINDOW_CHOICES = ['short', 'long', 'both', 'all'] as const;
 const MENUBAR_USAGE_TAILS = ['off', 'tok', 'cost'] as const;
 const MENUBAR_WINDOW_ORDERS = ['longFirst', 'shortFirst'] as const;
+const DISPLAY_CURRENCIES = ['usd', 'cny'] as const;
+const PEAK_BADGE_STYLES = ['dotWord', 'dot', 'word', 'pill'] as const;
 
 const LOCAL_AGENT_KIND_ALLOWED: Record<string, true> = {
   claudeCode: true,
   codex: true,
   opencode: true,
-  omp: true
+  omp: true,
+  reasonix: true
 };
 
 
@@ -146,8 +158,11 @@ export class SettingsRepository {
         showGlyph: (this.settingInt('menubar.showGlyph') ?? 1) !== 0,
         showNumber: (this.settingInt('menubar.showNumber') ?? 1) !== 0,
         usage: this.enumSetting('menubar.usage', MENUBAR_USAGE_TAILS, 'tok'),
-        windowOrder: this.enumSetting('menubar.windowOrder', MENUBAR_WINDOW_ORDERS, 'longFirst')
-      }
+        windowOrder: this.enumSetting('menubar.windowOrder', MENUBAR_WINDOW_ORDERS, 'longFirst'),
+        showPeakBadge: (this.settingInt('menubar.showPeakBadge') ?? 1) !== 0,
+        peakBadgeStyle: this.enumSetting('menubar.peakBadgeStyle', PEAK_BADGE_STYLES, 'dotWord')
+      },
+      displayCurrency: this.enumSetting('display.currency', DISPLAY_CURRENCIES, 'cny')
     };
   }
 
@@ -228,6 +243,15 @@ export class SettingsRepository {
       }
       if (validatedPatch.menubarWindowOrder !== undefined) {
         this.setSetting('menubar.windowOrder', JSON.stringify(validatedPatch.menubarWindowOrder), 'string', nextVersion);
+      }
+      if (validatedPatch.menubarShowPeakBadge !== undefined) {
+        this.setSetting('menubar.showPeakBadge', String(validatedPatch.menubarShowPeakBadge ? 1 : 0), 'int', nextVersion);
+      }
+      if (validatedPatch.menubarPeakBadgeStyle !== undefined) {
+        this.setSetting('menubar.peakBadgeStyle', JSON.stringify(validatedPatch.menubarPeakBadgeStyle), 'string', nextVersion);
+      }
+      if (validatedPatch.displayCurrency !== undefined) {
+        this.setSetting('display.currency', JSON.stringify(validatedPatch.displayCurrency), 'string', nextVersion);
       }
       if (validatedPatch.providerMenubarVisible !== undefined) {
         const upsert = this.db.prepare(
@@ -491,6 +515,30 @@ function validateSettingsPatch(patch: unknown): SettingsPatch {
     }
     validated.menubarWindowOrder = candidate.menubarWindowOrder as MenubarWindowOrder;
   }
+  if ('menubarShowPeakBadge' in candidate) {
+    if (typeof candidate.menubarShowPeakBadge !== 'boolean') {
+      throw new Error('menubarShowPeakBadge must be a boolean');
+    }
+    validated.menubarShowPeakBadge = candidate.menubarShowPeakBadge;
+  }
+  if ('menubarPeakBadgeStyle' in candidate) {
+    if (
+      typeof candidate.menubarPeakBadgeStyle !== 'string' ||
+      !(PEAK_BADGE_STYLES as readonly string[]).includes(candidate.menubarPeakBadgeStyle)
+    ) {
+      throw new Error('menubarPeakBadgeStyle must be one of: dotWord, dot, word, pill');
+    }
+    validated.menubarPeakBadgeStyle = candidate.menubarPeakBadgeStyle as PeakBadgeStyle;
+  }
+  if ('displayCurrency' in candidate) {
+    if (
+      typeof candidate.displayCurrency !== 'string' ||
+      !(DISPLAY_CURRENCIES as readonly string[]).includes(candidate.displayCurrency)
+    ) {
+      throw new Error('displayCurrency must be one of: usd, cny');
+    }
+    validated.displayCurrency = candidate.displayCurrency as DisplayCurrency;
+  }
   if ('providerMenubarVisible' in candidate) {
     const entries = candidate.providerMenubarVisible;
     if (typeof entries !== 'object' || entries === null || Array.isArray(entries)) {
@@ -560,6 +608,9 @@ function hasPatchChanges(patch: SettingsPatch) {
     patch.menubarShowNumber !== undefined ||
     patch.menubarUsage !== undefined ||
     patch.menubarWindowOrder !== undefined ||
+    patch.menubarShowPeakBadge !== undefined ||
+    patch.menubarPeakBadgeStyle !== undefined ||
+    patch.displayCurrency !== undefined ||
     patch.providerMenubarVisible !== undefined ||
     patch.providerGlyphWindow !== undefined ||
     patch.providerNumberWindow !== undefined ||

@@ -37,7 +37,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.version, 1)
         XCTAssertEqual(snapshot.menuBarPrimaryProviderId, "codex")
         XCTAssertEqual(snapshot.autoRefreshSeconds, 300)
-        XCTAssertEqual(snapshot.enabledAgentKinds, ["claudeCode", "codex", "opencode", "omp"])
+        XCTAssertEqual(snapshot.enabledAgentKinds, ["claudeCode", "codex", "opencode", "omp", "reasonix"])
         XCTAssertEqual(snapshot.providerOverrides.first { $0.providerId == "codex" }?.enabled, true)
         XCTAssertEqual(snapshot.providerOverrides.first { $0.providerId == "claude-code" }?.enabled, false)
     }
@@ -67,7 +67,7 @@ final class SettingsStoreTests: XCTestCase {
         )[0]
 
         XCTAssertEqual(row.string("value_type"), "json")
-        XCTAssertEqual(try store.snapshot().enabledAgentKinds, ["claudeCode", "codex", "opencode", "omp"])
+        XCTAssertEqual(try store.snapshot().enabledAgentKinds, ["claudeCode", "codex", "opencode", "omp", "reasonix"])
 
         try database.execute(
             "UPDATE settings SET value_json = ?, value_type = ? WHERE key = ?",
@@ -138,6 +138,22 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.menuBarAppearance, .default)
         XCTAssertEqual(snapshot.menuBarAppearance.style, .rings)
         XCTAssertEqual(snapshot.menuBarAppearance.windowOrder, .longFirst)
+        XCTAssertTrue(snapshot.menuBarAppearance.showPeakBadge)
+        XCTAssertEqual(snapshot.menuBarAppearance.peakBadgeStyle, .dotWord)
+    }
+
+    func testMenuBarPeakBadgeSettingsReadStoredValues() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try TokenMeterDatabaseMigrator.migrate(database)
+        try database.execute(
+            "INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by) VALUES ('menubar.showPeakBadge', '0', 'int', 2, 'electron')"
+        )
+        try database.execute(
+            "INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by) VALUES ('menubar.peakBadgeStyle', '\"pill\"', 'string', 2, 'electron')"
+        )
+        let snapshot = try SettingsStore(database: database).snapshot()
+        XCTAssertFalse(snapshot.menuBarAppearance.showPeakBadge)
+        XCTAssertEqual(snapshot.menuBarAppearance.peakBadgeStyle, .pill)
     }
 
     func testMenuBarAppearanceReadsStoredValues() throws {
@@ -177,6 +193,19 @@ final class SettingsStoreTests: XCTestCase {
         )
         let snapshot = try SettingsStore(database: database).snapshot()
         XCTAssertEqual(snapshot.menuBarAppearance.style, .rings)
+    }
+
+    func testDisplayCurrencyDefaultsToCnyAndReadsStoredValue() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try TokenMeterDatabaseMigrator.migrate(database)
+        var snapshot = try SettingsStore(database: database).snapshot()
+        XCTAssertEqual(snapshot.displayCurrency, .cny)
+
+        try database.execute(
+            "INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by) VALUES ('display.currency', '\"usd\"', 'string', 2, 'electron')"
+        )
+        snapshot = try SettingsStore(database: database).snapshot()
+        XCTAssertEqual(snapshot.displayCurrency, .usd)
     }
 
     func testMigratorAddsMenubarColumnsToLegacyOverridesTable() throws {

@@ -9,6 +9,7 @@ import { Overview } from './routes/Overview.js';
 import { Projects } from './routes/Projects.js';
 import { Sessions } from './routes/Sessions.js';
 import { Settings } from './routes/Settings.js';
+import { settingsStore } from './stores/settingsStore.js';
 import './styles.css';
 // tailwind.css 在 styles.css 之后:utilities 未分层,与 styles.css 平级按
 // specificity 竞争(shadcn 组件类稳赢元素级全局样式,详见 tailwind.css 头注)。
@@ -31,6 +32,11 @@ export function AppShell() {
   const [route, setRoute] = useState<RouteName>('dashboard');
   const [indexStatusState, setIndexStatusState] = useState<IndexStatusState>({ kind: 'loading' });
   const [isScanning, setIsScanning] = useState(false);
+
+  // 启动即加载设置：金额显示币种/汇率要在首屏前就位，不能等用户逛到设置页。
+  useEffect(() => {
+    void settingsStore.load().catch(() => {});
+  }, []);
 
   // 概览页（Overview）自持数据与自动刷新；App 只维护索引状态摘要，
   // 供侧栏底部的「上次扫描」显示（索引状态明细已并入设置页数据区）。

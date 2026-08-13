@@ -137,13 +137,17 @@ const settingsSnapshot: SettingsSnapshot = {
   menuBarPrimaryProviderId: 'codex',
   autoRefreshSeconds: 300,
   quotaUsedThresholdPercent: 0,
+  displayCurrency: 'cny',
+  exchangeRateUsdToCny: 6.76,
   menubarAppearance: {
     style: 'rings',
     showName: true,
     showGlyph: true,
     showNumber: true,
     usage: 'tok',
-    windowOrder: 'longFirst'
+    windowOrder: 'longFirst',
+    showPeakBadge: true,
+    peakBadgeStyle: 'dotWord'
   },
   enabledAgentKinds: ['claudeCode', 'codex'],
   providerOverrides: [

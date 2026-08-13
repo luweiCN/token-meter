@@ -203,6 +203,10 @@ struct StatusBarContentView: View {
             } else if projection.cells.isEmpty {
                 MenuBarBrandMark()
             }
+            // 可见服务商的峰谷聚合标识，独占最右一块。
+            if !projection.peakTiers.isEmpty {
+                PeakPhaseBadge(tiers: projection.peakTiers, style: projection.peakBadgeStyle)
+            }
         }
     }
 }
@@ -248,7 +252,7 @@ final class StatusBarController: NSObject {
     private var currentTitle = "TokenMeter"
     private var projection = MenuBarQuotaModel.MenuBarProjection(
         style: .rings, showName: true, showGlyph: true, showNumber: true,
-        windowOrder: .longFirst, cells: [], tail: .hidden
+        windowOrder: .longFirst, cells: [], tail: .hidden, peakTiers: [], peakBadgeStyle: .dotWord
     )
 
     /// 测试用：当前投影镜像。
@@ -405,14 +409,19 @@ final class StatusBarController: NSObject {
         // （启停/别名/菜单栏外观）/ todaySummary（今日尾巴）任一变化即重建，
         // 与弹窗的展示口径同步。尾巴文本同步进透明 title（宽度/a11y 镜像层）。
         store.$providerSnapshots
-            .combineLatest(store.$settingsSnapshot, store.$todaySummary)
+            .combineLatest(store.$settingsSnapshot, store.$todaySummary, store.$exchangeRate)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _, _, _ in
+            .sink { [weak self] _, _, _, _ in
                 guard let self else { return }
                 self.projection = MenuBarQuotaModel.projection(
                     snapshots: self.store.displayProviderSnapshots,
                     settings: self.store.settingsSnapshot,
-                    todaySummary: self.store.todaySummary
+                    todaySummary: self.store.todaySummary,
+                    peakTiers: self.store.tieredPricingEntries.map {
+                        MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(providerId: $0.providerId, tier: $0.tier)
+                    },
+                    displayCurrency: self.store.displayCurrency,
+                    usdToCny: self.store.exchangeRate.usdToCny
                 )
                 if case let .text(text) = self.projection.tail {
                     self.updateTitle(text)

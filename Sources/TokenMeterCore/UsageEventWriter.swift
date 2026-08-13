@@ -123,6 +123,7 @@ public final class UsageEventWriter {
         case .codexJSONL: return "codex"
         case .ompJSONL: return "omp"
         case .opencodeSQLite: return "opencode"
+        case .reasonixStats: return "reasonix"
         }
     }
 

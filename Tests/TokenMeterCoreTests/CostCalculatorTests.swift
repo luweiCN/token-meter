@@ -26,11 +26,12 @@ final class CostCalculatorTests: XCTestCase {
         cacheRead: Int64 = 0,
         write5m: Int64 = 0,
         write1h: Int64 = 0,
-        reported: Int64? = nil
+        reported: Int64? = nil,
+        observedAt: Date = Date(timeIntervalSince1970: 0)
     ) -> UsageEvent {
         UsageEvent(
             eventSeq: 1,
-            observedAt: Date(timeIntervalSince1970: 0),
+            observedAt: observedAt,
             modelName: model,
             dedupeKey: nil,
             inputTokens: input,
@@ -41,6 +42,70 @@ final class CostCalculatorTests: XCTestCase {
             reportedCostUSDMicros: reported,
             sourceOffset: 0
         )
+    }
+
+    private static func utcDate(_ year: Int, _ month: Int, _ day: Int, _ hour: Int, _ minute: Int = 0) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        return calendar.date(from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute))!
+    }
+
+    private func tieredCalculator() -> CostCalculator {
+        // 简化成「input 价不同、其余相同」的 fixture，方便按 input 单价断言档位。
+        func tier(_ input: Double) -> RateCard {
+            RateCard(inputPerMTok: input, outputPerMTok: 1.0, cacheReadPerMTok: 0.1,
+                     cacheWrite5mPerMTok: 0, cacheWrite1hPerMTok: 0)
+        }
+        let snapshot = PricingSnapshot(
+            snapshotVersion: "test",
+            source: "litellm",
+            models: [
+                "deepseek-v4-flash": ModelPricing(
+                    inputPerMTok: 0.14,
+                    outputPerMTok: 1.0,
+                    cacheReadPerMTok: 0.1,
+                    cacheWrite5mPerMTok: 0,
+                    cacheWrite1hPerMTok: 0,
+                    tiered: PeakOffPeakPricing(
+                        effectiveAfter: Self.utcDate(2026, 8, 16, 16),
+                        peakHoursUTC: [1, 2, 3, 6, 7, 8, 9],
+                        peak: tier(0.44),
+                        offPeak: tier(0.22)
+                    )
+                )
+            ]
+        )
+        return CostCalculator(snapshot: snapshot)
+    }
+
+    private func chinaCalendarTieredCalculator() -> CostCalculator {
+        // 同上，但带 DeepSeek 的工作日/法定节假日规则。
+        func tier(_ input: Double) -> RateCard {
+            RateCard(inputPerMTok: input, outputPerMTok: 1.0, cacheReadPerMTok: 0.1,
+                     cacheWrite5mPerMTok: 0, cacheWrite1hPerMTok: 0)
+        }
+        let snapshot = PricingSnapshot(
+            snapshotVersion: "test",
+            source: "litellm",
+            models: [
+                "deepseek-v4-flash": ModelPricing(
+                    inputPerMTok: 0.14,
+                    outputPerMTok: 1.0,
+                    cacheReadPerMTok: 0.1,
+                    cacheWrite5mPerMTok: 0,
+                    cacheWrite1hPerMTok: 0,
+                    tiered: PeakOffPeakPricing(
+                        effectiveAfter: Self.utcDate(2026, 8, 16, 16),
+                        peakHoursUTC: [1, 2, 3, 6, 7, 8, 9],
+                        weekdaysOnly: true,
+                        holidays: [CalendarDay(year: 2026, month: 10, day: 1)],
+                        peak: tier(0.44),
+                        offPeak: tier(0.22)
+                    )
+                )
+            ]
+        )
+        return CostCalculator(snapshot: snapshot)
     }
 
     func testReportedCostWins() {
@@ -160,5 +225,76 @@ final class CostCalculatorTests: XCTestCase {
         let result = makeCalculator().cost(for: event(model: "claude-opus-4-8", input: 1_000_000, reported: 0))
         XCTAssertEqual(result.micros, 0)
         XCTAssertEqual(result.source, .reported)
+    }
+
+    func testTieredUsesBasePriceBeforeEffectiveTime() {
+        // 生效前一分钟仍是旧 flat 价；重扫历史数据时旧账不能被算成新价。
+        let result = tieredCalculator().cost(for: event(
+            model: "deepseek-v4-flash",
+            input: 1_000_000,
+            observedAt: Self.utcDate(2026, 8, 16, 15, 59)
+        ))
+        XCTAssertEqual(result.micros, 140_000)
+    }
+
+    func testTieredUsesPeakPriceDuringPeakHours() {
+        // 北京 9:30 = UTC 01:30，高峰档
+        let result = tieredCalculator().cost(for: event(
+            model: "deepseek-v4-flash",
+            input: 1_000_000,
+            observedAt: Self.utcDate(2026, 8, 17, 1, 30)
+        ))
+        XCTAssertEqual(result.micros, 440_000)
+    }
+
+    func testTieredUsesOffPeakPriceOutsidePeakHours() {
+        // 北京 20:00 = UTC 12:00，空闲档
+        let result = tieredCalculator().cost(for: event(
+            model: "deepseek-v4-flash",
+            input: 1_000_000,
+            observedAt: Self.utcDate(2026, 8, 17, 12, 0)
+        ))
+        XCTAssertEqual(result.micros, 220_000)
+    }
+
+    func testTieredEffectiveBoundarySwitchesToTimeOfDay() {
+        // 生效时刻本身（北京 8/17 00:00 = UTC 8/16 16:00）已按峰谷计价，
+        // 且该小时是空闲档。
+        let result = tieredCalculator().cost(for: event(
+            model: "deepseek-v4-flash",
+            input: 1_000_000,
+            observedAt: Self.utcDate(2026, 8, 16, 16, 0)
+        ))
+        XCTAssertEqual(result.micros, 220_000)
+    }
+
+    func testTieredWeekendUsesOffPeakPriceEvenInPeakWindow() {
+        // 2026-09-26 周六北京 10:00 = UTC 02:00：小时在高峰窗内，但周末整天空闲。
+        let result = chinaCalendarTieredCalculator().cost(for: event(
+            model: "deepseek-v4-flash",
+            input: 1_000_000,
+            observedAt: Self.utcDate(2026, 9, 26, 2, 0)
+        ))
+        XCTAssertEqual(result.micros, 220_000)
+    }
+
+    func testTieredStatutoryHolidayWeekdayUsesOffPeakPrice() {
+        // 2026-10-01 国庆（周四）北京 10:00 = UTC 02:00：节假日整天空闲。
+        let result = chinaCalendarTieredCalculator().cost(for: event(
+            model: "deepseek-v4-flash",
+            input: 1_000_000,
+            observedAt: Self.utcDate(2026, 10, 1, 2, 0)
+        ))
+        XCTAssertEqual(result.micros, 220_000)
+    }
+
+    func testTieredWorkingDayStillUsesPeakPrice() {
+        // 2026-09-24 周四北京 9:30 = UTC 01:30：正常高峰。
+        let result = chinaCalendarTieredCalculator().cost(for: event(
+            model: "deepseek-v4-flash",
+            input: 1_000_000,
+            observedAt: Self.utcDate(2026, 9, 24, 1, 30)
+        ))
+        XCTAssertEqual(result.micros, 440_000)
     }
 }

@@ -18,6 +18,8 @@ function snapshotWith(partial?: Partial<SettingsSnapshot['menubarAppearance']>):
       { providerId: 'zhipu', enabled: true }
     ],
     quotaUsedThresholdPercent: 0,
+    displayCurrency: 'cny',
+    exchangeRateUsdToCny: 6.76,
     menubarAppearance: {
       style: 'rings',
       showName: true,
@@ -25,6 +27,8 @@ function snapshotWith(partial?: Partial<SettingsSnapshot['menubarAppearance']>):
       showNumber: true,
       usage: 'tok',
       windowOrder: 'longFirst',
+      showPeakBadge: true,
+      peakBadgeStyle: 'dotWord',
       ...partial
     }
   };

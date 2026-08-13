@@ -62,6 +62,24 @@ public enum MenuBarUsageTail: String, Codable, Equatable {
     case off, tok, cost
 }
 
+/// 菜单栏峰/谷标识的样式。峰=黄、谷=绿（与弹窗语义色同源）。
+public enum PeakBadgeStyle: String, Codable, Equatable, CaseIterable {
+    /// 色点 + 单字（默认，现状）
+    case dotWord
+    /// 只留色点，最省空间
+    case dot
+    /// 只留单字，字色随档位
+    case word
+    /// 胶囊底 + 单字，最醒目
+    case pill
+}
+
+/// 金额显示币种。计价与存储永远以美元微元为准，人民币只在显示层换算。
+public enum DisplayCurrency: String, Codable, Equatable {
+    case usd
+    case cny
+}
+
 /// both 时的呈现顺序（图形双元素与双数字一致翻转）。默认 longFirst 保持
 /// 既有 S0 视觉（外环/第一位数字 = 7d）；用户裁定做成设置项而非写死。
 public enum MenuBarWindowOrder: String, Codable, Equatable {
@@ -75,6 +93,10 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
     public let showNumber: Bool
     public let usage: MenuBarUsageTail
     public let windowOrder: MenuBarWindowOrder
+    /// 是否在菜单栏显示峰/谷标识（有峰谷价服务商可见时）。
+    public let showPeakBadge: Bool
+    /// 峰/谷标识样式。
+    public let peakBadgeStyle: PeakBadgeStyle
 
     public static let `default` = MenuBarAppearanceSettings(
         style: .rings,
@@ -82,7 +104,9 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
         showGlyph: true,
         showNumber: true,
         usage: .tok,
-        windowOrder: .longFirst
+        windowOrder: .longFirst,
+        showPeakBadge: true,
+        peakBadgeStyle: .dotWord
     )
 
     public init(
@@ -91,7 +115,9 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
         showGlyph: Bool,
         showNumber: Bool,
         usage: MenuBarUsageTail,
-        windowOrder: MenuBarWindowOrder
+        windowOrder: MenuBarWindowOrder,
+        showPeakBadge: Bool = true,
+        peakBadgeStyle: PeakBadgeStyle = .dotWord
     ) {
         self.style = style
         self.showName = showName
@@ -99,6 +125,44 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
         self.showNumber = showNumber
         self.usage = usage
         self.windowOrder = windowOrder
+        self.showPeakBadge = showPeakBadge
+        self.peakBadgeStyle = peakBadgeStyle
+    }
+
+    // 旧数据没有 showPeakBadge/peakBadgeStyle：解码补默认，不炸老快照。
+    private enum CodingKeys: String, CodingKey {
+        case style
+        case showName
+        case showGlyph
+        case showNumber
+        case usage
+        case windowOrder
+        case showPeakBadge
+        case peakBadgeStyle
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        style = try container.decodeIfPresent(MenuBarStyleId.self, forKey: .style) ?? .rings
+        showName = try container.decodeIfPresent(Bool.self, forKey: .showName) ?? true
+        showGlyph = try container.decodeIfPresent(Bool.self, forKey: .showGlyph) ?? true
+        showNumber = try container.decodeIfPresent(Bool.self, forKey: .showNumber) ?? true
+        usage = try container.decodeIfPresent(MenuBarUsageTail.self, forKey: .usage) ?? .tok
+        windowOrder = try container.decodeIfPresent(MenuBarWindowOrder.self, forKey: .windowOrder) ?? .longFirst
+        showPeakBadge = try container.decodeIfPresent(Bool.self, forKey: .showPeakBadge) ?? true
+        peakBadgeStyle = try container.decodeIfPresent(PeakBadgeStyle.self, forKey: .peakBadgeStyle) ?? .dotWord
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(style, forKey: .style)
+        try container.encode(showName, forKey: .showName)
+        try container.encode(showGlyph, forKey: .showGlyph)
+        try container.encode(showNumber, forKey: .showNumber)
+        try container.encode(usage, forKey: .usage)
+        try container.encode(windowOrder, forKey: .windowOrder)
+        try container.encode(showPeakBadge, forKey: .showPeakBadge)
+        try container.encode(peakBadgeStyle, forKey: .peakBadgeStyle)
     }
 }
 
@@ -112,6 +176,8 @@ public struct SettingsSnapshot: Codable, Equatable {
     public let quotaUsedThresholdPercent: Int
     /// 菜单栏外观（样式/元素/今日尾巴/窗口顺序）。Electron 设置页写入，Swift 只读。
     public let menuBarAppearance: MenuBarAppearanceSettings
+    /// 金额显示币种。Electron 设置页写入，Swift 只读；默认人民币（用户裁定）。
+    public let displayCurrency: DisplayCurrency
 
     public init(
         version: Int,
@@ -120,7 +186,8 @@ public struct SettingsSnapshot: Codable, Equatable {
         enabledAgentKinds: [String],
         providerOverrides: [ProviderConfigOverride],
         quotaUsedThresholdPercent: Int = 0,
-        menuBarAppearance: MenuBarAppearanceSettings = .default
+        menuBarAppearance: MenuBarAppearanceSettings = .default,
+        displayCurrency: DisplayCurrency = .cny
     ) {
         self.version = version
         self.menuBarPrimaryProviderId = menuBarPrimaryProviderId
@@ -129,6 +196,43 @@ public struct SettingsSnapshot: Codable, Equatable {
         self.providerOverrides = providerOverrides
         self.quotaUsedThresholdPercent = quotaUsedThresholdPercent
         self.menuBarAppearance = menuBarAppearance
+        self.displayCurrency = displayCurrency
+    }
+
+    // 旧数据没有 displayCurrency：解码补默认人民币，不炸老快照/测试载荷。
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case menuBarPrimaryProviderId
+        case autoRefreshSeconds
+        case enabledAgentKinds
+        case providerOverrides
+        case quotaUsedThresholdPercent
+        case menuBarAppearance
+        case displayCurrency
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        menuBarPrimaryProviderId = try container.decodeIfPresent(String.self, forKey: .menuBarPrimaryProviderId)
+        autoRefreshSeconds = try container.decodeIfPresent(Int.self, forKey: .autoRefreshSeconds) ?? 300
+        enabledAgentKinds = try container.decodeIfPresent([String].self, forKey: .enabledAgentKinds) ?? []
+        providerOverrides = try container.decodeIfPresent([ProviderConfigOverride].self, forKey: .providerOverrides) ?? []
+        quotaUsedThresholdPercent = try container.decodeIfPresent(Int.self, forKey: .quotaUsedThresholdPercent) ?? 0
+        menuBarAppearance = try container.decodeIfPresent(MenuBarAppearanceSettings.self, forKey: .menuBarAppearance) ?? .default
+        displayCurrency = try container.decodeIfPresent(DisplayCurrency.self, forKey: .displayCurrency) ?? .cny
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encodeIfPresent(menuBarPrimaryProviderId, forKey: .menuBarPrimaryProviderId)
+        try container.encode(autoRefreshSeconds, forKey: .autoRefreshSeconds)
+        try container.encode(enabledAgentKinds, forKey: .enabledAgentKinds)
+        try container.encode(providerOverrides, forKey: .providerOverrides)
+        try container.encode(quotaUsedThresholdPercent, forKey: .quotaUsedThresholdPercent)
+        try container.encode(menuBarAppearance, forKey: .menuBarAppearance)
+        try container.encode(displayCurrency, forKey: .displayCurrency)
     }
 }
 

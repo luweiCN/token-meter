@@ -90,24 +90,74 @@ def canonical(name: str) -> str:
 PRICE_FIELDS = ("inputPerMTok", "outputPerMTok", "cacheReadPerMTok", "cacheWrite5mPerMTok", "cacheWrite1hPerMTok")
 
 
+def normalize_tiered(name: str, tiered: object) -> dict:
+    """校验 override 的 tiered 字段并去掉说明性字段。
+
+    LiteLLM 只有 flat 价，表达不了峰谷定价（如 DeepSeek 2026-08-17 起），
+    所以 tiered 只能经 override 进快照：基础价是生效前的旧价，peak/offPeak
+    是生效后的两档价，effectiveAfter 是切换时刻，peakHoursUTC 是高峰小时。
+    weekdaysOnly 与 holidays 可选：打开后高峰只在工作日（周六/周日整天平峰），
+    holidays 是整天空闲的法定节假日（北京日历日）。
+    """
+    if not isinstance(tiered, dict):
+        sys.exit(f"error: override {name} 的 tiered 必须是对象")
+    missing = [k for k in ("effectiveAfter", "peakHoursUTC", "peak", "offPeak") if k not in tiered]
+    if missing:
+        sys.exit(f"error: override {name} 的 tiered 缺字段 {missing}")
+    hours = tiered["peakHoursUTC"]
+    if not isinstance(hours, list) or not all(isinstance(h, int) and 0 <= h <= 23 for h in hours):
+        sys.exit(f"error: override {name} 的 tiered.peakHoursUTC 必须是 0–23 的整数列表")
+    weekdays_only = tiered.get("weekdaysOnly", False)
+    if not isinstance(weekdays_only, bool):
+        sys.exit(f"error: override {name} 的 tiered.weekdaysOnly 必须是布尔值")
+    holidays = tiered.get("holidays", [])
+    if not isinstance(holidays, list):
+        sys.exit(f"error: override {name} 的 tiered.holidays 必须是列表")
+    for day in holidays:
+        if not (
+            isinstance(day, dict)
+            and all(isinstance(day.get(k), int) for k in ("year", "month", "day"))
+            and 1 <= day["month"] <= 12
+            and 1 <= day["day"] <= 31
+        ):
+            sys.exit(f"error: override {name} 的 tiered.holidays 含非法日期 {day}")
+    for which in ("peak", "offPeak"):
+        spec = tiered[which]
+        if not isinstance(spec, dict):
+            sys.exit(f"error: override {name} 的 tiered.{which} 必须是对象")
+        missing = [f for f in PRICE_FIELDS if f not in spec]
+        if missing:
+            sys.exit(f"error: override {name} 的 tiered.{which} 缺价格字段 {missing}")
+    result = {k: tiered[k] for k in ("effectiveAfter", "peakHoursUTC", "peak", "offPeak")}
+    result["weekdaysOnly"] = weekdays_only
+    result["holidays"] = holidays
+    return result
+
+
 def apply_overrides(models: dict, overrides: dict) -> dict:
     """手动登记价合并进快照，override 无条件优先。
 
     litellm 缺谁补谁（glm-5.2 发布数月上游仍未收录）。上游后来收录时这里
     会告警，提醒删掉过时的 override 改用上游价。note 等说明字段不进快照。
+    带 tiered 的 override 不告警：上游即使收录同名模型也只有 flat 价，
+    表达不了峰谷价，这类 override 无条件优先是刻意的。
     """
     for name, spec in overrides.items():
         missing = [f for f in PRICE_FIELDS if f not in spec]
         if missing:
             sys.exit(f"error: override {name} 缺价格字段 {missing}")
+        entry = {f: spec[f] for f in PRICE_FIELDS}
+        tiered = spec.get("tiered")
+        if tiered is not None:
+            entry["tiered"] = normalize_tiered(name, tiered)
         upstream = [k for k in models if canonical(k) == canonical(name)]
-        if upstream:
+        if upstream and tiered is None:
             print(
                 f"warning: 上游已收录与 override {name} 同名的模型 {upstream}，"
                 "考虑删除这条 override 改用上游价",
                 file=sys.stderr,
             )
-        models[name] = {f: spec[f] for f in PRICE_FIELDS}
+        models[name] = entry
     return models
 
 

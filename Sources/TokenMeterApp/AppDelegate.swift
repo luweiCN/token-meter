@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var store: ProviderStore?
     private var statusBarController: StatusBarController?
     private var refreshTimer: Timer?
+    private var exchangeRateTimer: Timer?
     private var ipcServer: TokenMeterIPCServer?
     private let usageNotificationCenter = UsageNotificationCenter()
     private var cancellables: Set<AnyCancellable> = []
@@ -24,10 +25,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await store.refreshNotificationAuthorizationState()
             await store.refresh()
             await store.refreshLocalAgentIndex()
+            await store.refreshExchangeRate()
             ipcServer.broadcastDataChanged()
         }
 
         scheduleRefreshTimer(interval: refreshInterval(for: store.settingsSnapshot))
+        scheduleExchangeRateTimer()
         bindSettingsTimer(to: store)
         bindHooksInstaller(to: store)
         // 静默更新检查（24h 节流）：有新版发系统通知；手动入口在右键菜单。
@@ -50,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         ipcServer?.stop()
         refreshTimer?.invalidate()
+        exchangeRateTimer?.invalidate()
         cancellables.removeAll()
     }
 
@@ -75,6 +79,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // 扫描是数据更新的唯一定时来源（hooks 事件不再触发扫描），
                 // 扫完必须广播，Electron 页面才知道该重取了。
                 self?.ipcServer?.broadcastDataChanged()
+            }
+        }
+    }
+
+    /// 汇率每 6 小时试一次（provider 内部有 24h 新鲜窗口，过期才真的联网），
+    /// 失败静默退回缓存/兜底，不影响额度显示。
+    private func scheduleExchangeRateTimer() {
+        exchangeRateTimer?.invalidate()
+        exchangeRateTimer = Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                await self?.store?.refreshExchangeRate()
             }
         }
     }

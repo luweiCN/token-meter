@@ -82,6 +82,11 @@ public enum TokenMeterPaths {
                 kind: .ompJSONL,
                 rootURL: homeDirectory.appendingPathComponent(".omp/agent/sessions", isDirectory: true),
                 displayName: "OMP"
+            ),
+            DefaultScanRoot(
+                kind: .reasonixStats,
+                rootURL: homeDirectory.appendingPathComponent(".reasonix/stats", isDirectory: true),
+                displayName: "Reasonix"
             )
         ]
     }

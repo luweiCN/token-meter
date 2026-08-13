@@ -4345,14 +4345,402 @@
       "cacheWrite1hPerMTok": 0.28,
       "cacheWrite5mPerMTok": 0.0,
       "inputPerMTok": 0.14,
-      "outputPerMTok": 0.28
+      "outputPerMTok": 0.28,
+      "tiered": {
+        "effectiveAfter": "2026-08-16T16:00:00Z",
+        "peakHoursUTC": [
+          1,
+          2,
+          3,
+          6,
+          7,
+          8,
+          9
+        ],
+        "weekdaysOnly": true,
+        "holidays": [
+          {
+            "year": 2026,
+            "month": 1,
+            "day": 1
+          },
+          {
+            "year": 2026,
+            "month": 1,
+            "day": 2
+          },
+          {
+            "year": 2026,
+            "month": 1,
+            "day": 3
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 15
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 16
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 17
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 18
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 19
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 20
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 21
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 22
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 23
+          },
+          {
+            "year": 2026,
+            "month": 4,
+            "day": 4
+          },
+          {
+            "year": 2026,
+            "month": 4,
+            "day": 5
+          },
+          {
+            "year": 2026,
+            "month": 4,
+            "day": 6
+          },
+          {
+            "year": 2026,
+            "month": 5,
+            "day": 1
+          },
+          {
+            "year": 2026,
+            "month": 5,
+            "day": 2
+          },
+          {
+            "year": 2026,
+            "month": 5,
+            "day": 3
+          },
+          {
+            "year": 2026,
+            "month": 5,
+            "day": 4
+          },
+          {
+            "year": 2026,
+            "month": 5,
+            "day": 5
+          },
+          {
+            "year": 2026,
+            "month": 6,
+            "day": 19
+          },
+          {
+            "year": 2026,
+            "month": 6,
+            "day": 20
+          },
+          {
+            "year": 2026,
+            "month": 6,
+            "day": 21
+          },
+          {
+            "year": 2026,
+            "month": 9,
+            "day": 25
+          },
+          {
+            "year": 2026,
+            "month": 9,
+            "day": 26
+          },
+          {
+            "year": 2026,
+            "month": 9,
+            "day": 27
+          },
+          {
+            "year": 2026,
+            "month": 10,
+            "day": 1
+          },
+          {
+            "year": 2026,
+            "month": 10,
+            "day": 2
+          },
+          {
+            "year": 2026,
+            "month": 10,
+            "day": 3
+          },
+          {
+            "year": 2026,
+            "month": 10,
+            "day": 4
+          },
+          {
+            "year": 2026,
+            "month": 10,
+            "day": 5
+          },
+          {
+            "year": 2026,
+            "month": 10,
+            "day": 6
+          },
+          {
+            "year": 2026,
+            "month": 10,
+            "day": 7
+          }
+        ],
+        "peak": {
+          "inputPerMTok": 0.44,
+          "outputPerMTok": 1.32,
+          "cacheReadPerMTok": 0.014,
+          "cacheWrite5mPerMTok": 0.0,
+          "cacheWrite1hPerMTok": 0.28
+        },
+        "offPeak": {
+          "inputPerMTok": 0.22,
+          "outputPerMTok": 0.66,
+          "cacheReadPerMTok": 0.007,
+          "cacheWrite5mPerMTok": 0.0,
+          "cacheWrite1hPerMTok": 0.28
+        }
+      }
     },
     "deepseek-v4-pro": {
       "cacheReadPerMTok": 0.003625,
       "cacheWrite1hPerMTok": 0.87,
       "cacheWrite5mPerMTok": 0.0,
       "inputPerMTok": 0.435,
-      "outputPerMTok": 0.87
+      "outputPerMTok": 0.87,
+      "tiered": {
+        "effectiveAfter": "2026-08-16T16:00:00Z",
+        "peakHoursUTC": [
+          1,
+          2,
+          3,
+          6,
+          7,
+          8,
+          9
+        ],
+        "weekdaysOnly": true,
+        "holidays": [
+          {
+            "year": 2026,
+            "month": 1,
+            "day": 1
+          },
+          {
+            "year": 2026,
+            "month": 1,
+            "day": 2
+          },
+          {
+            "year": 2026,
+            "month": 1,
+            "day": 3
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 15
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 16
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 17
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 18
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 19
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 20
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 21
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 22
+          },
+          {
+            "year": 2026,
+            "month": 2,
+            "day": 23
+          },
+          {
+            "year": 2026,
+            "month": 4,
+            "day": 4
+          },
+          {
+            "year": 2026,
+            "month": 4,
+            "day": 5
+          },
+          {
+            "year": 2026,
+            "month": 4,
+            "day": 6
+          },
+          {
+            "year": 2026,
+            "month": 5,
+            "day": 1
+          },
+          {
+            "year": 2026,
+            "month": 5,
+            "day": 2
+          },
+          {
+            "year": 2026,
+            "month": 5,
+            "day": 3
+          },
+          {
+            "year": 2026,
+            "month": 5,
+            "day": 4
+          },
+          {
+            "year": 2026,
+            "month": 5,
+            "day": 5
+          },
+          {
+            "year": 2026,
+            "month": 6,
+            "day": 19
+          },
+          {
+            "year": 2026,
+            "month": 6,
+            "day": 20
+          },
+          {
+            "year": 2026,
+            "month": 6,
+            "day": 21
+          },
+          {
+            "year": 2026,
+            "month": 9,
+            "day": 25
+          },
+          {
+            "year": 2026,
+            "month": 9,
+            "day": 26
+          },
+          {
+            "year": 2026,
+            "month": 9,
+            "day": 27
+          },
+          {
+            "year": 2026,
+            "month": 10,
+            "day": 1
+          },
+          {
+            "year": 2026,
+            "month": 10,
+            "day": 2
+          },
+          {
+            "year": 2026,
+            "month": 10,
+            "day": 3
+          },
+          {
+            "year": 2026,
+            "month": 10,
+            "day": 4
+          },
+          {
+            "year": 2026,
+            "month": 10,
+            "day": 5
+          },
+          {
+            "year": 2026,
+            "month": 10,
+            "day": 6
+          },
+          {
+            "year": 2026,
+            "month": 10,
+            "day": 7
+          }
+        ],
+        "peak": {
+          "inputPerMTok": 1.32,
+          "outputPerMTok": 3.96,
+          "cacheReadPerMTok": 0.044,
+          "cacheWrite5mPerMTok": 0.0,
+          "cacheWrite1hPerMTok": 0.87
+        },
+        "offPeak": {
+          "inputPerMTok": 0.66,
+          "outputPerMTok": 1.98,
+          "cacheReadPerMTok": 0.022,
+          "cacheWrite5mPerMTok": 0.0,
+          "cacheWrite1hPerMTok": 0.87
+        }
+      }
     },
     "deepseek.v3-v1:0": {
       "cacheReadPerMTok": 0.058,
@@ -14701,6 +15089,6 @@
       "outputPerMTok": 4.4
     }
   },
-  "snapshotVersion": "e1fd2f3e5c04",
+  "snapshotVersion": "5a3a9fa6e503",
   "source": "litellm"
 }

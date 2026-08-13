@@ -11,6 +11,7 @@ import {
   openLoginWindow,
   readCredentials
 } from './opencodeGoLogin.js';
+import { readUsdToCnyRate } from './exchangeRate.js';
 import { ProjectsRepository } from './projectsRepository.js';
 import { SettingsRepository } from './settingsRepository.js';
 import { notifySwift, requestFullRescan, subscribeEvents } from './tokenMeterSocketClient.js';
@@ -24,7 +25,10 @@ export function registerIpcHandlers() {
   const projects = new ProjectsRepository(db);
   const indexStatus = new IndexStatusRepository(db);
   const models = new ModelsRepository(db);
-  ipcMain.handle('settings:get', async () => settings.get());
+  ipcMain.handle('settings:get', async () => ({
+    ...settings.get(),
+    exchangeRateUsdToCny: readUsdToCnyRate()
+  }));
   ipcMain.handle('settings:update', async (_event, patch, expectedVersion) => {
     try {
       const result = settings.update(patch, expectedVersion);
@@ -170,7 +174,8 @@ export function registerIpcHandlers() {
     claudeCode: 'claude_jsonl',
     codex: 'codex_jsonl',
     omp: 'omp_jsonl',
-    opencode: 'opencode_sqlite'
+    opencode: 'opencode_sqlite',
+    reasonix: 'reasonix_stats'
   };
   subscribeEvents((event) => {
     if (event.kind !== 'agent.sessionEvent' && event.kind !== 'data.changed') return;

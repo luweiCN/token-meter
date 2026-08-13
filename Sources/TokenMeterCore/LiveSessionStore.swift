@@ -11,7 +11,7 @@ public struct AgentSessionEvent: Equatable, Sendable {
     }
 
     /// 与 settings 的 enabledAgentKinds 同一命名空间。
-    public static let allowedAgentKinds: Set<String> = ["claudeCode", "codex", "omp", "opencode"]
+    public static let allowedAgentKinds: Set<String> = ["claudeCode", "codex", "omp", "opencode", "reasonix"]
 
     public let agentKind: String
     public let sessionId: String

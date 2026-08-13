@@ -19,7 +19,8 @@ const AGENT_LABEL: Record<string, string> = {
   'claude-code': 'Claude Code',
   codex: 'Codex CLI',
   omp: 'OMP',
-  opencode: 'OpenCode'
+  opencode: 'OpenCode',
+  reasonix: 'Reasonix'
 };
 
 /// 趋势系列色:系列色 s1-s4 打头(与全应用图表一致),补两色,「其他」灰。

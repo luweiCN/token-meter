@@ -68,7 +68,7 @@ public enum TokenMeterDatabaseSchema {
 
     CREATE TABLE IF NOT EXISTS scan_roots (
       id INTEGER PRIMARY KEY,
-      kind TEXT NOT NULL CHECK (kind IN ('claude_jsonl', 'codex_jsonl', 'omp_jsonl', 'opencode_sqlite')),
+      kind TEXT NOT NULL CHECK (kind IN ('claude_jsonl', 'codex_jsonl', 'omp_jsonl', 'opencode_sqlite', 'reasonix_stats')),
       root_path TEXT NOT NULL,
       display_name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
