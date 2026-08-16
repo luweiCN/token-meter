@@ -121,6 +121,45 @@ final class CostCalculatorTests: XCTestCase {
         XCTAssertEqual(result.source, .computed)
     }
 
+    func testThirdPartyHostedPriceNeverShadowsOfficialPrice() {
+        // azure/fireworks 托管键在白名单外，归一后必须保留斜杠、不撞官方裸键。
+        // 回归：azure_ai/deepseek-v4-pro（$1.74）曾按字典序抢先覆盖官方 $0.435，
+        // 整月用量被按 4 倍计费。
+        let snapshot = PricingSnapshot(
+            snapshotVersion: "test",
+            source: "litellm",
+            models: [
+                "azure_ai/deepseek-v4-pro": ModelPricing(
+                    inputPerMTok: 1.74, outputPerMTok: 3.48, cacheReadPerMTok: 0.174,
+                    cacheWrite5mPerMTok: 0, cacheWrite1hPerMTok: 0
+                ),
+                "fireworks_ai/deepseek-v4-pro": ModelPricing(
+                    inputPerMTok: 1.74, outputPerMTok: 3.48, cacheReadPerMTok: 0.145,
+                    cacheWrite5mPerMTok: 0, cacheWrite1hPerMTok: 0
+                ),
+                "deepseek-v4-pro": ModelPricing(
+                    inputPerMTok: 0.435, outputPerMTok: 0.87, cacheReadPerMTok: 0.003625,
+                    cacheWrite5mPerMTok: 0, cacheWrite1hPerMTok: 0
+                ),
+            ]
+        )
+        let calculator = CostCalculator(snapshot: snapshot)
+        // 1M input 按官方 $0.435 计，而不是托管价 $1.74。
+        let result = calculator.cost(for: event(model: "deepseek-v4-pro", input: 1_000_000))
+        XCTAssertEqual(result.micros, 435_000)
+        XCTAssertEqual(result.source, .computed)
+    }
+
+    func testPricingKeyCanonicalStripsOnlyWhitelistedPrefixes() {
+        // 白名单前缀剥掉；第三方托管前缀保留斜杠（防冒充官方价）。
+        XCTAssertEqual(CostCalculator.pricingKeyCanonical("deepseek/deepseek-v4-pro"), "deepseek-v4-pro")
+        XCTAssertEqual(CostCalculator.pricingKeyCanonical("azure_ai/deepseek-v4-pro"), "azure_ai/deepseek-v4-pro")
+        XCTAssertEqual(CostCalculator.pricingKeyCanonical("fireworks_ai/deepseek-v4-pro"), "fireworks_ai/deepseek-v4-pro")
+        XCTAssertEqual(CostCalculator.pricingKeyCanonical("omniroute/cx/gpt-5.5"), "gpt-5.5")
+        XCTAssertEqual(CostCalculator.pricingKeyCanonical("claude-3-opus-20240229"), "claude-3-opus")
+        XCTAssertEqual(CostCalculator.pricingKeyCanonical("gpt-5.5-xhigh"), "gpt-5.5")
+    }
+
     func testCacheTiersArePricedSeparately() {
         // 1M cacheRead @ $1 + 1M write5m @ $12.5 + 1M write1h @ $20 = $33.5
         let result = makeCalculator().cost(for: event(

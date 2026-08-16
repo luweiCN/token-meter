@@ -35,6 +35,10 @@ class CrossLanguageContractTests(unittest.TestCase):
         pathlib.Path(__file__).resolve().parent.parent
         / "Sources" / "TokenMeterCore" / "ModelNameNormalizer.swift"
     )
+    COST_CALCULATOR_FILE = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "Sources" / "TokenMeterCore" / "CostCalculator.swift"
+    )
 
     def test_swift_uses_generic_last_segment_rule(self):
         # 白名单前缀表已从 Swift 删除；若有人加回去（重回双表对齐时代），
@@ -66,6 +70,20 @@ class CrossLanguageContractTests(unittest.TestCase):
             swift_suffixes,
             EFFORT_SUFFIXES,
             "Swift 与 Python 的档位后缀表已经漂移",
+        )
+
+    def test_pricing_key_prefixes_match_python(self):
+        # 定价键侧（CostCalculator）重新引入了白名单，防第三方托管键冒充官方价。
+        # 两份前缀表必须逐项一致，否则「白名单剥出的键」与 Python 侧漂移，
+        # 官方价会被第三方价按字典序抢先覆盖（azure_ai/deepseek-v4-pro 的教训）。
+        source = self.COST_CALCULATOR_FILE.read_text(encoding="utf-8")
+        block = re.search(r"pricingKeyPrefixes\s*=\s*\[(.*?)\]", source, re.S)
+        self.assertIsNotNone(block, "在 Swift 源码里找不到 pricingKeyPrefixes")
+        swift_prefixes = tuple(re.findall(r'"([^"]+/)"', block.group(1)))
+        self.assertEqual(
+            sorted(swift_prefixes),
+            sorted(PROVIDER_PREFIXES),
+            "Swift CostCalculator 与 Python 的定价键前缀白名单已经漂移",
         )
 
 
