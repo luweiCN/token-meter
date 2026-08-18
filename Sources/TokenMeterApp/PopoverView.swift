@@ -64,9 +64,13 @@ extension Color {
 /// 上自定义 popover 背景的通行做法，箭头会一并变色，系统边框随之消隐。
 private struct PopoverChromeTint: NSViewRepresentable {
     let color: NSColor
+    var cornerRadius: CGFloat = 11
 
     final class TintView: NSView {
         var color: NSColor = .clear {
+            didSet { apply() }
+        }
+        var cornerRadius: CGFloat = 11 {
             didSet { apply() }
         }
 
@@ -91,18 +95,20 @@ private struct PopoverChromeTint: NSViewRepresentable {
             frameView.layer?.backgroundColor = color.cgColor
             // 不描边（用户裁定）：背景色本身就是边界，系统边框一并压为 0。
             frameView.layer?.borderWidth = 0
-            frameView.layer?.cornerRadius = 11
+            frameView.layer?.cornerRadius = cornerRadius
         }
     }
 
     func makeNSView(context: Context) -> TintView {
         let view = TintView()
         view.color = color
+        view.cornerRadius = cornerRadius
         return view
     }
 
     func updateNSView(_ nsView: TintView, context: Context) {
         nsView.color = color
+        nsView.cornerRadius = cornerRadius
     }
 }
 
@@ -206,6 +212,13 @@ struct PopoverView: View {
                 PanelHead(store: store, themeName: $themeName)
                 TodayBlock(
                     summary: store.todaySummary,
+                    monthActivity: store.monthActivity,
+                    displayCurrency: store.displayCurrency,
+                    usdToCny: store.exchangeRate.usdToCny,
+                    modelBreakdown: { store.modelBreakdown(for: $0) }
+                )
+                OverviewTilesView(
+                    stats: store.overviewStats,
                     displayCurrency: store.displayCurrency,
                     usdToCny: store.exchangeRate.usdToCny
                 )
@@ -222,7 +235,11 @@ struct PopoverView: View {
                 headerHeight = height
                 onPreferredHeightChange(panelHeight)
             }
-            .shadow(color: .black.opacity(0.45), radius: 10, y: 4)
+            .shadow(
+                color: themeName == "light" ? Color.black.opacity(0.14) : Color.black.opacity(0.45),
+                radius: 10,
+                y: 4
+            )
             .zIndex(1)
 
             // 纯 SwiftUI 滚动区：AppKit 滚动容器与 SwiftUI 内容之间的高度信号
@@ -455,36 +472,335 @@ private extension View {
 
 private struct TodayBlock: View {
     let summary: MenuBarTodaySummary
+    let monthActivity: [DayActivity]
+    let displayCurrency: DisplayCurrency
+    let usdToCny: Double
+    let modelBreakdown: (String) -> [DayModelUsage]
+    @Environment(\.mbTheme) private var theme
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text(MenuBarNumberFormat.tokens(summary.tokens))
+                        .font(.system(size: 32, weight: .bold))
+                        .foregroundStyle(theme.fg)
+                        .monospacedDigit()
+                        .rollingNumber(value: summary.tokens)
+                    Text("tokens")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(theme.fg2)
+                }
+
+                (Text("花费 ")
+                    + Text(MenuBarNumberFormat.money(summary.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny))
+                        .foregroundColor(theme.fg2)
+                    + Text(" · ")
+                    + Text("\(summary.sessions)").foregroundColor(theme.fg2)
+                    + Text(" 个会话"))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(theme.muted)
+                    .monospacedDigit()
+                    .rollingNumber(value: "\(summary.costUsdMicros)|\(summary.sessions)")
+            }
+
+            Spacer(minLength: 4)
+
+            MonthHeatmapView(
+                days: monthActivity,
+                displayCurrency: displayCurrency,
+                usdToCny: usdToCny,
+                modelBreakdown: modelBreakdown
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
+        // 浮窗从热力图向下延伸、会覆盖到三张卡片区域；把本块画在 header 其他
+        // 兄弟之上，浮窗才不会被后面的卡片盖住。
+        .zIndex(1)
+    }
+}
+
+// MARK: - .heatmap：当月用量点阵（近方形 6×6，GitHub 式着色）
+
+/// 顶部总览右侧的当月热力图。5 行 × 7 列按日期顺序排（1 号在左上）；
+/// 颜色深浅=当天 token 量相对当月峰值的分位。悬浮单点弹详情浮窗（复刻主界面：
+/// Token/花费/会话/事件四指标 + 当天按模型的消耗明细，箭头指向锚点、系统自动避让）。
+/// 还没到的日期不响应悬浮、也不弹浮窗。
+private struct MonthHeatmapView: View {
+    let days: [DayActivity]
+    let displayCurrency: DisplayCurrency
+    let usdToCny: Double
+    let modelBreakdown: (String) -> [DayModelUsage]
+    @Environment(\.mbTheme) private var theme
+
+    @State private var hoveredDay: Int?
+    @State private var hoveredBreakdown: [DayModelUsage] = []
+    @State private var pendingClose: DispatchWorkItem?
+
+    private static let rows = 5
+    private static let columns = 7
+    private static let cellSize: CGFloat = 11
+    private static let spacing: CGFloat = 4
+    private static let popupWidth: CGFloat = 300
+
+    private var calendar: Calendar { Calendar.current }
+
+    private var byDay: [String: DayActivity] {
+        Dictionary(uniqueKeysWithValues: days.map { ($0.date, $0) })
+    }
+
+    private var dayCount: Int {
+        calendar.range(of: .day, in: .month, for: Date())?.count ?? 30
+    }
+
+    private var todayDay: Int {
+        calendar.component(.day, from: Date())
+    }
+
+    private var maxTokens: Int64 {
+        days.map(\.tokens).max() ?? 0
+    }
+
+    var body: some View {
+        VStack(spacing: Self.spacing) {
+            ForEach(0..<Self.rows, id: \.self) { row in
+                HStack(spacing: Self.spacing) {
+                    ForEach(0..<Self.columns, id: \.self) { column in
+                        cell(dayNumber: row * Self.columns + column + 1)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func cell(dayNumber: Int) -> some View {
+        if dayNumber <= dayCount {
+            let activity = byDay[dayText(dayNumber)]
+            let tokens = activity?.tokens ?? 0
+            let isFuture = dayNumber > todayDay
+            RoundedRectangle(cornerRadius: 3)
+                .fill(color(tokens: tokens, isFuture: isFuture))
+                .frame(width: Self.cellSize, height: Self.cellSize)
+                .overlay {
+                    if !isFuture, hoveredDay == dayNumber {
+                        RoundedRectangle(cornerRadius: 3)
+                            .stroke(theme.fg2, lineWidth: 1)
+                    } else if !isFuture, dayNumber == todayDay {
+                        RoundedRectangle(cornerRadius: 3)
+                            .stroke(theme.accent, lineWidth: 1)
+                    }
+                }
+                .onHover { hovering in
+                    if isFuture { return }
+                    if hovering {
+                        pendingClose?.cancel()
+                        hoveredDay = dayNumber
+                        hoveredBreakdown = modelBreakdown(dayText(dayNumber))
+                        HeatmapDetailPopover.shared.show(below: NSEvent.mouseLocation) {
+                            detailCard(day: dayNumber)
+                                .environment(\.mbTheme, theme)
+                        }
+                    } else if hoveredDay == dayNumber {
+                        scheduleClose(dayNumber)
+                    }
+                }
+        } else {
+            Color.clear.frame(width: Self.cellSize, height: Self.cellSize)
+        }
+    }
+
+    /// 离开格子后延迟一小拍再关：给鼠标从格子挪进浮窗留出时间，浮窗的 onHover 会取消关闭。
+    private func scheduleClose(_ day: Int) {
+        pendingClose?.cancel()
+        let work = DispatchWorkItem {
+            if hoveredDay == day {
+                hoveredDay = nil
+                hoveredBreakdown = []
+                HeatmapDetailPopover.shared.hide()
+            }
+        }
+        pendingClose = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: work)
+    }
+
+    @ViewBuilder
+    private func detailCard(day: Int) -> some View {
+        let activity = byDay[dayText(day)]
+        VStack(spacing: 0) {
+            arrow
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(dayLabel(day))
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(theme.fg)
+
+                HStack(alignment: .top, spacing: 8) {
+                    stat("Token", UsageFormatter.compactTokens(activity?.tokens ?? 0))
+                    stat("花费", MenuBarNumberFormat.money(
+                        activity?.costUsdMicros ?? 0, currency: displayCurrency, usdToCny: usdToCny
+                    ))
+                    stat("会话", "\(activity?.sessions ?? 0)")
+                    stat("事件", "\(activity?.events ?? 0)")
+                }
+
+                Rectangle().fill(theme.border).frame(height: 1)
+
+                if hoveredBreakdown.isEmpty {
+                    Text("当天无模型明细")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.muted)
+                        .padding(.vertical, 4)
+                } else {
+                    VStack(alignment: .leading, spacing: 5) {
+                        ForEach(hoveredBreakdown) { row in
+                            HStack(spacing: 8) {
+                                Text(row.model)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(theme.muted)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                Spacer(minLength: 8)
+                                Text("\(UsageFormatter.compactTokens(row.tokens)) · \(MenuBarNumberFormat.money(row.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny))")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(theme.fg2)
+                                    .fixedSize()
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(12)
+        }
+        .frame(width: Self.popupWidth, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(theme.surface))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.border, lineWidth: 1))
+        .onHover { hovering in
+            if hovering {
+                pendingClose?.cancel()
+            } else {
+                scheduleClose(day)
+            }
+        }
+    }
+
+    /// 浮窗顶部的小箭头：浮窗水平居中于鼠标，箭头顶点自然指向被悬浮的格子。
+    private var arrow: some View {
+        let arrowX = Self.popupWidth / 2
+        return Path { path in
+            path.move(to: CGPoint(x: arrowX, y: 0))
+            path.addLine(to: CGPoint(x: arrowX - 6, y: 6))
+            path.addLine(to: CGPoint(x: arrowX + 6, y: 6))
+            path.closeSubpath()
+        }
+        .fill(theme.surface)
+        .overlay {
+            Path { path in
+                path.move(to: CGPoint(x: arrowX, y: 0))
+                path.addLine(to: CGPoint(x: arrowX - 6, y: 6))
+                path.addLine(to: CGPoint(x: arrowX + 6, y: 6))
+                path.closeSubpath()
+            }
+            .stroke(theme.border, lineWidth: 1)
+        }
+        .frame(height: 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func stat(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(value)
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .foregroundStyle(theme.fg)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(theme.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func color(tokens: Int64, isFuture: Bool) -> Color {
+        // 未来日期用 muted 半透明：浅色模式下也不至于和面板底色糊成一片。
+        if isFuture { return theme.muted.opacity(0.3) }
+        guard tokens > 0, maxTokens > 0 else { return theme.surface2 }
+        let ratio = Double(tokens) / Double(maxTokens)
+        switch ratio {
+        case ..<0.25: return theme.accent.opacity(0.2)
+        case ..<0.5: return theme.accent.opacity(0.4)
+        case ..<0.75: return theme.accent.opacity(0.65)
+        default: return theme.accent
+        }
+    }
+
+    private func dayLabel(_ day: Int) -> String {
+        let month = calendar.component(.month, from: Date())
+        let year = calendar.component(.year, from: Date())
+        guard let date = calendar.date(from: DateComponents(year: year, month: month, day: day)) else {
+            return "\(month)月\(day)日"
+        }
+        let weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
+        let weekday = weekdays[calendar.component(.weekday, from: date) - 1]
+        return "\(month)月\(day)日 · \(weekday)"
+    }
+
+    private func dayText(_ day: Int) -> String {
+        let components = calendar.dateComponents([.year, .month], from: Date())
+        return String(
+            format: "%04d-%02d-%02d",
+            components.year ?? 0, components.month ?? 0, day
+        )
+    }
+}
+
+// MARK: - .tiles：总计 / 本月 / 本周三张并排卡（吸顶头部内，主界面同口径，今日不重复）
+
+private struct OverviewTilesView: View {
+    let stats: OverviewStats
     let displayCurrency: DisplayCurrency
     let usdToCny: Double
     @Environment(\.mbTheme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(MenuBarNumberFormat.tokens(summary.tokens))
-                    .font(.system(size: 32, weight: .bold))
-                    .foregroundStyle(theme.fg)
-                    .monospacedDigit()
-                    .rollingNumber(value: summary.tokens)
-                Text("tokens")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(theme.fg2)
-            }
+        HStack(alignment: .top, spacing: 8) {
+            tile(title: "总计", bucket: stats.total)
+            tile(title: "本月", bucket: stats.month)
+            tile(title: "本周", bucket: stats.week)
+        }
+        .padding(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
+    }
 
-            (Text("花费 ")
-                + Text(MenuBarNumberFormat.money(summary.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny))
-                    .foregroundColor(theme.fg2)
-                + Text(" · ")
-                + Text("\(summary.sessions)").foregroundColor(theme.fg2)
-                + Text(" 个会话"))
-                .font(.system(size: 11.5))
+    private func tile(
+        title: String,
+        bucket: OverviewStatsBucket
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(theme.muted)
+            Text(UsageFormatter.compactTokensAggregated(bucket.tokens))
+                .font(.system(size: 16, weight: .bold, design: .monospaced))
+                .foregroundStyle(theme.fg)
                 .monospacedDigit()
-                .rollingNumber(value: "\(summary.costUsdMicros)|\(summary.sessions)")
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(MenuBarNumberFormat.money(bucket.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny))
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(theme.fg2)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(theme.surface2))
+        .overlay(
+            // 卡片轮廓用 1px 边框而不是阴影：深浅色两种模式下都稳定可见。
+            RoundedRectangle(cornerRadius: 8).stroke(theme.fg.opacity(0.12), lineWidth: 1)
+        )
     }
 }
 

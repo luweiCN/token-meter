@@ -33,6 +33,10 @@ final class ProviderStore: ObservableObject {
     @Published private(set) var localIndexStatusText: String = "本地会话索引未启动"
     /// 弹窗头部「今日」汇总（OpenDesign 稿）；本地索引每次更新后重查。
     @Published private(set) var todaySummary: MenuBarTodaySummary = .empty
+    /// 当月每日用量（弹窗头部热力图）；与 todaySummary 同步刷新。
+    @Published private(set) var monthActivity: [DayActivity] = []
+    /// 总计/当月/本周三卡（主界面同口径）；与 todaySummary 同步刷新。
+    @Published private(set) var overviewStats = OverviewStats.empty
     @Published private(set) var localIndexUpdatedAt: Date?
     /// 当前显示汇率（USD→CNY）。启动先读缓存/兜底，随后按需刷新。
     @Published private(set) var exchangeRate: ExchangeRate
@@ -295,6 +299,14 @@ final class ProviderStore: ObservableObject {
     func reloadTodaySummary() {
         guard let database else { return }
         todaySummary = MenuBarTodaySummaryRepository.load(from: database)
+        monthActivity = MonthActivityRepository.load(from: database)
+        overviewStats = OverviewStatsRepository.load(from: database)
+    }
+
+    /// 热力图悬浮详情的当天模型明细（同步查库，行数 ≤6，悬浮时调用一次）。
+    func modelBreakdown(for date: String) -> [DayModelUsage] {
+        guard let database else { return [] }
+        return DayModelBreakdownRepository.load(from: database, date: date)
     }
 
     @discardableResult

@@ -19,6 +19,16 @@ public enum UsageFormatter {
         return String(Int(v))
     }
 
+    /// 多天聚合口径（总计/本月/本周卡片，与主界面 formatTokens 非单日分支一致）：
+    /// ≥10 亿用 B（两位小数），百万级保留两位小数——总 token 上百亿时不再挂一大串 M。
+    public static func compactTokensAggregated(_ value: Int64) -> String {
+        let v = Double(value)
+        if v >= 1_000_000_000 { return String(format: "%.2fB", v / 1_000_000_000) }
+        if v >= 1_000_000 { return String(format: "%.2fM", v / 1_000_000) }
+        if v >= 1_000 { return String(format: "%.2fK", v / 1_000) }
+        return String(Int(v))
+    }
+
     public static func menuBarTitle(for snapshots: [ProviderUsageSnapshot], primaryProviderId: String?) -> String {
         guard !snapshots.isEmpty else {
             return "TokenMeter"
