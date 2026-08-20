@@ -521,12 +521,14 @@ private struct TodayBlock: View {
     }
 }
 
-// MARK: - .heatmap：当月用量点阵（近方形 6×6，GitHub 式着色）
+// MARK: - .heatmap：当月用量点阵（周一对齐的日历网格，GitHub 式着色）
 
-/// 顶部总览右侧的当月热力图。5 行 × 7 列按日期顺序排（1 号在左上）；
+/// 顶部总览右侧的当月热力图。7 列固定为周一…周日，行数随当月 1 号的星期偏移与
+/// 天数动态 4–6 行（1 号前的空位与月末后的空位留白），与系统日历完全对齐；
 /// 颜色深浅=当天 token 量相对当月峰值的分位。悬浮单点弹详情浮窗（复刻主界面：
 /// Token/花费/会话/事件四指标 + 当天按模型的消耗明细，箭头指向锚点、系统自动避让）。
-/// 还没到的日期不响应悬浮、也不弹浮窗。
+/// 还没到的日期不响应悬浮、也不弹浮窗。顶部一行极淡的「一二三四五六日」作列标题，
+/// 不抢视觉但让「第几列是周几」一目了然。
 private struct MonthHeatmapView: View {
     let days: [DayActivity]
     let displayCurrency: DisplayCurrency
@@ -538,11 +540,11 @@ private struct MonthHeatmapView: View {
     @State private var hoveredBreakdown: [DayModelUsage] = []
     @State private var pendingClose: DispatchWorkItem?
 
-    private static let rows = 5
     private static let columns = 7
-    private static let cellSize: CGFloat = 11
-    private static let spacing: CGFloat = 4
+    private static let cellSize: CGFloat = 10
+    private static let spacing: CGFloat = 3
     private static let popupWidth: CGFloat = 300
+    private static let weekdayTitles = ["一", "二", "三", "四", "五", "六", "日"]
 
     private var calendar: Calendar { Calendar.current }
 
@@ -562,12 +564,46 @@ private struct MonthHeatmapView: View {
         days.map(\.tokens).max() ?? 0
     }
 
+    /// 当月 1 号在「周一为第 0 列」坐标系下的偏移（0=周一，6=周日）。
+    private var firstWeekdayOffset: Int {
+        guard let firstOfMonth = calendar.date(
+            from: calendar.dateComponents([.year, .month], from: Date())
+        ) else { return 0 }
+        let weekday = calendar.component(.weekday, from: firstOfMonth) // 1=周日 … 7=周六
+        return (weekday + 5) % 7 // 周一→0，周二→1，… 周日→6
+    }
+
+    /// 按偏移与天数算出的实际行数，固定 6 行：月与月之间高度不跳，1 号前的空位与
+    /// 月末后的空位用占位灰填充，网格始终是完整的 6×7，不会出现「左上缺一块、底部孤一点」的跳动感。
+    private var rowsNeeded: Int { 6 }
+
     var body: some View {
-        VStack(spacing: Self.spacing) {
-            ForEach(0..<Self.rows, id: \.self) { row in
-                HStack(spacing: Self.spacing) {
-                    ForEach(0..<Self.columns, id: \.self) { column in
-                        cell(dayNumber: row * Self.columns + column + 1)
+        VStack(spacing: 2.5) {
+            // 标题行：字号收小、字重加粗、透明度压低到恰好可辨，不与点抢视觉；
+            // 与点阵的间距收紧到 2.5，避免截图里「标题悬空」的割裂感。
+            HStack(spacing: Self.spacing) {
+                ForEach(Array(Self.weekdayTitles.enumerated()), id: \.offset) { _, title in
+                    Text(title)
+                        .font(.system(size: 6.5, weight: .semibold))
+                        .foregroundStyle(theme.muted.opacity(0.55))
+                        .frame(width: Self.cellSize, height: 7)
+                }
+            }
+            VStack(spacing: Self.spacing) {
+                ForEach(0..<rowsNeeded, id: \.self) { row in
+                    HStack(spacing: Self.spacing) {
+                        ForEach(0..<Self.columns, id: \.self) { column in
+                            let dayNumber = row * Self.columns + column - firstWeekdayOffset + 1
+                            if dayNumber < 1 || dayNumber > dayCount {
+                                // 月外的占位格：不再全透明，给一个极淡的 surface2 占位，让网格
+                                // 的「缺口」消失，视觉上是完整的方块，仅比无数据日更淡。
+                                RoundedRectangle(cornerRadius: 2.5)
+                                    .fill(theme.surface2.opacity(0.5))
+                                    .frame(width: Self.cellSize, height: Self.cellSize)
+                            } else {
+                                cell(dayNumber: dayNumber)
+                            }
+                        }
                     }
                 }
             }
@@ -576,29 +612,28 @@ private struct MonthHeatmapView: View {
 
     @ViewBuilder
     private func cell(dayNumber: Int) -> some View {
-        if dayNumber <= dayCount {
-            let activity = byDay[dayText(dayNumber)]
-            let tokens = activity?.tokens ?? 0
-            let isFuture = dayNumber > todayDay
-            RoundedRectangle(cornerRadius: 3)
-                .fill(color(tokens: tokens, isFuture: isFuture))
-                .frame(width: Self.cellSize, height: Self.cellSize)
-                .overlay {
-                    if !isFuture, hoveredDay == dayNumber {
-                        RoundedRectangle(cornerRadius: 3)
-                            .stroke(theme.fg2, lineWidth: 1)
-                    } else if !isFuture, dayNumber == todayDay {
-                        RoundedRectangle(cornerRadius: 3)
-                            .stroke(theme.accent, lineWidth: 1)
-                    }
+        let activity = byDay[dayText(dayNumber)]
+        let tokens = activity?.tokens ?? 0
+        let isFuture = dayNumber > todayDay
+        RoundedRectangle(cornerRadius: 2.5)
+            .fill(color(tokens: tokens, isFuture: isFuture))
+            .frame(width: Self.cellSize, height: Self.cellSize)
+            .overlay {
+                if !isFuture, hoveredDay == dayNumber {
+                    RoundedRectangle(cornerRadius: 2.5)
+                        .stroke(theme.fg2, lineWidth: 1)
+                } else if !isFuture, dayNumber == todayDay {
+                    RoundedRectangle(cornerRadius: 2.5)
+                        .stroke(theme.accent, lineWidth: 1)
                 }
-                .onHover { hovering in
-                    if isFuture { return }
-                    if hovering {
-                        pendingClose?.cancel()
-                        hoveredDay = dayNumber
-                        hoveredBreakdown = modelBreakdown(dayText(dayNumber))
-                        HeatmapDetailPopover.shared.show(below: NSEvent.mouseLocation) {
+            }
+            .onHover { hovering in
+                if isFuture { return }
+                if hovering {
+                    pendingClose?.cancel()
+                    hoveredDay = dayNumber
+                    hoveredBreakdown = modelBreakdown(dayText(dayNumber))
+                    HeatmapDetailPopover.shared.show(below: NSEvent.mouseLocation) {
                             detailCard(day: dayNumber)
                                 .environment(\.mbTheme, theme)
                         }
@@ -606,9 +641,6 @@ private struct MonthHeatmapView: View {
                         scheduleClose(dayNumber)
                     }
                 }
-        } else {
-            Color.clear.frame(width: Self.cellSize, height: Self.cellSize)
-        }
     }
 
     /// 离开格子后延迟一小拍再关：给鼠标从格子挪进浮窗留出时间，浮窗的 onHover 会取消关闭。
