@@ -8,6 +8,9 @@ public enum CostSource: String, Equatable {
 
 public struct CostCalculator {
     private let canonicalIndex: [String: ModelPricing]
+    /// 这些模型忽略日志上报成本（custom-pricing 的 ignoreReported），
+    /// 强制按本地价计——上报价可能没反映峰谷等实时政策。
+    private let ignoreReportedModels: Set<String>
 
     /// 定价键侧的前缀白名单（与 scripts/transform_pricing.py 的 PROVIDER_PREFIXES
     /// 逐项一致，scripts/test_transform_pricing.py 对账）。定价键只剥白名单前缀：
@@ -16,7 +19,7 @@ public struct CostCalculator {
     /// 整月用量被按 4 倍计费。用量侧（事件模型名）仍走 ModelNameNormalizer 的通用规则。
     static let pricingKeyPrefixes = [
         "vertex_ai/", "bedrock/", "anthropic/", "openai/", "openai-codex/", "zai/",
-        "deepseek/", "gemini/",
+        "deepseek/", "gemini/", "meta/",
         "omniroute/", "9router/", "cx/", "opencode-go/", "ocg/",
         "glm-cn/", "glm/", "antigravity/", "google-antigravity/", "zhipu-coding-plan/",
     ]
@@ -46,7 +49,7 @@ public struct CostCalculator {
         return name.isEmpty ? "unknown" : name
     }
 
-    public init(snapshot: PricingSnapshot) {
+    public init(snapshot: PricingSnapshot, ignoreReportedModels: Set<String> = []) {
         var index: [String: ModelPricing] = [:]
         // LiteLLM 的 key 是原始名，归一化后会撞名：一个规范名常对应多个原始 key。
         // 实测快照有 54 组，主因是 provider 前缀（claude-opus-4-8 与
@@ -61,10 +64,12 @@ public struct CostCalculator {
             }
         }
         canonicalIndex = index
+        self.ignoreReportedModels = ignoreReportedModels
     }
 
     public func cost(for event: UsageEvent) -> (micros: Int64?, source: CostSource) {
-        if let reported = event.reportedCostUSDMicros {
+        if let reported = event.reportedCostUSDMicros,
+           !ignoreReportedModels.contains(ModelNameNormalizer.canonical(event.modelName)) {
             return (reported, .reported)
         }
 

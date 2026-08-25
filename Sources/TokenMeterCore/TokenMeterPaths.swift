@@ -35,6 +35,11 @@ public enum TokenMeterPaths {
             .appendingPathComponent("provider-snapshots.json")
     }
 
+    /// 用户自定义模型定价（覆盖随包 LiteLLM 快照）。手写 JSON，无 UI。
+    public static func customPricingURL(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        baseDirectory(homeDirectory: homeDirectory).appendingPathComponent("custom-pricing.json")
+    }
+
     public static func defaultScanRoots(
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         environment: [String: String] = ProcessInfo.processInfo.environment
@@ -87,11 +92,31 @@ public enum TokenMeterPaths {
                 kind: .reasonixStats,
                 rootURL: homeDirectory.appendingPathComponent(".reasonix/stats", isDirectory: true),
                 displayName: "Reasonix"
+            ),
+            DefaultScanRoot(
+                kind: .dshJSONL,
+                rootURL: DshPaths.sessionsRoot(homeDirectory: homeDirectory, environment: environment),
+                displayName: "DeepSeek Harness"
             )
         ]
     }
 
     public static func socketURL(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
         baseDirectory(homeDirectory: homeDirectory).appendingPathComponent("tokenmeter.sock")
+    }
+}
+
+public enum DshPaths {
+    public static func sessionsRoot(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> URL {
+        if let configured = environment["DSH_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !configured.isEmpty {
+            return URL(fileURLWithPath: (configured as NSString).expandingTildeInPath, isDirectory: true)
+                .appendingPathComponent("sessions", isDirectory: true)
+                .standardizedFileURL
+        }
+        return homeDirectory.appendingPathComponent(".dsh/sessions", isDirectory: true)
     }
 }

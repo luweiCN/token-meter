@@ -89,7 +89,8 @@ const LOCAL_AGENT_KIND_ALLOWED: Record<string, true> = {
   codex: true,
   opencode: true,
   omp: true,
-  reasonix: true
+  reasonix: true,
+  dsh: true
 };
 
 

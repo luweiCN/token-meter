@@ -24,7 +24,7 @@ M = 1_000_000
 # 结果一致（test_transform_pricing.py 对账）。
 PROVIDER_PREFIXES = (
     "vertex_ai/", "bedrock/", "anthropic/", "openai/", "openai-codex/", "zai/",
-    "deepseek/", "gemini/",
+    "deepseek/", "gemini/", "meta/",
     "omniroute/", "9router/", "cx/", "opencode-go/", "ocg/",
     "glm-cn/", "glm/", "antigravity/", "google-antigravity/", "zhipu-coding-plan/",
 )

@@ -17,7 +17,7 @@ public final class SettingsStore {
         do {
             try set("menuBar.primaryProviderId", value: .text(config.menuBar.primaryProviderId ?? ""), version: 1, updatedBy: .importer)
             try set("scan.autoRefreshSeconds", value: .int(300), version: 1, updatedBy: .importer)
-            try setJSON("filters.enabledAgentKinds", json: jsonString(["claudeCode", "codex", "opencode", "omp", "reasonix"]), version: 1, updatedBy: .importer)
+            try setJSON("filters.enabledAgentKinds", json: jsonString(["claudeCode", "codex", "opencode", "omp", "reasonix", "dsh"]), version: 1, updatedBy: .importer)
             for (index, provider) in config.providers.enumerated() {
                 try database.execute(
                     """

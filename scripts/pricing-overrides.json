@@ -1,5 +1,5 @@
 {
-  "_comment": "litellm 上游缺失或滞后的模型在这里手动登记官方牌价。update-pricing.sh 会把它合并进快照（override 无条件优先）。上游后来收录同名模型时脚本会告警，届时应删掉对应条目改用上游价。note 字段仅作出处记录，不进快照。",
+  "_comment": "litellm 上游缺失或滞后的模型在这里手动登记官方牌价。update-pricing.sh 会把它合并进快照（override 无条件优先）。上游后来收录同名模型时脚本会告警，届时应删掉对应条目改用上游价。note 字段仅作出处记录，不进快照。Muse Spark 等走官价，不跟 OpenCode Go 实付折扣价，保持与 GPT-5.6 等官价口径一致。",
   "models": {
     "glm-5.2": {
       "inputPerMTok": 1.4,
@@ -132,6 +132,62 @@
         }
       },
       "note": "DeepSeek 官方美元牌价（api-docs.deepseek.com/quick_start/pricing，2026-08-14 查证）：基础价为现行 flat 价；2026-08-16 16:00 UTC（北京 8/17 00:00）起改峰谷价。官方后台公告口径：高峰只在工作日北京 9:00-12:00、14:00-18:00（即 UTC 1-3、6-9 点），周末与法定节假日整天按平峰原价（holidays 为国务院办公厅 2026 节假日通知的放假日期；调休上班的周六仍按周末平峰）。缓存写入无官方价，沿用基础价（reasonix 事件从不产生 cacheWrite 用量）"
+    },
+    "meta/muse-spark-1.2-contributor": {
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 4.25,
+      "cacheReadPerMTok": 0.15,
+      "cacheWrite5mPerMTok": 1.5625,
+      "cacheWrite1hPerMTok": 2.5,
+      "note": "Meta 官方 Muse Spark 官价覆盖：上游 meta/muse-spark-1.2-contributor 为 OpenCode Go 折扣价 $0.10/$0.20，此处强制改回 $1.25/$4.25 官价，统一与 GPT-5.6 等官价口径，DB 中 861 条 Codex/Claude unknown 由此覆盖"
+    },
+    "meta/muse-spark-1.2": {
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 4.25,
+      "cacheReadPerMTok": 0.15,
+      "cacheWrite5mPerMTok": 1.5625,
+      "cacheWrite1hPerMTok": 2.5,
+      "note": "同上，覆盖无后缀的变体，上游 meta/muse-spark-1.2 已为官价，此条为显式对齐"
+    },
+    "gpt-5.3-codex-spark": {
+      "inputPerMTok": 1.75,
+      "outputPerMTok": 14.0,
+      "cacheReadPerMTok": 0.175,
+      "cacheWrite5mPerMTok": 2.1875,
+      "cacheWrite1hPerMTok": 3.5,
+      "note": "Cursor 官方定价（cursor.com/docs/models#model-pricing, tokscale Cursor overrides 同款）：GPT-5.3-codex-spark $1.75/$14/$0.175，Claude Code + OmniRoute 走 cx/ 前缀时触发，DB 中 147 条 unknown 由此覆盖"
+    },
+    "minimax-m2.7": {
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.4,
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite5mPerMTok": 0.75,
+      "cacheWrite1hPerMTok": 1.2,
+      "note": "LiteLLM 托管价 sambanova/MiniMax-M2.7 同价（0.6/2.4），无独立官价时暂以托管价作官价，DB 中 38 条 unknown 由此覆盖"
+    },
+    "mimo-v2.5-pro": {
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 3.0,
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite5mPerMTok": 0.0,
+      "cacheWrite1hPerMTok": 2.0,
+      "note": "LiteLLM openrouter/xiaomi/mimo-v2.5-pro 同价（1.0/3.0），DB 中 3 条 unknown 由此覆盖"
+    },
+    "k2p5": {
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 3.0,
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite5mPerMTok": 0.75,
+      "cacheWrite1hPerMTok": 1.2,
+      "note": "沿用 kimi-k2p5 官价（fireworks_ai/kimi-k2p5 0.6/3.0），k2p5 为别名，DB 中 2 条 unknown 由此覆盖"
+    },
+    "codex-auto-review": {
+      "inputPerMTok": 1.75,
+      "outputPerMTok": 14.0,
+      "cacheReadPerMTok": 0.175,
+      "cacheWrite5mPerMTok": 2.1875,
+      "cacheWrite1hPerMTok": 3.5,
+      "note": "暂按 gpt-5.3-codex 同档计价（cx/codex-auto-review 无独立 LiteLLM 价），DB 中 14 条 unknown 由此覆盖，后续有官价再替换"
     }
   }
 }

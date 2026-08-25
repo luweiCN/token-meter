@@ -30,6 +30,32 @@ final class OpenCodeGoDashboardParserTests: XCTestCase {
         ])
     }
 
+    /// dashboard 改版后的现行文案：rolling 行显示为「5 小时用量」（实测，数字与汉字间
+    /// 带空格）。旧白名单只认「滚动」，导致 5h 环凭空消失。
+    func testParsesRenamedFiveHourLabel() {
+        let windows = OpenCodeGoDashboardParser.parse(items: [
+            (label: "5 小时用量", value: "82%", reset: "重置于 8 分钟"),
+            (label: "每周用量", value: "54.3%", reset: "重置于 5 天 14 小时"),
+            (label: "每月用量", value: "72.1%", reset: "重置于 9 天 19 小时")
+        ])
+
+        XCTAssertEqual(windows, [
+            OpenCodeGoUsageWindowData(label: "5h", usagePercent: 82, resetsInSeconds: 8 * 60),
+            OpenCodeGoUsageWindowData(label: "Weekly", usagePercent: 54.3, resetsInSeconds: (5 * 86_400 + 14 * 3600)),
+            OpenCodeGoUsageWindowData(label: "Monthly", usagePercent: 72.1, resetsInSeconds: (9 * 86_400 + 19 * 3600))
+        ])
+    }
+
+    func testParsesEnglishFiveHourVariants() {
+        let windows = OpenCodeGoDashboardParser.parse(items: [
+            (label: "5-Hour Usage", value: "40%", reset: nil),
+            (label: "5 hour usage", value: "41%", reset: nil),
+            (label: "5小时用量", value: "42%", reset: nil)
+        ])
+        XCTAssertEqual(windows.map(\.label), ["5h", "5h", "5h"])
+        XCTAssertEqual(windows.map(\.usagePercent), [40, 41, 42])
+    }
+
     func testToleratesWhitespaceAndPercentSuffix() {
         let windows = OpenCodeGoDashboardParser.parse(items: [
             (label: "  Rolling Usage  ", value: " 25.5% ", reset: "Resets in 12m")

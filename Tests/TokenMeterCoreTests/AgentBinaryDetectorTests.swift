@@ -27,7 +27,7 @@ final class AgentBinaryDetectorTests: XCTestCase {
         let statuses = AgentBinaryDetector.detect(in: [bin.path])
         let byKind = Dictionary(uniqueKeysWithValues: statuses.map { ($0.kind, $0) })
 
-        XCTAssertEqual(statuses.map(\.kind), ["claudeCode", "codex", "omp", "opencode"])
+        XCTAssertEqual(statuses.map(\.kind), ["claudeCode", "codex", "omp", "opencode", "dsh"])
         XCTAssertEqual(byKind["claudeCode"]?.found, true)
         XCTAssertEqual(byKind["claudeCode"]?.path, bin.appendingPathComponent("claude").path)
         XCTAssertEqual(byKind["claudeCode"]?.version, "2.1.207 (Claude Code)")

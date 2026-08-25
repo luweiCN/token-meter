@@ -214,6 +214,10 @@ public struct ModelPricing: Equatable, Codable {
     public let cacheWrite1hPerMTok: Double
     /// 可选峰谷价。nil 表示该模型只有一套固定价。
     public let tiered: PeakOffPeakPricing?
+    /// 用户覆盖专用（custom-pricing.json）：true = 该模型忽略日志上报成本，
+    /// 强制按本地价计（峰谷档位照常生效）。内置快照恒为 nil。
+    /// 上报原值由 usage_events.reported_cost_usd_micros 留底，可逆。
+    public let ignoreReported: Bool?
 
     public init(
         inputPerMTok: Double,
@@ -221,7 +225,8 @@ public struct ModelPricing: Equatable, Codable {
         cacheReadPerMTok: Double,
         cacheWrite5mPerMTok: Double,
         cacheWrite1hPerMTok: Double,
-        tiered: PeakOffPeakPricing? = nil
+        tiered: PeakOffPeakPricing? = nil,
+        ignoreReported: Bool? = nil
     ) {
         self.inputPerMTok = inputPerMTok
         self.outputPerMTok = outputPerMTok
@@ -229,6 +234,7 @@ public struct ModelPricing: Equatable, Codable {
         self.cacheWrite5mPerMTok = cacheWrite5mPerMTok
         self.cacheWrite1hPerMTok = cacheWrite1hPerMTok
         self.tiered = tiered
+        self.ignoreReported = ignoreReported
     }
 
     /// 基础价五元组。峰谷价生效前按它计价。
@@ -262,6 +268,15 @@ public struct PricingSnapshot: Equatable, Codable {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try decoder.decode(PricingSnapshot.self, from: Data(contentsOf: url))
+    }
+
+    /// 内置价打底、用户覆盖叠加（同名覆盖、新名补充）。返回新实例，不改自身。
+    public func merging(userOverrides models: [String: ModelPricing]) -> PricingSnapshot {
+        var merged = self.models
+        for (key, pricing) in models {
+            merged[key] = pricing
+        }
+        return PricingSnapshot(snapshotVersion: snapshotVersion, source: source, models: merged)
     }
 }
 

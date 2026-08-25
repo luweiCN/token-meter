@@ -116,6 +116,53 @@ final class QuotaDisplayModelTests: XCTestCase {
         XCTAssertEqual(model.bars.first?.note, "26d12h")
     }
 
+    /// 环位缺失时【绝不递补】（用户裁定的硬语义）：OpenCode 缺 5h（解析失败/改版丢行）
+    /// 时，环只画 7d 一只；Monthly 必须留在条位，不得顶进环位。
+    func testVanishedRingSlotIsNotBackfilledByLongerWindow() {
+        let snapshot = ProviderUsageSnapshot(
+            providerId: "opencode-go",
+            displayName: "OpenCode Go",
+            status: .ok,
+            fetchedAt: Date(),
+            summary: "",
+            message: nil,
+            groups: [
+                UsageGroup(id: "opencode-go", title: "OpenCode Go", subtitle: nil, items: [
+                    metric(id: "opencode-go-weekly", used: 9, windowMinutes: 10_080),
+                    metric(id: "opencode-go-monthly", used: 4, windowMinutes: 43_200)
+                ])
+            ]
+        )
+
+        let model = QuotaDisplayModel(snapshot: snapshot)
+
+        XCTAssertEqual(model.rings.map(\.label), ["7d"], "只剩一只候选就只画一只环")
+        XCTAssertEqual(model.bars.map(\.label), ["30d"], "长周期必须留在条位")
+    }
+
+    /// 模型级次要组（Sonnet/Fable…）永远不提进环位——即使主组一个窗口都不剩。
+    func testSecondaryGroupsNeverPromotedToRings() {
+        let snapshot = ProviderUsageSnapshot(
+            providerId: "claude-code",
+            displayName: "Claude Code",
+            status: .ok,
+            fetchedAt: Date(),
+            summary: "",
+            message: nil,
+            groups: [
+                UsageGroup(id: "claude", title: "Claude Code", subtitle: nil, items: []),
+                UsageGroup(id: "sonnet", title: "Sonnet", subtitle: nil, items: [
+                    metric(id: "claude-sonnet", used: 44, windowMinutes: 10_080)
+                ])
+            ]
+        )
+
+        let model = QuotaDisplayModel(snapshot: snapshot)
+
+        XCTAssertTrue(model.rings.isEmpty, "主组无带窗口额度时宁可无环")
+        XCTAssertEqual(model.bars.map(\.label), ["Sonnet 7d"])
+    }
+
     private func pacedMetric(id: String, used: Double, windowMinutes: Int, secondsLeft: TimeInterval) -> UsageMetric {
         UsageMetric(
             id: id,

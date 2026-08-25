@@ -6,13 +6,19 @@ import Foundation
 /// `LocalAgentUsageRepository` 与三张 v1 用量表。
 public final class UsageEventWriter {
     private let database: SQLiteDatabase
-    private let costCalculator: CostCalculator
+    private var costCalculator: CostCalculator
     private let dateFormatter = ISO8601DateFormatter()
 
     public init(database: SQLiteDatabase, costCalculator: CostCalculator) {
         self.database = database
         self.costCalculator = costCalculator
         dateFormatter.formatOptions = [.withInternetDateTime]
+    }
+
+    /// 用户自定义定价变化后由 scanner 调用；只影响此后写入事件的计价，
+    /// 存量行的重算走 scanner 的重投影。
+    public func updateCostCalculator(_ calculator: CostCalculator) {
+        costCalculator = calculator
     }
 
     public func write(
@@ -124,6 +130,7 @@ public final class UsageEventWriter {
         case .ompJSONL: return "omp"
         case .opencodeSQLite: return "opencode"
         case .reasonixStats: return "reasonix"
+        case .dshJSONL: return "dsh"
         }
     }
 
@@ -238,6 +245,10 @@ public final class UsageEventWriter {
 
         let (costMicros, costSource) = costCalculator.cost(for: event)
 
+        // 上报价没被采信（computed/unknown）但事件确实带着它时，把原值留在
+        // reported_cost_usd_micros：custom-pricing 的 ignoreReported 移除后据此还原。
+        let reportedBackup = costSource == .reported ? nil : event.reportedCostUSDMicros
+
         // ON CONFLICT(source_file_id, event_seq) DO UPDATE 提供的是**幂等重放**，不是防重复计数：
         // 崩溃恢复（见 LocalAgentScanner 的 I2）会从头全量重读同一文件，重新写出相同的
         // (source_file_id, event_seq)+相同取值，DO UPDATE 让这次重写成为无副作用的覆盖
@@ -250,8 +261,9 @@ public final class UsageEventWriter {
                 model_name, model_canonical,
                 tokens_input, tokens_output, tokens_reasoning,
                 tokens_cache_read, tokens_cache_write_5m, tokens_cache_write_1h,
-                cost_usd_micros, cost_source, dedupe_key, dedupe_scope_key, source_offset, is_sidechain
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                cost_usd_micros, cost_source, reported_cost_usd_micros,
+                dedupe_key, dedupe_scope_key, source_offset, is_sidechain
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source_file_id, event_seq) DO UPDATE SET
                 session_id = excluded.session_id,
                 observed_epoch_ms = excluded.observed_epoch_ms,
@@ -265,6 +277,7 @@ public final class UsageEventWriter {
                 tokens_cache_write_1h = excluded.tokens_cache_write_1h,
                 cost_usd_micros = excluded.cost_usd_micros,
                 cost_source = excluded.cost_source,
+                reported_cost_usd_micros = excluded.reported_cost_usd_micros,
                 dedupe_key = excluded.dedupe_key,
                 dedupe_scope_key = excluded.dedupe_scope_key,
                 source_offset = excluded.source_offset,
@@ -285,6 +298,7 @@ public final class UsageEventWriter {
                 .int(event.cacheWrite1hTokens),
                 costMicros.map(SQLiteValue.int) ?? .null,
                 .text(costSource.rawValue),
+                reportedBackup.map(SQLiteValue.int) ?? .null,
                 sqliteText(event.dedupeKey),
                 sqliteText(dedupeScopeKey),
                 .int(event.sourceOffset),

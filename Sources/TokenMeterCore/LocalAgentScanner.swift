@@ -5,6 +5,13 @@ public final class LocalAgentScanner {
     private let database: SQLiteDatabase
     private let writer: UsageEventWriter
     private let rollupBuilder: RollupBuilder
+    /// 当前生效的计价器（随包快照 + 用户覆盖）。custom-pricing.json 变化时整体换新。
+    private var costCalculator: CostCalculator
+    private let customPricingURL: URL
+    /// 当前生效的 custom-pricing.json 指纹；与磁盘不一致时在下一轮扫描前重投影。
+    private var customPricingFingerprint: String?
+    /// 上次生效的覆盖键（canonical）。文件删改后靠它与新键的并集圈定回算范围。
+    private var activeCustomPricingKeys: Set<String>
     private let isoFormatter = ISO8601DateFormatter()
     private let scanLock = NSLock()
 
@@ -13,12 +20,19 @@ public final class LocalAgentScanner {
     /// 生产环境永远为 nil。
     var testHookAfterEventWrite: ((Int64) throws -> Void)?
 
-    public init(database: SQLiteDatabase) {
+    public init(database: SQLiteDatabase, customPricingURL: URL = TokenMeterPaths.customPricingURL()) {
         self.database = database
-        // 定价来自随包快照；缺失时退化为空表（成本按 unknown 记，仍能正确落 usage_events）。
+        self.customPricingURL = customPricingURL
+        // 定价 = 随包快照 + 用户覆盖（custom-pricing.json）；快照缺失时退化为空表
+        // （成本按 unknown 记，仍能正确落 usage_events）。
+        let overrides = (try? CustomPricingOverrides.load(url: customPricingURL)) ?? .empty
         let snapshot = (try? PricingSnapshot.loadBundled())
             ?? PricingSnapshot(snapshotVersion: "unavailable", source: "builtin", models: [:])
-        self.writer = UsageEventWriter(database: database, costCalculator: CostCalculator(snapshot: snapshot))
+        customPricingFingerprint = overrides.fingerprint
+        activeCustomPricingKeys = overrides.canonicalKeys
+        let calculator = Self.makeCostCalculator(snapshot: snapshot, overrides: overrides)
+        costCalculator = calculator
+        self.writer = UsageEventWriter(database: database, costCalculator: calculator)
         self.rollupBuilder = RollupBuilder(database: database)
     }
 
@@ -45,6 +59,7 @@ public final class LocalAgentScanner {
 
     public func scanRoot(id rootId: Int64) async throws {
         try withExclusiveScan {
+            try refreshCustomPricingIfNeeded()
             try scan(rootId: rootId, reporter: nil)
         }
     }
@@ -57,7 +72,133 @@ public final class LocalAgentScanner {
     /// `testInterruptedFullRescanSelfHealsOnNextIncrementalScan` 钉住这一点。
     public func fullRescan(onProgress: @escaping (ScanProgressEvent) -> Void = { _ in }) throws {
         try withExclusiveScan {
+            // 全量重扫前先换到最新价：重投影跳过（旧事件马上会被清空重写，
+            // 重扫写入自然用新计价器）。
+            try refreshCustomPricingIfNeeded(reprojecting: false)
             try rebuildDatabase(onProgress: onProgress)
+        }
+    }
+
+    /// custom-pricing.json 变化后：重建计价器、把受影响模型的存量事件按新价
+    /// 全量重投影（reported 行不动）、重建 rollup。指纹未变时是纯 stat，零成本。
+    ///
+    /// 解析失败（fingerprint=nil ≠ 任何有效指纹）时退回纯内置价并保留旧键集——
+    /// 每轮都会重试解析，用户修好 JSON 立即自愈。
+    private func refreshCustomPricingIfNeeded(reprojecting: Bool = true) throws {
+        let overrides = (try? CustomPricingOverrides.load(url: customPricingURL)) ?? .empty
+        guard overrides.fingerprint != customPricingFingerprint else { return }
+
+        let snapshot = (try? PricingSnapshot.loadBundled())
+            ?? PricingSnapshot(snapshotVersion: "unavailable", source: "builtin", models: [:])
+        let calculator = Self.makeCostCalculator(snapshot: snapshot, overrides: overrides)
+        costCalculator = calculator
+        writer.updateCostCalculator(calculator)
+
+        if reprojecting {
+            let affected = overrides.canonicalKeys.union(activeCustomPricingKeys)
+            for key in affected.sorted() {
+                try reprojectPricing(
+                    canonicalModel: key,
+                    calculator: calculator,
+                    forceIgnoringReported: overrides.ignoredReportedKeys.contains(key)
+                )
+            }
+            if !affected.isEmpty {
+                try rollupBuilder.rebuildAll()
+            }
+        }
+
+        customPricingFingerprint = overrides.fingerprint
+        activeCustomPricingKeys = overrides.canonicalKeys
+    }
+
+    /// 内置快照 + 用户条目 → 计价器。凑不齐完整价格的条目被丢弃（其 ignoreReported
+    /// 一并不生效）——绝不用半份价格算账。
+    private static func makeCostCalculator(snapshot: PricingSnapshot, overrides: CustomPricingOverrides) -> CostCalculator {
+        let (resolved, dropped) = overrides.resolvedModels(bundled: snapshot)
+        return CostCalculator(
+            snapshot: snapshot.merging(userOverrides: resolved),
+            ignoreReportedModels: overrides.ignoredReportedKeys.subtracting(dropped)
+        )
+    }
+
+    /// 一个模型的事件按当前计价器重算，然后 rollup 重建。覆盖移除后同样走这里，
+    /// 自然回退到内置价或 unknown——语义是「以当前生效价格全量重投影」。
+    ///
+    /// `forceIgnoringReported`（custom-pricing 的 ignoreReported）时连 reported 行也算：
+    /// 原 cost_source='reported' 的行先留底 reported_cost_usd_micros 再改写；开关移除后
+    /// 重投影据此还原原值——覆盖开关完全可逆。
+    private func reprojectPricing(
+        canonicalModel: String,
+        calculator: CostCalculator,
+        forceIgnoringReported: Bool
+    ) throws {
+        // 非 forced 只动非 reported 行；forced 动全部行。有留底待还原的行也要捞回来
+        // （它此刻可能已是 computed 或 unknown）。
+        let rows = try database.query(
+            """
+            SELECT id, observed_epoch_ms, model_name, cost_usd_micros, cost_source, reported_cost_usd_micros,
+                   tokens_input, tokens_output,
+                   tokens_cache_read, tokens_cache_write_5m, tokens_cache_write_1h
+            FROM usage_events
+            WHERE model_canonical = ?
+              AND (? = 1 OR cost_source != 'reported' OR reported_cost_usd_micros IS NOT NULL)
+            """,
+            [.text(canonicalModel), .int(forceIgnoringReported ? 1 : 0)]
+        )
+        guard !rows.isEmpty else { return }
+        try database.execute("BEGIN IMMEDIATE")
+        do {
+            for row in rows {
+                let backup = row.int("reported_cost_usd_micros")
+
+                // 开关已移除：把留底的原始上报价还原回去。
+                if !forceIgnoringReported, let backup {
+                    try database.execute(
+                        """
+                        UPDATE usage_events
+                        SET cost_usd_micros = ?, cost_source = 'reported', reported_cost_usd_micros = NULL
+                        WHERE id = ?
+                        """,
+                        [.int(backup), .int(row.int("id") ?? 0)]
+                    )
+                    continue
+                }
+
+                let event = UsageEvent(
+                    eventSeq: 0,
+                    observedAt: Date(timeIntervalSince1970: Double(row.int("observed_epoch_ms") ?? 0) / 1000),
+                    modelName: row.string("model_name") ?? canonicalModel,
+                    dedupeKey: nil,
+                    inputTokens: row.int("tokens_input") ?? 0,
+                    outputTokens: row.int("tokens_output") ?? 0,
+                    cacheReadTokens: row.int("tokens_cache_read") ?? 0,
+                    cacheWrite5mTokens: row.int("tokens_cache_write_5m") ?? 0,
+                    cacheWrite1hTokens: row.int("tokens_cache_write_1h") ?? 0,
+                    sourceOffset: 0
+                )
+                let (micros, source) = calculator.cost(for: event)
+                // 首次覆盖 reported 行时留底原值；已有留底则保留最早的（重复开关值不变）。
+                var nextBackup = backup
+                if source == .reported {
+                    nextBackup = micros
+                } else if nextBackup == nil, row.string("cost_source") == "reported" {
+                    nextBackup = row.int("cost_usd_micros")
+                }
+                try database.execute(
+                    "UPDATE usage_events SET cost_usd_micros = ?, cost_source = ?, reported_cost_usd_micros = ? WHERE id = ?",
+                    [
+                        micros.map(SQLiteValue.int) ?? .null,
+                        .text(source.rawValue),
+                        nextBackup.map(SQLiteValue.int) ?? .null,
+                        .int(row.int("id") ?? 0)
+                    ]
+                )
+            }
+            try database.execute("COMMIT")
+        } catch {
+            try? database.execute("ROLLBACK")
+            throw error
         }
     }
 
@@ -109,6 +250,9 @@ public final class LocalAgentScanner {
             switch root.kind {
             case .claudeJSONL, .codexJSONL, .ompJSONL, .reasonixStats:
                 try scanJSONLRoot(root, runId: runId, progress: progress, reporter: reporter)
+
+            case .dshJSONL:
+                try scanDshRoot(root, runId: runId, progress: progress, reporter: reporter)
 
             case .opencodeSQLite:
                 try scanOpenCodeRoot(root, runId: runId, progress: progress, reporter: reporter)
@@ -189,6 +333,11 @@ public final class LocalAgentScanner {
             switch root.kind {
             case .claudeJSONL, .codexJSONL, .ompJSONL, .reasonixStats:
                 for file in try jsonlFiles(under: root.rootURL) {
+                    files += 1
+                    bytes += (try? fileMetadata(for: file).sizeBytes) ?? 0
+                }
+            case .dshJSONL:
+                for file in try dshFiles(under: root.rootURL) {
                     files += 1
                     bytes += (try? fileMetadata(for: file).sizeBytes) ?? 0
                 }
@@ -530,6 +679,203 @@ public final class LocalAgentScanner {
         }
     }
 
+    private func scanDshRoot(_ root: ScanRoot, runId: Int64, progress: ScanProgress, reporter: FullRescanProgress?) throws {
+        var failureCount = 0
+        let files = try dshFiles(under: root.rootURL)
+        for file in files {
+            progress.filesSeen += 1
+            do {
+                let hadIssue = try autoreleasepool {
+                    try scanDshFile(file, root: root, runId: runId, progress: progress)
+                }
+                if hadIssue { failureCount += 1 }
+            } catch {
+                failureCount += 1
+            }
+            if let reporter {
+                reporter.advance(bytes: (try? fileMetadata(for: file).sizeBytes) ?? 0)
+            }
+        }
+        if failureCount > 0 {
+            throw JSONLRootPartialError(failureCount: failureCount)
+        }
+        if let latest = try latestDshCursor(under: root.rootURL) {
+            progress.cursorAfter = latest
+        }
+    }
+
+    private func scanDshFile(_ file: URL, root: ScanRoot, runId: Int64, progress: ScanProgress) throws -> Bool {
+        let metadata = try fileMetadata(for: file)
+        let relativePath = relativePath(for: file, rootURL: root.rootURL)
+        let existing = try existingSourceFile(rootId: root.id, relativePath: relativePath)
+
+        if let existing,
+           existing.parseStatus == "ok",
+           existing.sizeBytes == metadata.sizeBytes,
+           existing.mtimeNanoseconds == metadata.mtimeNanoseconds,
+           existing.parserState != nil {
+            try markSourceFileSeen(sourceFileId: existing.id, runId: runId)
+            return false
+        }
+
+        progress.filesChanged += 1
+
+        guard let decoded = DshFileReader.readDecodedString(from: file) else {
+            _ = try? upsertSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: metadata.canonicalPath,
+                fileType: "jsonl_session",
+                metadata: metadata,
+                runId: runId,
+                parsed: false,
+                parseStatus: "failed",
+                parseError: "dsh decode failed",
+                parserState: existing?.parserState
+            )
+            throw LocalAgentParserError.unsupportedFormat
+        }
+
+        let lines = decoded.split(separator: "\n", omittingEmptySubsequences: false)
+        let sessionIdFromPath = file.deletingLastPathComponent().lastPathComponent
+        let parser = DshUsageEventParser(resuming: nil)
+        parser.setSessionIdFromPath(sessionIdFromPath)
+        if let existingId = existing?.id {
+            try deleteEvents(sourceFileId: existingId)
+        }
+        var offset: Int64 = 0
+        var sawLine = false
+        for rawLine in lines {
+            let lineStr = String(rawLine)
+            if lineStr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+            sawLine = true
+            let nextOffset = offset + Int64(lineStr.utf8.count) + 1
+            let jsonlLine = JSONLLine(text: lineStr, offset: offset, nextOffset: nextOffset)
+            parser.consume(jsonlLine)
+            offset = nextOffset
+        }
+
+        progress.bytesRead += metadata.sizeBytes
+
+        guard sawLine else {
+            _ = try upsertSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: metadata.canonicalPath,
+                fileType: "jsonl_session",
+                metadata: metadata,
+                runId: runId,
+                parsed: true,
+                parseStatus: "ok",
+                parseError: nil,
+                parserState: ParserState(lastEventSeq: 0, sessionKey: sessionIdFromPath, projectPath: nil, cliVersion: nil, startedAt: nil, updatedAt: nil)
+            )
+            return false
+        }
+
+        let outcome: (session: ParsedSession?, state: ParserState)
+        do {
+            outcome = try parser.finish(sourceURL: file)
+        } catch {
+            _ = try? upsertSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: metadata.canonicalPath,
+                fileType: "jsonl_session",
+                metadata: metadata,
+                runId: runId,
+                parsed: false,
+                parseStatus: "failed",
+                parseError: sanitizedError(error),
+                parserState: existing?.parserState
+            )
+            throw error
+        }
+
+        guard let session = outcome.session else {
+            _ = try upsertSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: metadata.canonicalPath,
+                fileType: "jsonl_session",
+                metadata: metadata,
+                runId: runId,
+                parsed: true,
+                parseStatus: "ok",
+                parseError: nil,
+                parserState: outcome.state
+            )
+            return false
+        }
+
+        let fileId = try beginSourceFile(
+            rootId: root.id,
+            relativePath: relativePath,
+            canonicalPath: metadata.canonicalPath,
+            fileType: "jsonl_session",
+            metadata: metadata,
+            runId: runId
+        )
+        do {
+            try writer.write(session, scanRootId: root.id, sourceFileId: fileId, runId: runId)
+        } catch {
+            _ = try? upsertSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: metadata.canonicalPath,
+                fileType: "jsonl_session",
+                metadata: metadata,
+                runId: runId,
+                parsed: false,
+                parseStatus: "failed",
+                parseError: sanitizedError(error),
+                parserState: existing?.parserState
+            )
+            throw error
+        }
+        try testHookAfterEventWrite?(fileId)
+        try finishSourceFile(
+            fileId: fileId,
+            file: file,
+            metadata: metadata,
+            parseStatus: "ok",
+            parseError: nil,
+            parserState: outcome.state,
+            runId: runId
+        )
+        return false
+    }
+
+    private func dshFiles(under root: URL) throws -> [URL] {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue else { return [] }
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: []
+        ) else { return [] }
+        var files: [URL] = []
+        for case let file as URL in enumerator {
+            let name = file.lastPathComponent
+            if name == "session.jsonl.zstd" || name == "session.jsonl" {
+                let values = try file.resourceValues(forKeys: [.isRegularFileKey])
+                if values.isRegularFile == true {
+                    files.append(file)
+                }
+            }
+        }
+        return files.sorted { $0.path < $1.path }
+    }
+
+    private func latestDshCursor(under root: URL) throws -> String? {
+        let files = try dshFiles(under: root)
+        if let file = files.last, let meta = try? fileMetadata(for: file) {
+            let date = Date(timeIntervalSince1970: Double(meta.mtimeNanoseconds) / 1_000_000_000)
+            return preciseCursor(from: date)
+        }
+        return nil
+    }
+
     private func jsonlFiles(under root: URL) throws -> [URL] {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory) else { return [] }
@@ -565,6 +911,8 @@ public final class LocalAgentScanner {
             return OmpUsageEventParser(resuming: state)
         case .reasonixStats:
             return ReasonixStatsParser(resuming: state)
+        case .dshJSONL:
+            return DshUsageEventParser(resuming: state)
         case .opencodeSQLite:
             throw LocalAgentParserError.unsupportedFormat
         }
@@ -578,7 +926,7 @@ public final class LocalAgentScanner {
         switch kind {
         case .codexJSONL:
             return ["token_count", "session_meta", "turn_context", "task_started"]
-        case .claudeJSONL, .ompJSONL, .opencodeSQLite, .reasonixStats:
+        case .claudeJSONL, .ompJSONL, .opencodeSQLite, .reasonixStats, .dshJSONL:
             return nil
         }
     }

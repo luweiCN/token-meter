@@ -17,7 +17,8 @@ const AGENT_KINDS: Array<{ id: string; label: string; how: string }> = [
   { id: 'codex', label: 'Codex CLI', how: 'hooks 写入 ~/.codex/hooks.json' },
   { id: 'omp', label: 'OMP', how: '插件安装到 ~/.omp/agent/extensions' },
   { id: 'opencode', label: 'OpenCode', how: '暂无集成 · 仅统计开关' },
-  { id: 'reasonix', label: 'Reasonix', how: '自动统计 ~/.reasonix/stats 用量流水' }
+  { id: 'reasonix', label: 'Reasonix', how: '自动统计 ~/.reasonix/stats 用量流水' },
+  { id: 'dsh', label: 'DeepSeek Harness', how: '自动统计 ~/.dsh 会话流水' }
 ];
 
 /// 供应商额度接入（OpenDesign 稿 B 区）。keyed = 支持应用内填 API Key（存钥匙串，

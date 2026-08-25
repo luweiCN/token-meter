@@ -101,7 +101,7 @@ final class ProviderStore: ObservableObject {
 
         self.database = openedDatabase
         self.settingsStore = openedDatabase.map(SettingsStore.init(database:))
-        self.scanner = openedDatabase.map(LocalAgentScanner.init(database:))
+        self.scanner = openedDatabase.map { LocalAgentScanner(database: $0) }
         self.liveSessions = openedDatabase.map(LiveSessionStore.init(database:))
         self.tieredPricingEntries = ProviderStore.loadTieredPricingEntries()
         self.exchangeRate = ExchangeRateProvider.cachedOrFallback()
@@ -414,7 +414,7 @@ final class ProviderStore: ObservableObject {
 
 private extension SourceKind {
     static var allCasesForLocalIndex: [SourceKind] {
-        [.claudeJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL, .reasonixStats]
+        [.claudeJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL, .reasonixStats, .dshJSONL]
     }
 }
 
@@ -431,6 +431,8 @@ private extension LocalAgentKind {
             .ompJSONL
         case .reasonix:
             .reasonixStats
+        case .dsh:
+            .dshJSONL
         }
     }
 }

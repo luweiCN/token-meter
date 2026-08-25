@@ -26,12 +26,19 @@ public enum OpenCodeGoDashboardParser {
         var windows: [OpenCodeGoUsageWindowData] = []
         for item in items {
             let label = item.label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            // dashboard 文案里数字与汉字/单词之间有空格（「5 小时用量」「5-Hour Usage」），
+            // 去空白后再匹配变体。
+            let compact = label
+                .replacingOccurrences(of: " ", with: "")
+                .replacingOccurrences(of: "\u{00A0}", with: "")
+                .replacingOccurrences(of: "-", with: "")
             let value = item.value.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let percent = Double(value.replacingOccurrences(of: "%", with: "")) else {
                 continue
             }
             let windowLabel: String
-            if label.contains("rolling") || label.contains("滚动") {
+            if label.contains("rolling") || compact.contains("滚动")
+                || compact.hasPrefix("5小时") || compact.contains("hour") {
                 windowLabel = "5h"
             } else if label.contains("weekly") || label.contains("每周") {
                 windowLabel = "Weekly"

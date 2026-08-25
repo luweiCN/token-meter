@@ -71,7 +71,7 @@ public enum TokenMeterDatabaseMigrator {
         let createSQL = try database.query(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'scan_roots'"
         )[0].string("sql") ?? ""
-        guard !createSQL.contains("reasonix_stats") else { return }
+        guard !createSQL.contains("dsh_jsonl") else { return }
 
         try database.execute("PRAGMA foreign_keys = OFF")
         defer { try? database.execute("PRAGMA foreign_keys = ON") }
@@ -79,7 +79,7 @@ public enum TokenMeterDatabaseMigrator {
             """
             CREATE TABLE scan_roots_new (
               id INTEGER PRIMARY KEY,
-              kind TEXT NOT NULL CHECK (kind IN ('claude_jsonl', 'codex_jsonl', 'omp_jsonl', 'opencode_sqlite', 'reasonix_stats')),
+              kind TEXT NOT NULL CHECK (kind IN ('claude_jsonl', 'codex_jsonl', 'omp_jsonl', 'opencode_sqlite', 'reasonix_stats', 'dsh_jsonl')),
               root_path TEXT NOT NULL,
               display_name TEXT NOT NULL,
               enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
@@ -120,24 +120,36 @@ public enum TokenMeterDatabaseMigrator {
     /// 用户手动调整过（关掉某个 agent、或关掉 reasonix 后又重启）数组就不再等于旧全集，
     /// 不会被反复加回来——这是幂等的关键。
     private static func ensureNewAgentDefaults(_ database: SQLiteDatabase) throws {
+        // reasonix 迁移
         let legacyDefaults = Set(["claudeCode", "codex", "opencode", "omp"])
-        let rows = try database.query(
-            "SELECT value_json FROM settings WHERE key = 'filters.enabledAgentKinds'"
-        )
-        guard let json = rows.first?.string("value_json"),
-              let data = json.data(using: .utf8),
-              var kinds = try? JSONSerialization.jsonObject(with: data) as? [String],
-              Set(kinds) == legacyDefaults else {
-            return
+        if let rows = try? database.query("SELECT value_json FROM settings WHERE key = 'filters.enabledAgentKinds'"),
+           let json = rows.first?.string("value_json"),
+           let data = json.data(using: .utf8),
+           var kinds = try? JSONSerialization.jsonObject(with: data) as? [String],
+           Set(kinds) == legacyDefaults {
+            kinds.append("reasonix")
+            if let updated = String(data: try JSONSerialization.data(withJSONObject: kinds), encoding: .utf8) {
+                try? database.execute(
+                    "UPDATE settings SET value_json = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'filters.enabledAgentKinds'",
+                    [.text(updated)]
+                )
+            }
         }
-        kinds.append("reasonix")
-        guard let updated = String(data: try JSONSerialization.data(withJSONObject: kinds), encoding: .utf8) else {
-            return
+        // dsh 迁移
+        let legacyWithReasonix = Set(["claudeCode", "codex", "opencode", "omp", "reasonix"])
+        if let rows = try? database.query("SELECT value_json FROM settings WHERE key = 'filters.enabledAgentKinds'"),
+           let json = rows.first?.string("value_json"),
+           let data = json.data(using: .utf8),
+           var kinds = try? JSONSerialization.jsonObject(with: data) as? [String],
+           Set(kinds) == legacyWithReasonix {
+            kinds.append("dsh")
+            if let updated = String(data: try JSONSerialization.data(withJSONObject: kinds), encoding: .utf8) {
+                try? database.execute(
+                    "UPDATE settings SET value_json = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'filters.enabledAgentKinds'",
+                    [.text(updated)]
+                )
+            }
         }
-        try database.execute(
-            "UPDATE settings SET value_json = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'filters.enabledAgentKinds'",
-            [.text(updated)]
-        )
     }
 
     private static func rebuildDerivedTables(_ database: SQLiteDatabase) throws {

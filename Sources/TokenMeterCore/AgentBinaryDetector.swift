@@ -23,7 +23,8 @@ public enum AgentBinaryDetector {
         ("claudeCode", "claude"),
         ("codex", "codex"),
         ("omp", "omp"),
-        ("opencode", "opencode")
+        ("opencode", "opencode"),
+        ("dsh", "dsh")
     ]
 
     public static func detect(

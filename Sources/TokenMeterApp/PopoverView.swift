@@ -44,6 +44,7 @@ struct MBTheme: Equatable {
         case "omp": return ok
         case "opencode": return warn
         case "reasonix": return self == .light ? Color(hex: 0xC2542E) : Color(hex: 0xFF7A5C)
+        case "dsh": return self == .light ? Color(hex: 0x1E90FF) : Color(hex: 0x4A9EFF)
         default: return muted
         }
     }
@@ -145,6 +146,7 @@ enum MenuBarProviderName {
         case "omp": return "OMP"
         case "opencode": return "OpenCode"
         case "reasonix": return "Reasonix"
+        case "dsh": return "DeepSeek Harness"
         default: return providerId
         }
     }
@@ -1205,6 +1207,10 @@ private struct ModelRow: View {
 
 /// snapshot → 稿上元素的显示模型。
 struct QuotaDisplayModel {
+    /// 环资格的窗口时长上限：≤7 天（日内/周窗）属于「关注级」可当环；月级及以上
+    /// 一律长条。绝对阈值而非相对排名——候选不足时排名会递补，阈值不会。
+    static let ringWindowCeilingMinutes = 7 * 24 * 60
+
     struct Ring {
         let label: String
         /// 剩余百分比（与折叠行 summary、tmux 段同语义：数值越大额度越充裕）。
@@ -1264,22 +1270,29 @@ struct QuotaDisplayModel {
         let staleSeconds = now.timeIntervalSince(snapshot.fetchedAt)
         staleMinutes = staleSeconds >= 600 ? Int(staleSeconds / 60) : nil
 
-        // 环＝主组（组名与 provider 同名）的主窗口，至多两只（一行放不下第三只：
-        // 三环并排每卡只剩 ~29pt 放标签/倒计时，用户裁定 OpenCode 的 30d 与智谱
-        // MCP 这类第三额度一律降为水平条）；主组里没有窗口时长的额度（智谱 MCP
-        // 这类按次数计的额度）同样降为水平条，不和主额度平起平坐；其余——主组的
-        // 第三个起和全部模型级次要组（Spark/Fable）——也一律水平条。
-        // 展示值统一为【剩余】：此前环里是已用（22%）、折叠行与 tmux 段是剩余（78%），
-        // 一屏两种语义。
+        // 环＝主组（组名与 provider 同名）里【带窗口时长且 ≤7 天】的 quota，按时长升序
+        // 取至多两只（短窗优先当环：5h 排在 7d 前；一行放不下第三只环）。两条硬语义
+        // 边界（用户裁定，不得为凑满环位而突破）：
+        // - 候选不足两只就少画，【绝不递补】：OpenCode 的 Monthly 曾在 5h 行解析失败时
+        //   被顶进环位——月级与模型级次要额度属于「条」的世界，不因环缺而升级。
+        //   资格线因此必须是绝对阈值而非相对排名：只剩两只候选时「前二」仍会把月窗收进来。
+        // - 无窗口时长的额度（智谱 MCP 这类按次计）永远是条，不进环。
         let percentMetrics = labeledMetrics.filter { $0.metric.usedPercent != nil }
-        var ringMetrics = percentMetrics.filter { $0.isPrimary && $0.metric.windowDurationMinutes != nil }
-        if ringMetrics.isEmpty {
-            ringMetrics = percentMetrics.filter(\.isPrimary)
-        }
-        ringMetrics = Array(ringMetrics.prefix(2))
-        if ringMetrics.isEmpty {
-            ringMetrics = Array(percentMetrics.prefix(2))
-        }
+        let ringMetrics = Array(
+            percentMetrics
+                .filter { entry in
+                    guard entry.isPrimary, let window = entry.metric.windowDurationMinutes else { return false }
+                    return window <= Self.ringWindowCeilingMinutes
+                }
+                .enumerated()
+                .sorted { lhs, rhs in
+                    let lhsWindow = lhs.element.metric.windowDurationMinutes ?? Int.max
+                    let rhsWindow = rhs.element.metric.windowDurationMinutes ?? Int.max
+                    return lhsWindow == rhsWindow ? lhs.offset < rhs.offset : lhsWindow < rhsWindow
+                }
+                .map(\.element)
+                .prefix(2)
+        )
         let ringIds = Set(ringMetrics.map(\.metric.id))
         // 状态异常/用尽直接红；其余交给时间进度感知的 pace 逻辑。
         func metricTone(_ metric: UsageMetric) -> UsageMetricTone {

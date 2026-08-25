@@ -245,6 +245,13 @@
       "inputPerMTok": 5.0,
       "outputPerMTok": 25.0
     },
+    "anthropic.claude-opus-5": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
     "anthropic.claude-sonnet-4-20250514-v1:0": {
       "cacheReadPerMTok": 0.3,
       "cacheWrite1hPerMTok": 6.0,
@@ -476,6 +483,13 @@
       "inputPerMTok": 5.5,
       "outputPerMTok": 27.5
     },
+    "au.anthropic.claude-opus-5": {
+      "cacheReadPerMTok": 0.55,
+      "cacheWrite1hPerMTok": 11.0,
+      "cacheWrite5mPerMTok": 6.875,
+      "inputPerMTok": 5.5,
+      "outputPerMTok": 27.5
+    },
     "au.anthropic.claude-sonnet-4-5-20250929-v1:0": {
       "cacheReadPerMTok": 0.33,
       "cacheWrite1hPerMTok": 6.6,
@@ -531,27 +545,6 @@
       "cacheWrite5mPerMTok": 0.20625,
       "inputPerMTok": 0.165,
       "outputPerMTok": 0.66
-    },
-    "azure/eu/gpt-4o-mini-realtime-preview-2024-12-17": {
-      "cacheReadPerMTok": 0.33,
-      "cacheWrite1hPerMTok": 1.32,
-      "cacheWrite5mPerMTok": 0.825,
-      "inputPerMTok": 0.66,
-      "outputPerMTok": 2.64
-    },
-    "azure/eu/gpt-4o-realtime-preview-2024-10-01": {
-      "cacheReadPerMTok": 2.75,
-      "cacheWrite1hPerMTok": 11.0,
-      "cacheWrite5mPerMTok": 6.875,
-      "inputPerMTok": 5.5,
-      "outputPerMTok": 22.0
-    },
-    "azure/eu/gpt-4o-realtime-preview-2024-12-17": {
-      "cacheReadPerMTok": 2.75,
-      "cacheWrite1hPerMTok": 11.0,
-      "cacheWrite5mPerMTok": 6.875,
-      "inputPerMTok": 5.5,
-      "outputPerMTok": 22.0
     },
     "azure/eu/gpt-5-2025-08-07": {
       "cacheReadPerMTok": 0.1375,
@@ -624,11 +617,11 @@
       "outputPerMTok": 33.0
     },
     "azure/eu/gpt-5.6-luna": {
-      "cacheReadPerMTok": 0.11,
-      "cacheWrite1hPerMTok": 2.2,
-      "cacheWrite5mPerMTok": 1.375,
-      "inputPerMTok": 1.1,
-      "outputPerMTok": 6.6
+      "cacheReadPerMTok": 0.022,
+      "cacheWrite1hPerMTok": 0.44,
+      "cacheWrite5mPerMTok": 0.275,
+      "inputPerMTok": 0.22,
+      "outputPerMTok": 1.32
     },
     "azure/eu/gpt-5.6-sol": {
       "cacheReadPerMTok": 0.55,
@@ -638,11 +631,11 @@
       "outputPerMTok": 33.0
     },
     "azure/eu/gpt-5.6-terra": {
-      "cacheReadPerMTok": 0.275,
-      "cacheWrite1hPerMTok": 5.5,
-      "cacheWrite5mPerMTok": 3.4375,
-      "inputPerMTok": 2.75,
-      "outputPerMTok": 16.5
+      "cacheReadPerMTok": 0.22,
+      "cacheWrite1hPerMTok": 4.4,
+      "cacheWrite5mPerMTok": 2.75,
+      "inputPerMTok": 2.2,
+      "outputPerMTok": 13.2
     },
     "azure/eu/o1-2024-12-17": {
       "cacheReadPerMTok": 8.25,
@@ -938,27 +931,6 @@
       "inputPerMTok": 2.5,
       "outputPerMTok": 10.0
     },
-    "azure/gpt-4o-mini-realtime-preview-2024-12-17": {
-      "cacheReadPerMTok": 0.3,
-      "cacheWrite1hPerMTok": 1.2,
-      "cacheWrite5mPerMTok": 0.75,
-      "inputPerMTok": 0.6,
-      "outputPerMTok": 2.4
-    },
-    "azure/gpt-4o-realtime-preview-2024-10-01": {
-      "cacheReadPerMTok": 2.5,
-      "cacheWrite1hPerMTok": 10.0,
-      "cacheWrite5mPerMTok": 6.25,
-      "inputPerMTok": 5.0,
-      "outputPerMTok": 20.0
-    },
-    "azure/gpt-4o-realtime-preview-2024-12-17": {
-      "cacheReadPerMTok": 2.5,
-      "cacheWrite1hPerMTok": 10.0,
-      "cacheWrite5mPerMTok": 6.25,
-      "inputPerMTok": 5.0,
-      "outputPerMTok": 20.0
-    },
     "azure/gpt-5": {
       "cacheReadPerMTok": 0.125,
       "cacheWrite1hPerMTok": 2.5,
@@ -1142,11 +1114,11 @@
       "outputPerMTok": 30.0
     },
     "azure/gpt-5.6-luna": {
-      "cacheReadPerMTok": 0.1,
-      "cacheWrite1hPerMTok": 2.0,
-      "cacheWrite5mPerMTok": 1.25,
-      "inputPerMTok": 1.0,
-      "outputPerMTok": 6.0
+      "cacheReadPerMTok": 0.02,
+      "cacheWrite1hPerMTok": 0.4,
+      "cacheWrite5mPerMTok": 0.25,
+      "inputPerMTok": 0.2,
+      "outputPerMTok": 1.2
     },
     "azure/gpt-5.6-sol": {
       "cacheReadPerMTok": 0.5,
@@ -1156,11 +1128,11 @@
       "outputPerMTok": 30.0
     },
     "azure/gpt-5.6-terra": {
-      "cacheReadPerMTok": 0.25,
-      "cacheWrite1hPerMTok": 5.0,
-      "cacheWrite5mPerMTok": 3.125,
-      "inputPerMTok": 2.5,
-      "outputPerMTok": 15.0
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 12.0
     },
     "azure/gpt-audio-1.5-2026-02-23": {
       "cacheReadPerMTok": 0.25,
@@ -1177,27 +1149,6 @@
       "outputPerMTok": 10.0
     },
     "azure/gpt-audio-mini-2025-10-06": {
-      "cacheReadPerMTok": 0.06,
-      "cacheWrite1hPerMTok": 1.2,
-      "cacheWrite5mPerMTok": 0.75,
-      "inputPerMTok": 0.6,
-      "outputPerMTok": 2.4
-    },
-    "azure/gpt-realtime-1.5-2026-02-23": {
-      "cacheReadPerMTok": 4.0,
-      "cacheWrite1hPerMTok": 8.0,
-      "cacheWrite5mPerMTok": 5.0,
-      "inputPerMTok": 4.0,
-      "outputPerMTok": 16.0
-    },
-    "azure/gpt-realtime-2025-08-28": {
-      "cacheReadPerMTok": 4.0,
-      "cacheWrite1hPerMTok": 8.0,
-      "cacheWrite5mPerMTok": 5.0,
-      "inputPerMTok": 4.0,
-      "outputPerMTok": 16.0
-    },
-    "azure/gpt-realtime-mini-2025-10-06": {
       "cacheReadPerMTok": 0.06,
       "cacheWrite1hPerMTok": 1.2,
       "cacheWrite5mPerMTok": 0.75,
@@ -1344,27 +1295,6 @@
       "inputPerMTok": 0.165,
       "outputPerMTok": 0.66
     },
-    "azure/us/gpt-4o-mini-realtime-preview-2024-12-17": {
-      "cacheReadPerMTok": 0.33,
-      "cacheWrite1hPerMTok": 1.32,
-      "cacheWrite5mPerMTok": 0.825,
-      "inputPerMTok": 0.66,
-      "outputPerMTok": 2.64
-    },
-    "azure/us/gpt-4o-realtime-preview-2024-10-01": {
-      "cacheReadPerMTok": 2.75,
-      "cacheWrite1hPerMTok": 11.0,
-      "cacheWrite5mPerMTok": 6.875,
-      "inputPerMTok": 5.5,
-      "outputPerMTok": 22.0
-    },
-    "azure/us/gpt-4o-realtime-preview-2024-12-17": {
-      "cacheReadPerMTok": 2.75,
-      "cacheWrite1hPerMTok": 11.0,
-      "cacheWrite5mPerMTok": 6.875,
-      "inputPerMTok": 5.5,
-      "outputPerMTok": 22.0
-    },
     "azure/us/gpt-5-2025-08-07": {
       "cacheReadPerMTok": 0.1375,
       "cacheWrite1hPerMTok": 2.75,
@@ -1436,11 +1366,11 @@
       "outputPerMTok": 33.0
     },
     "azure/us/gpt-5.6-luna": {
-      "cacheReadPerMTok": 0.11,
-      "cacheWrite1hPerMTok": 2.2,
-      "cacheWrite5mPerMTok": 1.375,
-      "inputPerMTok": 1.1,
-      "outputPerMTok": 6.6
+      "cacheReadPerMTok": 0.022,
+      "cacheWrite1hPerMTok": 0.44,
+      "cacheWrite5mPerMTok": 0.275,
+      "inputPerMTok": 0.22,
+      "outputPerMTok": 1.32
     },
     "azure/us/gpt-5.6-sol": {
       "cacheReadPerMTok": 0.55,
@@ -1450,11 +1380,11 @@
       "outputPerMTok": 33.0
     },
     "azure/us/gpt-5.6-terra": {
-      "cacheReadPerMTok": 0.275,
-      "cacheWrite1hPerMTok": 5.5,
-      "cacheWrite5mPerMTok": 3.4375,
-      "inputPerMTok": 2.75,
-      "outputPerMTok": 16.5
+      "cacheReadPerMTok": 0.22,
+      "cacheWrite1hPerMTok": 4.4,
+      "cacheWrite5mPerMTok": 2.75,
+      "inputPerMTok": 2.2,
+      "outputPerMTok": 13.2
     },
     "azure/us/o1-2024-12-17": {
       "cacheReadPerMTok": 8.25,
@@ -1497,6 +1427,104 @@
       "cacheWrite5mPerMTok": 1.5125,
       "inputPerMTok": 1.21,
       "outputPerMTok": 4.84
+    },
+    "azure_ai/FW-DeepSeek-V3.2": {
+      "cacheReadPerMTok": 0.31,
+      "cacheWrite1hPerMTok": 1.24,
+      "cacheWrite5mPerMTok": 0.775,
+      "inputPerMTok": 0.62,
+      "outputPerMTok": 1.85
+    },
+    "azure_ai/FW-DeepSeek-V4-Pro": {
+      "cacheReadPerMTok": 0.165,
+      "cacheWrite1hPerMTok": 3.85,
+      "cacheWrite5mPerMTok": 2.40625,
+      "inputPerMTok": 1.925,
+      "outputPerMTok": 3.828
+    },
+    "azure_ai/FW-GLM-5": {
+      "cacheReadPerMTok": 0.22,
+      "cacheWrite1hPerMTok": 2.2,
+      "cacheWrite5mPerMTok": 1.375,
+      "inputPerMTok": 1.1,
+      "outputPerMTok": 3.52
+    },
+    "azure_ai/FW-GLM-5.1": {
+      "cacheReadPerMTok": 0.286,
+      "cacheWrite1hPerMTok": 3.08,
+      "cacheWrite5mPerMTok": 1.925,
+      "inputPerMTok": 1.54,
+      "outputPerMTok": 4.84
+    },
+    "azure_ai/FW-GLM-5.2": {
+      "cacheReadPerMTok": 0.15,
+      "cacheWrite1hPerMTok": 3.08,
+      "cacheWrite5mPerMTok": 1.925,
+      "inputPerMTok": 1.54,
+      "outputPerMTok": 4.84
+    },
+    "azure_ai/FW-GLM-5.2-Fast": {
+      "cacheReadPerMTok": 0.21,
+      "cacheWrite1hPerMTok": 4.2,
+      "cacheWrite5mPerMTok": 2.625,
+      "inputPerMTok": 2.1,
+      "outputPerMTok": 6.6
+    },
+    "azure_ai/FW-Inkling": {
+      "cacheReadPerMTok": 0.17,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 4.05
+    },
+    "azure_ai/FW-Kimi-K2.5": {
+      "cacheReadPerMTok": 0.11,
+      "cacheWrite1hPerMTok": 1.32,
+      "cacheWrite5mPerMTok": 0.825,
+      "inputPerMTok": 0.66,
+      "outputPerMTok": 3.3
+    },
+    "azure_ai/FW-Kimi-K2.6": {
+      "cacheReadPerMTok": 0.176,
+      "cacheWrite1hPerMTok": 2.09,
+      "cacheWrite5mPerMTok": 1.30625,
+      "inputPerMTok": 1.045,
+      "outputPerMTok": 4.4
+    },
+    "azure_ai/FW-Kimi-K2.7-Code": {
+      "cacheReadPerMTok": 0.21,
+      "cacheWrite1hPerMTok": 2.1,
+      "cacheWrite5mPerMTok": 1.3125,
+      "inputPerMTok": 1.05,
+      "outputPerMTok": 4.4
+    },
+    "azure_ai/FW-Kimi-K3": {
+      "cacheReadPerMTok": 0.33,
+      "cacheWrite1hPerMTok": 6.6,
+      "cacheWrite5mPerMTok": 4.125,
+      "inputPerMTok": 3.3,
+      "outputPerMTok": 16.5
+    },
+    "azure_ai/FW-MiniMax-M2.5": {
+      "cacheReadPerMTok": 0.033,
+      "cacheWrite1hPerMTok": 0.66,
+      "cacheWrite5mPerMTok": 0.4125,
+      "inputPerMTok": 0.33,
+      "outputPerMTok": 1.32
+    },
+    "azure_ai/FW-MiniMax-M3": {
+      "cacheReadPerMTok": 0.066,
+      "cacheWrite1hPerMTok": 0.66,
+      "cacheWrite5mPerMTok": 0.4125,
+      "inputPerMTok": 0.33,
+      "outputPerMTok": 1.32
+    },
+    "azure_ai/FW-Nemotron-3-Ultra-NVFP4": {
+      "cacheReadPerMTok": 0.119,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.4
     },
     "azure_ai/Llama-3.2-11B-Vision-Instruct": {
       "cacheReadPerMTok": 0.037,
@@ -1715,6 +1743,13 @@
       "inputPerMTok": 5.0,
       "outputPerMTok": 25.0
     },
+    "azure_ai/claude-opus-5": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
     "azure_ai/claude-sonnet-4-5": {
       "cacheReadPerMTok": 0.3,
       "cacheWrite1hPerMTok": 6.0,
@@ -1917,6 +1952,13 @@
       "cacheWrite5mPerMTok": 0.25,
       "inputPerMTok": 0.2,
       "outputPerMTok": 0.5
+    },
+    "azure_ai/grok-4.3": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 2.5
     },
     "azure_ai/grok-code-fast-1": {
       "cacheReadPerMTok": 0.02,
@@ -3122,6 +3164,20 @@
       "inputPerMTok": 1.0,
       "outputPerMTok": 5.0
     },
+    "claude-mythos-5": {
+      "cacheReadPerMTok": 1.0,
+      "cacheWrite1hPerMTok": 20.0,
+      "cacheWrite5mPerMTok": 12.5,
+      "inputPerMTok": 10.0,
+      "outputPerMTok": 50.0
+    },
+    "claude-mythos-preview": {
+      "cacheReadPerMTok": 1.0,
+      "cacheWrite1hPerMTok": 20.0,
+      "cacheWrite5mPerMTok": 12.5,
+      "inputPerMTok": 10.0,
+      "outputPerMTok": 50.0
+    },
     "claude-opus-4-1": {
       "cacheReadPerMTok": 1.5,
       "cacheWrite1hPerMTok": 30.0,
@@ -3186,6 +3242,13 @@
       "outputPerMTok": 25.0
     },
     "claude-opus-4-8": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "claude-opus-5": {
       "cacheReadPerMTok": 0.5,
       "cacheWrite1hPerMTok": 10.0,
       "cacheWrite5mPerMTok": 6.25,
@@ -3416,6 +3479,13 @@
       "inputPerMTok": 1.923,
       "outputPerMTok": 1.923
     },
+    "codex-auto-review": {
+      "cacheReadPerMTok": 0.175,
+      "cacheWrite1hPerMTok": 3.5,
+      "cacheWrite5mPerMTok": 2.1875,
+      "inputPerMTok": 1.75,
+      "outputPerMTok": 14.0
+    },
     "cohere.command-light-text-v14": {
       "cacheReadPerMTok": 0.03,
       "cacheWrite1hPerMTok": 0.6,
@@ -3563,6 +3633,48 @@
       "inputPerMTok": 0.0145,
       "outputPerMTok": 0.07
     },
+    "dashscope/deepseek-v4-flash": {
+      "cacheReadPerMTok": 0.04,
+      "cacheWrite1hPerMTok": 0.4,
+      "cacheWrite5mPerMTok": 0.25,
+      "inputPerMTok": 0.2,
+      "outputPerMTok": 0.4
+    },
+    "dashscope/deepseek-v4-flash-0731": {
+      "cacheReadPerMTok": 0.04,
+      "cacheWrite1hPerMTok": 0.4,
+      "cacheWrite5mPerMTok": 0.25,
+      "inputPerMTok": 0.2,
+      "outputPerMTok": 0.4
+    },
+    "dashscope/deepseek-v4-pro": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 4.8,
+      "cacheWrite5mPerMTok": 3.0,
+      "inputPerMTok": 2.4,
+      "outputPerMTok": 4.8
+    },
+    "dashscope/glm-5.1": {
+      "cacheReadPerMTok": 0.26,
+      "cacheWrite1hPerMTok": 2.8,
+      "cacheWrite5mPerMTok": 1.75,
+      "inputPerMTok": 1.4,
+      "outputPerMTok": 4.4
+    },
+    "dashscope/glm-5.2": {
+      "cacheReadPerMTok": 0.28,
+      "cacheWrite1hPerMTok": 2.8,
+      "cacheWrite5mPerMTok": 1.75,
+      "inputPerMTok": 1.4,
+      "outputPerMTok": 4.4
+    },
+    "dashscope/kimi-k2.7-code": {
+      "cacheReadPerMTok": 0.19,
+      "cacheWrite1hPerMTok": 1.9,
+      "cacheWrite5mPerMTok": 1.1875,
+      "inputPerMTok": 0.95,
+      "outputPerMTok": 4.0
+    },
     "dashscope/qwen-coder": {
       "cacheReadPerMTok": 0.03,
       "cacheWrite1hPerMTok": 0.6,
@@ -3675,6 +3787,20 @@
       "inputPerMTok": 0.16,
       "outputPerMTok": 2.87
     },
+    "dashscope/qwen3.7-max": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 3.125,
+      "inputPerMTok": 2.5,
+      "outputPerMTok": 7.5
+    },
+    "dashscope/qwen3.8-max": {
+      "cacheReadPerMTok": 0.25,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 6.0
+    },
     "dashscope/qwq-plus": {
       "cacheReadPerMTok": 0.08,
       "cacheWrite1hPerMTok": 1.6,
@@ -3717,6 +3843,13 @@
       "inputPerMTok": 5.00003,
       "outputPerMTok": 25.00001
     },
+    "databricks/databricks-claude-opus-4-6": {
+      "cacheReadPerMTok": 0.500003,
+      "cacheWrite1hPerMTok": 10.00006,
+      "cacheWrite5mPerMTok": 6.250037,
+      "inputPerMTok": 5.00003,
+      "outputPerMTok": 25.00001
+    },
     "databricks/databricks-claude-sonnet-4": {
       "cacheReadPerMTok": 0.299999,
       "cacheWrite1hPerMTok": 5.99998,
@@ -3738,6 +3871,13 @@
       "inputPerMTok": 2.99999,
       "outputPerMTok": 15.00002
     },
+    "databricks/databricks-claude-sonnet-4-6": {
+      "cacheReadPerMTok": 0.299999,
+      "cacheWrite1hPerMTok": 5.99998,
+      "cacheWrite5mPerMTok": 3.749988,
+      "inputPerMTok": 2.99999,
+      "outputPerMTok": 15.00002
+    },
     "databricks/databricks-gemini-2-5-flash": {
       "cacheReadPerMTok": 0.030002,
       "cacheWrite1hPerMTok": 0.60004,
@@ -3751,6 +3891,34 @@
       "cacheWrite5mPerMTok": 1.562488,
       "inputPerMTok": 1.24999,
       "outputPerMTok": 9.99999
+    },
+    "databricks/databricks-gemini-3-1-flash-lite": {
+      "cacheReadPerMTok": 0.031248,
+      "cacheWrite1hPerMTok": 0.62496,
+      "cacheWrite5mPerMTok": 0.3906,
+      "inputPerMTok": 0.31248,
+      "outputPerMTok": 1.87502
+    },
+    "databricks/databricks-gemini-3-1-pro": {
+      "cacheReadPerMTok": 0.249998,
+      "cacheWrite1hPerMTok": 4.99996,
+      "cacheWrite5mPerMTok": 3.124975,
+      "inputPerMTok": 2.49998,
+      "outputPerMTok": 15.00002
+    },
+    "databricks/databricks-gemini-3-flash": {
+      "cacheReadPerMTok": 0.062503,
+      "cacheWrite1hPerMTok": 1.25006,
+      "cacheWrite5mPerMTok": 0.781288,
+      "inputPerMTok": 0.62503,
+      "outputPerMTok": 3.74997
+    },
+    "databricks/databricks-gemini-3-pro": {
+      "cacheReadPerMTok": 0.249998,
+      "cacheWrite1hPerMTok": 4.99996,
+      "cacheWrite5mPerMTok": 3.124975,
+      "inputPerMTok": 2.49998,
+      "outputPerMTok": 15.00002
     },
     "databricks/databricks-gemma-3-12b": {
       "cacheReadPerMTok": 0.015001,
@@ -3772,6 +3940,62 @@
       "cacheWrite5mPerMTok": 1.562488,
       "inputPerMTok": 1.24999,
       "outputPerMTok": 9.99999
+    },
+    "databricks/databricks-gpt-5-1-codex-max": {
+      "cacheReadPerMTok": 0.124999,
+      "cacheWrite1hPerMTok": 2.49998,
+      "cacheWrite5mPerMTok": 1.562488,
+      "inputPerMTok": 1.24999,
+      "outputPerMTok": 9.99999
+    },
+    "databricks/databricks-gpt-5-1-codex-mini": {
+      "cacheReadPerMTok": 0.024997,
+      "cacheWrite1hPerMTok": 0.49994,
+      "cacheWrite5mPerMTok": 0.312462,
+      "inputPerMTok": 0.24997,
+      "outputPerMTok": 1.99997
+    },
+    "databricks/databricks-gpt-5-2": {
+      "cacheReadPerMTok": 0.175,
+      "cacheWrite1hPerMTok": 3.5,
+      "cacheWrite5mPerMTok": 2.1875,
+      "inputPerMTok": 1.75,
+      "outputPerMTok": 14.0
+    },
+    "databricks/databricks-gpt-5-2-codex": {
+      "cacheReadPerMTok": 0.175,
+      "cacheWrite1hPerMTok": 3.5,
+      "cacheWrite5mPerMTok": 2.1875,
+      "inputPerMTok": 1.75,
+      "outputPerMTok": 14.0
+    },
+    "databricks/databricks-gpt-5-3-codex": {
+      "cacheReadPerMTok": 0.175,
+      "cacheWrite1hPerMTok": 3.5,
+      "cacheWrite5mPerMTok": 2.1875,
+      "inputPerMTok": 1.75,
+      "outputPerMTok": 14.0
+    },
+    "databricks/databricks-gpt-5-4": {
+      "cacheReadPerMTok": 0.249998,
+      "cacheWrite1hPerMTok": 4.99996,
+      "cacheWrite5mPerMTok": 3.124975,
+      "inputPerMTok": 2.49998,
+      "outputPerMTok": 15.00002
+    },
+    "databricks/databricks-gpt-5-4-mini": {
+      "cacheReadPerMTok": 0.074998,
+      "cacheWrite1hPerMTok": 1.49996,
+      "cacheWrite5mPerMTok": 0.937475,
+      "inputPerMTok": 0.74998,
+      "outputPerMTok": 4.50002
+    },
+    "databricks/databricks-gpt-5-4-nano": {
+      "cacheReadPerMTok": 0.019999,
+      "cacheWrite1hPerMTok": 0.39998,
+      "cacheWrite5mPerMTok": 0.249988,
+      "inputPerMTok": 0.19999,
+      "outputPerMTok": 1.24999
     },
     "databricks/databricks-gpt-5-mini": {
       "cacheReadPerMTok": 0.024997,
@@ -4298,6 +4522,13 @@
       "inputPerMTok": 0.1,
       "outputPerMTok": 0.4
     },
+    "deepinfra/nvidia/NVIDIA-Nemotron-3.5-Lightning": {
+      "cacheReadPerMTok": 0.005,
+      "cacheWrite1hPerMTok": 0.1,
+      "cacheWrite5mPerMTok": 0.0625,
+      "inputPerMTok": 0.05,
+      "outputPerMTok": 0.2
+    },
     "deepinfra/nvidia/NVIDIA-Nemotron-Nano-9B-v2": {
       "cacheReadPerMTok": 0.004,
       "cacheWrite1hPerMTok": 0.08,
@@ -4348,6 +4579,187 @@
       "outputPerMTok": 0.28,
       "tiered": {
         "effectiveAfter": "2026-08-16T16:00:00Z",
+        "holidays": [
+          {
+            "day": 1,
+            "month": 1,
+            "year": 2026
+          },
+          {
+            "day": 2,
+            "month": 1,
+            "year": 2026
+          },
+          {
+            "day": 3,
+            "month": 1,
+            "year": 2026
+          },
+          {
+            "day": 15,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 16,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 17,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 18,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 19,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 20,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 21,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 22,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 23,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 4,
+            "month": 4,
+            "year": 2026
+          },
+          {
+            "day": 5,
+            "month": 4,
+            "year": 2026
+          },
+          {
+            "day": 6,
+            "month": 4,
+            "year": 2026
+          },
+          {
+            "day": 1,
+            "month": 5,
+            "year": 2026
+          },
+          {
+            "day": 2,
+            "month": 5,
+            "year": 2026
+          },
+          {
+            "day": 3,
+            "month": 5,
+            "year": 2026
+          },
+          {
+            "day": 4,
+            "month": 5,
+            "year": 2026
+          },
+          {
+            "day": 5,
+            "month": 5,
+            "year": 2026
+          },
+          {
+            "day": 19,
+            "month": 6,
+            "year": 2026
+          },
+          {
+            "day": 20,
+            "month": 6,
+            "year": 2026
+          },
+          {
+            "day": 21,
+            "month": 6,
+            "year": 2026
+          },
+          {
+            "day": 25,
+            "month": 9,
+            "year": 2026
+          },
+          {
+            "day": 26,
+            "month": 9,
+            "year": 2026
+          },
+          {
+            "day": 27,
+            "month": 9,
+            "year": 2026
+          },
+          {
+            "day": 1,
+            "month": 10,
+            "year": 2026
+          },
+          {
+            "day": 2,
+            "month": 10,
+            "year": 2026
+          },
+          {
+            "day": 3,
+            "month": 10,
+            "year": 2026
+          },
+          {
+            "day": 4,
+            "month": 10,
+            "year": 2026
+          },
+          {
+            "day": 5,
+            "month": 10,
+            "year": 2026
+          },
+          {
+            "day": 6,
+            "month": 10,
+            "year": 2026
+          },
+          {
+            "day": 7,
+            "month": 10,
+            "year": 2026
+          }
+        ],
+        "offPeak": {
+          "cacheReadPerMTok": 0.007,
+          "cacheWrite1hPerMTok": 0.28,
+          "cacheWrite5mPerMTok": 0.0,
+          "inputPerMTok": 0.22,
+          "outputPerMTok": 0.66
+        },
+        "peak": {
+          "cacheReadPerMTok": 0.014,
+          "cacheWrite1hPerMTok": 0.28,
+          "cacheWrite5mPerMTok": 0.0,
+          "inputPerMTok": 0.44,
+          "outputPerMTok": 1.32
+        },
         "peakHoursUTC": [
           1,
           2,
@@ -4357,188 +4769,7 @@
           8,
           9
         ],
-        "weekdaysOnly": true,
-        "holidays": [
-          {
-            "year": 2026,
-            "month": 1,
-            "day": 1
-          },
-          {
-            "year": 2026,
-            "month": 1,
-            "day": 2
-          },
-          {
-            "year": 2026,
-            "month": 1,
-            "day": 3
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 15
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 16
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 17
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 18
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 19
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 20
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 21
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 22
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 23
-          },
-          {
-            "year": 2026,
-            "month": 4,
-            "day": 4
-          },
-          {
-            "year": 2026,
-            "month": 4,
-            "day": 5
-          },
-          {
-            "year": 2026,
-            "month": 4,
-            "day": 6
-          },
-          {
-            "year": 2026,
-            "month": 5,
-            "day": 1
-          },
-          {
-            "year": 2026,
-            "month": 5,
-            "day": 2
-          },
-          {
-            "year": 2026,
-            "month": 5,
-            "day": 3
-          },
-          {
-            "year": 2026,
-            "month": 5,
-            "day": 4
-          },
-          {
-            "year": 2026,
-            "month": 5,
-            "day": 5
-          },
-          {
-            "year": 2026,
-            "month": 6,
-            "day": 19
-          },
-          {
-            "year": 2026,
-            "month": 6,
-            "day": 20
-          },
-          {
-            "year": 2026,
-            "month": 6,
-            "day": 21
-          },
-          {
-            "year": 2026,
-            "month": 9,
-            "day": 25
-          },
-          {
-            "year": 2026,
-            "month": 9,
-            "day": 26
-          },
-          {
-            "year": 2026,
-            "month": 9,
-            "day": 27
-          },
-          {
-            "year": 2026,
-            "month": 10,
-            "day": 1
-          },
-          {
-            "year": 2026,
-            "month": 10,
-            "day": 2
-          },
-          {
-            "year": 2026,
-            "month": 10,
-            "day": 3
-          },
-          {
-            "year": 2026,
-            "month": 10,
-            "day": 4
-          },
-          {
-            "year": 2026,
-            "month": 10,
-            "day": 5
-          },
-          {
-            "year": 2026,
-            "month": 10,
-            "day": 6
-          },
-          {
-            "year": 2026,
-            "month": 10,
-            "day": 7
-          }
-        ],
-        "peak": {
-          "inputPerMTok": 0.44,
-          "outputPerMTok": 1.32,
-          "cacheReadPerMTok": 0.014,
-          "cacheWrite5mPerMTok": 0.0,
-          "cacheWrite1hPerMTok": 0.28
-        },
-        "offPeak": {
-          "inputPerMTok": 0.22,
-          "outputPerMTok": 0.66,
-          "cacheReadPerMTok": 0.007,
-          "cacheWrite5mPerMTok": 0.0,
-          "cacheWrite1hPerMTok": 0.28
-        }
+        "weekdaysOnly": true
       }
     },
     "deepseek-v4-pro": {
@@ -4549,6 +4780,187 @@
       "outputPerMTok": 0.87,
       "tiered": {
         "effectiveAfter": "2026-08-16T16:00:00Z",
+        "holidays": [
+          {
+            "day": 1,
+            "month": 1,
+            "year": 2026
+          },
+          {
+            "day": 2,
+            "month": 1,
+            "year": 2026
+          },
+          {
+            "day": 3,
+            "month": 1,
+            "year": 2026
+          },
+          {
+            "day": 15,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 16,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 17,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 18,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 19,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 20,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 21,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 22,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 23,
+            "month": 2,
+            "year": 2026
+          },
+          {
+            "day": 4,
+            "month": 4,
+            "year": 2026
+          },
+          {
+            "day": 5,
+            "month": 4,
+            "year": 2026
+          },
+          {
+            "day": 6,
+            "month": 4,
+            "year": 2026
+          },
+          {
+            "day": 1,
+            "month": 5,
+            "year": 2026
+          },
+          {
+            "day": 2,
+            "month": 5,
+            "year": 2026
+          },
+          {
+            "day": 3,
+            "month": 5,
+            "year": 2026
+          },
+          {
+            "day": 4,
+            "month": 5,
+            "year": 2026
+          },
+          {
+            "day": 5,
+            "month": 5,
+            "year": 2026
+          },
+          {
+            "day": 19,
+            "month": 6,
+            "year": 2026
+          },
+          {
+            "day": 20,
+            "month": 6,
+            "year": 2026
+          },
+          {
+            "day": 21,
+            "month": 6,
+            "year": 2026
+          },
+          {
+            "day": 25,
+            "month": 9,
+            "year": 2026
+          },
+          {
+            "day": 26,
+            "month": 9,
+            "year": 2026
+          },
+          {
+            "day": 27,
+            "month": 9,
+            "year": 2026
+          },
+          {
+            "day": 1,
+            "month": 10,
+            "year": 2026
+          },
+          {
+            "day": 2,
+            "month": 10,
+            "year": 2026
+          },
+          {
+            "day": 3,
+            "month": 10,
+            "year": 2026
+          },
+          {
+            "day": 4,
+            "month": 10,
+            "year": 2026
+          },
+          {
+            "day": 5,
+            "month": 10,
+            "year": 2026
+          },
+          {
+            "day": 6,
+            "month": 10,
+            "year": 2026
+          },
+          {
+            "day": 7,
+            "month": 10,
+            "year": 2026
+          }
+        ],
+        "offPeak": {
+          "cacheReadPerMTok": 0.022,
+          "cacheWrite1hPerMTok": 0.87,
+          "cacheWrite5mPerMTok": 0.0,
+          "inputPerMTok": 0.66,
+          "outputPerMTok": 1.98
+        },
+        "peak": {
+          "cacheReadPerMTok": 0.044,
+          "cacheWrite1hPerMTok": 0.87,
+          "cacheWrite5mPerMTok": 0.0,
+          "inputPerMTok": 1.32,
+          "outputPerMTok": 3.96
+        },
         "peakHoursUTC": [
           1,
           2,
@@ -4558,188 +4970,7 @@
           8,
           9
         ],
-        "weekdaysOnly": true,
-        "holidays": [
-          {
-            "year": 2026,
-            "month": 1,
-            "day": 1
-          },
-          {
-            "year": 2026,
-            "month": 1,
-            "day": 2
-          },
-          {
-            "year": 2026,
-            "month": 1,
-            "day": 3
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 15
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 16
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 17
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 18
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 19
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 20
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 21
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 22
-          },
-          {
-            "year": 2026,
-            "month": 2,
-            "day": 23
-          },
-          {
-            "year": 2026,
-            "month": 4,
-            "day": 4
-          },
-          {
-            "year": 2026,
-            "month": 4,
-            "day": 5
-          },
-          {
-            "year": 2026,
-            "month": 4,
-            "day": 6
-          },
-          {
-            "year": 2026,
-            "month": 5,
-            "day": 1
-          },
-          {
-            "year": 2026,
-            "month": 5,
-            "day": 2
-          },
-          {
-            "year": 2026,
-            "month": 5,
-            "day": 3
-          },
-          {
-            "year": 2026,
-            "month": 5,
-            "day": 4
-          },
-          {
-            "year": 2026,
-            "month": 5,
-            "day": 5
-          },
-          {
-            "year": 2026,
-            "month": 6,
-            "day": 19
-          },
-          {
-            "year": 2026,
-            "month": 6,
-            "day": 20
-          },
-          {
-            "year": 2026,
-            "month": 6,
-            "day": 21
-          },
-          {
-            "year": 2026,
-            "month": 9,
-            "day": 25
-          },
-          {
-            "year": 2026,
-            "month": 9,
-            "day": 26
-          },
-          {
-            "year": 2026,
-            "month": 9,
-            "day": 27
-          },
-          {
-            "year": 2026,
-            "month": 10,
-            "day": 1
-          },
-          {
-            "year": 2026,
-            "month": 10,
-            "day": 2
-          },
-          {
-            "year": 2026,
-            "month": 10,
-            "day": 3
-          },
-          {
-            "year": 2026,
-            "month": 10,
-            "day": 4
-          },
-          {
-            "year": 2026,
-            "month": 10,
-            "day": 5
-          },
-          {
-            "year": 2026,
-            "month": 10,
-            "day": 6
-          },
-          {
-            "year": 2026,
-            "month": 10,
-            "day": 7
-          }
-        ],
-        "peak": {
-          "inputPerMTok": 1.32,
-          "outputPerMTok": 3.96,
-          "cacheReadPerMTok": 0.044,
-          "cacheWrite5mPerMTok": 0.0,
-          "cacheWrite1hPerMTok": 0.87
-        },
-        "offPeak": {
-          "inputPerMTok": 0.66,
-          "outputPerMTok": 1.98,
-          "cacheReadPerMTok": 0.022,
-          "cacheWrite5mPerMTok": 0.0,
-          "cacheWrite1hPerMTok": 0.87
-        }
+        "weekdaysOnly": true
       }
     },
     "deepseek.v3-v1:0": {
@@ -4946,6 +5177,13 @@
       "outputPerMTok": 27.5
     },
     "eu.anthropic.claude-opus-4-8": {
+      "cacheReadPerMTok": 0.55,
+      "cacheWrite1hPerMTok": 11.0,
+      "cacheWrite5mPerMTok": 6.875,
+      "inputPerMTok": 5.5,
+      "outputPerMTok": 27.5
+    },
+    "eu.anthropic.claude-opus-5": {
       "cacheReadPerMTok": 0.55,
       "cacheWrite1hPerMTok": 11.0,
       "cacheWrite5mPerMTok": 6.875,
@@ -5548,7 +5786,7 @@
       "outputPerMTok": 4.4
     },
     "fireworks_ai/accounts/fireworks/models/glm-5p2": {
-      "cacheReadPerMTok": 0.26,
+      "cacheReadPerMTok": 0.14,
       "cacheWrite1hPerMTok": 2.8,
       "cacheWrite5mPerMTok": 1.75,
       "inputPerMTok": 1.4,
@@ -6815,7 +7053,7 @@
       "outputPerMTok": 8.8
     },
     "fireworks_ai/glm-5p2": {
-      "cacheReadPerMTok": 0.26,
+      "cacheReadPerMTok": 0.14,
       "cacheWrite1hPerMTok": 2.8,
       "cacheWrite5mPerMTok": 1.75,
       "inputPerMTok": 1.4,
@@ -7157,6 +7395,27 @@
       "inputPerMTok": 1.5,
       "outputPerMTok": 9.0
     },
+    "gemini-3.5-flash-lite": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
+    },
+    "gemini-3.6-flash": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 1.5,
+      "cacheWrite5mPerMTok": 0.9375,
+      "inputPerMTok": 0.75,
+      "outputPerMTok": 3.75
+    },
+    "gemini-3.7-flash": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 1.5,
+      "cacheWrite5mPerMTok": 0.9375,
+      "inputPerMTok": 0.75,
+      "outputPerMTok": 3.75
+    },
     "gemini-exp-1206": {
       "cacheReadPerMTok": 0.03,
       "cacheWrite1hPerMTok": 0.6,
@@ -7177,6 +7436,13 @@
       "cacheWrite5mPerMTok": 0.125,
       "inputPerMTok": 0.1,
       "outputPerMTok": 0.4
+    },
+    "gemini-omni-flash-preview": {
+      "cacheReadPerMTok": 0.15,
+      "cacheWrite1hPerMTok": 3.0,
+      "cacheWrite5mPerMTok": 1.875,
+      "inputPerMTok": 1.5,
+      "outputPerMTok": 9.0
     },
     "gemini-pro-latest": {
       "cacheReadPerMTok": 0.125,
@@ -7353,6 +7619,27 @@
       "inputPerMTok": 1.5,
       "outputPerMTok": 9.0
     },
+    "gemini/gemini-3.5-flash-lite": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
+    },
+    "gemini/gemini-3.6-flash": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 1.5,
+      "cacheWrite5mPerMTok": 0.9375,
+      "inputPerMTok": 0.75,
+      "outputPerMTok": 3.75
+    },
+    "gemini/gemini-3.7-flash": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 1.5,
+      "cacheWrite5mPerMTok": 0.9375,
+      "inputPerMTok": 0.75,
+      "outputPerMTok": 3.75
+    },
     "gemini/gemini-flash-latest": {
       "cacheReadPerMTok": 0.075,
       "cacheWrite1hPerMTok": 0.6,
@@ -7381,6 +7668,13 @@
       "inputPerMTok": 0.35,
       "outputPerMTok": 1.05
     },
+    "gemini/gemini-omni-flash-preview": {
+      "cacheReadPerMTok": 0.15,
+      "cacheWrite1hPerMTok": 3.0,
+      "cacheWrite5mPerMTok": 1.875,
+      "inputPerMTok": 1.5,
+      "outputPerMTok": 9.0
+    },
     "gemini/gemini-pro-latest": {
       "cacheReadPerMTok": 0.125,
       "cacheWrite1hPerMTok": 2.5,
@@ -7394,6 +7688,27 @@
       "cacheWrite5mPerMTok": 0.375,
       "inputPerMTok": 0.3,
       "outputPerMTok": 2.5
+    },
+    "gemini/gemini-robotics-er-1.6-preview": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 5.0
+    },
+    "gemini/gemini-robotics-er-2-preview": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 10.0
+    },
+    "gemini/gemini-robotics-er-2-streaming-preview": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 10.0
     },
     "github_copilot/mai-code-1-flash": {
       "cacheReadPerMTok": 0.075,
@@ -7459,6 +7774,13 @@
       "outputPerMTok": 25.0
     },
     "global.anthropic.claude-opus-4-8": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "global.anthropic.claude-opus-5": {
       "cacheReadPerMTok": 0.5,
       "cacheWrite1hPerMTok": 10.0,
       "cacheWrite5mPerMTok": 6.25,
@@ -7836,20 +8158,6 @@
       "inputPerMTok": 0.15,
       "outputPerMTok": 0.6
     },
-    "gpt-4o-mini-realtime-preview": {
-      "cacheReadPerMTok": 0.3,
-      "cacheWrite1hPerMTok": 1.2,
-      "cacheWrite5mPerMTok": 0.75,
-      "inputPerMTok": 0.6,
-      "outputPerMTok": 2.4
-    },
-    "gpt-4o-mini-realtime-preview-2024-12-17": {
-      "cacheReadPerMTok": 0.3,
-      "cacheWrite1hPerMTok": 1.2,
-      "cacheWrite5mPerMTok": 0.75,
-      "inputPerMTok": 0.6,
-      "outputPerMTok": 2.4
-    },
     "gpt-4o-mini-search-preview": {
       "cacheReadPerMTok": 0.075,
       "cacheWrite1hPerMTok": 0.3,
@@ -7863,27 +8171,6 @@
       "cacheWrite5mPerMTok": 0.1875,
       "inputPerMTok": 0.15,
       "outputPerMTok": 0.6
-    },
-    "gpt-4o-realtime-preview": {
-      "cacheReadPerMTok": 2.5,
-      "cacheWrite1hPerMTok": 10.0,
-      "cacheWrite5mPerMTok": 6.25,
-      "inputPerMTok": 5.0,
-      "outputPerMTok": 20.0
-    },
-    "gpt-4o-realtime-preview-2024-12-17": {
-      "cacheReadPerMTok": 2.5,
-      "cacheWrite1hPerMTok": 10.0,
-      "cacheWrite5mPerMTok": 6.25,
-      "inputPerMTok": 5.0,
-      "outputPerMTok": 20.0
-    },
-    "gpt-4o-realtime-preview-2025-06-03": {
-      "cacheReadPerMTok": 2.5,
-      "cacheWrite1hPerMTok": 10.0,
-      "cacheWrite5mPerMTok": 6.25,
-      "inputPerMTok": 5.0,
-      "outputPerMTok": 20.0
     },
     "gpt-4o-search-preview": {
       "cacheReadPerMTok": 1.25,
@@ -8018,6 +8305,13 @@
       "inputPerMTok": 1.75,
       "outputPerMTok": 14.0
     },
+    "gpt-5.3-codex-spark": {
+      "cacheReadPerMTok": 0.175,
+      "cacheWrite1hPerMTok": 3.5,
+      "cacheWrite5mPerMTok": 2.1875,
+      "inputPerMTok": 1.75,
+      "outputPerMTok": 14.0
+    },
     "gpt-5.4": {
       "cacheReadPerMTok": 0.25,
       "cacheWrite1hPerMTok": 5.0,
@@ -8082,11 +8376,11 @@
       "outputPerMTok": 30.0
     },
     "gpt-5.6-luna": {
-      "cacheReadPerMTok": 0.1,
-      "cacheWrite1hPerMTok": 2.0,
-      "cacheWrite5mPerMTok": 1.25,
-      "inputPerMTok": 1.0,
-      "outputPerMTok": 6.0
+      "cacheReadPerMTok": 0.02,
+      "cacheWrite1hPerMTok": 0.4,
+      "cacheWrite5mPerMTok": 0.25,
+      "inputPerMTok": 0.2,
+      "outputPerMTok": 1.2
     },
     "gpt-5.6-sol": {
       "cacheReadPerMTok": 0.5,
@@ -8096,11 +8390,11 @@
       "outputPerMTok": 30.0
     },
     "gpt-5.6-terra": {
-      "cacheReadPerMTok": 0.25,
-      "cacheWrite1hPerMTok": 5.0,
-      "cacheWrite5mPerMTok": 3.125,
-      "inputPerMTok": 2.5,
-      "outputPerMTok": 15.0
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 12.0
     },
     "gpt-audio": {
       "cacheReadPerMTok": 0.25,
@@ -8138,69 +8432,6 @@
       "outputPerMTok": 2.4
     },
     "gpt-audio-mini-2025-12-15": {
-      "cacheReadPerMTok": 0.06,
-      "cacheWrite1hPerMTok": 1.2,
-      "cacheWrite5mPerMTok": 0.75,
-      "inputPerMTok": 0.6,
-      "outputPerMTok": 2.4
-    },
-    "gpt-realtime": {
-      "cacheReadPerMTok": 0.4,
-      "cacheWrite1hPerMTok": 8.0,
-      "cacheWrite5mPerMTok": 5.0,
-      "inputPerMTok": 4.0,
-      "outputPerMTok": 16.0
-    },
-    "gpt-realtime-1.5": {
-      "cacheReadPerMTok": 0.4,
-      "cacheWrite1hPerMTok": 8.0,
-      "cacheWrite5mPerMTok": 5.0,
-      "inputPerMTok": 4.0,
-      "outputPerMTok": 16.0
-    },
-    "gpt-realtime-2": {
-      "cacheReadPerMTok": 0.4,
-      "cacheWrite1hPerMTok": 8.0,
-      "cacheWrite5mPerMTok": 5.0,
-      "inputPerMTok": 4.0,
-      "outputPerMTok": 16.0
-    },
-    "gpt-realtime-2.1": {
-      "cacheReadPerMTok": 0.4,
-      "cacheWrite1hPerMTok": 8.0,
-      "cacheWrite5mPerMTok": 5.0,
-      "inputPerMTok": 4.0,
-      "outputPerMTok": 24.0
-    },
-    "gpt-realtime-2.1-mini": {
-      "cacheReadPerMTok": 0.06,
-      "cacheWrite1hPerMTok": 1.2,
-      "cacheWrite5mPerMTok": 0.75,
-      "inputPerMTok": 0.6,
-      "outputPerMTok": 2.4
-    },
-    "gpt-realtime-2025-08-28": {
-      "cacheReadPerMTok": 0.4,
-      "cacheWrite1hPerMTok": 8.0,
-      "cacheWrite5mPerMTok": 5.0,
-      "inputPerMTok": 4.0,
-      "outputPerMTok": 16.0
-    },
-    "gpt-realtime-mini": {
-      "cacheReadPerMTok": 0.06,
-      "cacheWrite1hPerMTok": 1.2,
-      "cacheWrite5mPerMTok": 0.75,
-      "inputPerMTok": 0.6,
-      "outputPerMTok": 2.4
-    },
-    "gpt-realtime-mini-2025-10-06": {
-      "cacheReadPerMTok": 0.06,
-      "cacheWrite1hPerMTok": 1.2,
-      "cacheWrite5mPerMTok": 0.75,
-      "inputPerMTok": 0.6,
-      "outputPerMTok": 2.4
-    },
-    "gpt-realtime-mini-2025-12-15": {
       "cacheReadPerMTok": 0.06,
       "cacheWrite1hPerMTok": 1.2,
       "cacheWrite5mPerMTok": 0.75,
@@ -8319,6 +8550,20 @@
       "inputPerMTok": 0.2,
       "outputPerMTok": 0.2
     },
+    "groq/meta-llama/llama-prompt-guard-2-22m": {
+      "cacheReadPerMTok": 0.003,
+      "cacheWrite1hPerMTok": 0.06,
+      "cacheWrite5mPerMTok": 0.0375,
+      "inputPerMTok": 0.03,
+      "outputPerMTok": 0.03
+    },
+    "groq/meta-llama/llama-prompt-guard-2-86m": {
+      "cacheReadPerMTok": 0.004,
+      "cacheWrite1hPerMTok": 0.08,
+      "cacheWrite5mPerMTok": 0.05,
+      "inputPerMTok": 0.04,
+      "outputPerMTok": 0.04
+    },
     "groq/moonshotai/kimi-k2-instruct-0905": {
       "cacheReadPerMTok": 0.5,
       "cacheWrite1hPerMTok": 2.0,
@@ -8353,6 +8598,13 @@
       "cacheWrite5mPerMTok": 0.3625,
       "inputPerMTok": 0.29,
       "outputPerMTok": 0.59
+    },
+    "groq/qwen/qwen3.6-27b": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 3.0
     },
     "hyperbolic/NousResearch/Hermes-3-Llama-3.1-70B": {
       "cacheReadPerMTok": 0.012,
@@ -8557,6 +8809,13 @@
       "inputPerMTok": 5.5,
       "outputPerMTok": 27.5
     },
+    "jp.anthropic.claude-opus-5": {
+      "cacheReadPerMTok": 0.55,
+      "cacheWrite1hPerMTok": 11.0,
+      "cacheWrite5mPerMTok": 6.875,
+      "inputPerMTok": 5.5,
+      "outputPerMTok": 27.5
+    },
     "jp.anthropic.claude-sonnet-4-5-20250929-v1:0": {
       "cacheReadPerMTok": 0.33,
       "cacheWrite1hPerMTok": 6.6,
@@ -8577,6 +8836,13 @@
       "cacheWrite5mPerMTok": 2.75,
       "inputPerMTok": 2.2,
       "outputPerMTok": 11.0
+    },
+    "k2p5": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 3.0
     },
     "lambda_ai/deepseek-llama3.3-70b": {
       "cacheReadPerMTok": 0.02,
@@ -8997,6 +9263,34 @@
       "cacheWrite5mPerMTok": 1.5625,
       "inputPerMTok": 1.25,
       "outputPerMTok": 4.25
+    },
+    "meta/muse-spark-1.2": {
+      "cacheReadPerMTok": 0.15,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 4.25
+    },
+    "meta/muse-spark-1.2-contributor": {
+      "cacheReadPerMTok": 0.15,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 4.25
+    },
+    "mimo-v2.5-pro": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 0.0,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 3.0
+    },
+    "minimax-m2.7": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": 1.2,
+      "cacheWrite5mPerMTok": 0.75,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.4
     },
     "minimax.minimax-m2": {
       "cacheReadPerMTok": 0.03,
@@ -9424,6 +9718,13 @@
       "cacheWrite5mPerMTok": 0.125,
       "inputPerMTok": 0.1,
       "outputPerMTok": 0.3
+    },
+    "mistral/mistral-small-2603": {
+      "cacheReadPerMTok": 0.015,
+      "cacheWrite1hPerMTok": 0.3,
+      "cacheWrite5mPerMTok": 0.1875,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.6
     },
     "mistral/mistral-small-3-2-2506": {
       "cacheReadPerMTok": 0.006,
@@ -11210,6 +11511,13 @@
       "inputPerMTok": 0.6,
       "outputPerMTok": 3.0
     },
+    "openrouter/nvidia/nemotron-3.5-lightning": {
+      "cacheReadPerMTok": 0.005,
+      "cacheWrite1hPerMTok": 0.1,
+      "cacheWrite5mPerMTok": 0.0625,
+      "inputPerMTok": 0.05,
+      "outputPerMTok": 0.2
+    },
     "openrouter/openai/gpt-3.5-turbo": {
       "cacheReadPerMTok": 0.15,
       "cacheWrite1hPerMTok": 3.0,
@@ -12106,6 +12414,13 @@
       "inputPerMTok": 0.18,
       "outputPerMTok": 0.72
     },
+    "replicate/openai/gpt-oss-20b": {
+      "cacheReadPerMTok": 0.009,
+      "cacheWrite1hPerMTok": 0.18,
+      "cacheWrite5mPerMTok": 0.1125,
+      "inputPerMTok": 0.09,
+      "outputPerMTok": 0.36
+    },
     "replicate/openai/o1": {
       "cacheReadPerMTok": 1.5,
       "cacheWrite1hPerMTok": 30.0,
@@ -12140,13 +12455,6 @@
       "cacheWrite5mPerMTok": 9.0,
       "inputPerMTok": 7.2,
       "outputPerMTok": 36.0
-    },
-    "replicateopenai/gpt-oss-20b": {
-      "cacheReadPerMTok": 0.009,
-      "cacheWrite1hPerMTok": 0.18,
-      "cacheWrite5mPerMTok": 0.1125,
-      "inputPerMTok": 0.09,
-      "outputPerMTok": 0.36
     },
     "sambanova/DeepSeek-R1": {
       "cacheReadPerMTok": 0.5,
@@ -12968,6 +13276,13 @@
       "outputPerMTok": 27.5
     },
     "us.anthropic.claude-opus-4-8": {
+      "cacheReadPerMTok": 0.55,
+      "cacheWrite1hPerMTok": 11.0,
+      "cacheWrite5mPerMTok": 6.875,
+      "inputPerMTok": 5.5,
+      "outputPerMTok": 27.5
+    },
+    "us.anthropic.claude-opus-5": {
       "cacheReadPerMTok": 0.55,
       "cacheWrite1hPerMTok": 11.0,
       "cacheWrite5mPerMTok": 6.875,
@@ -13954,6 +14269,20 @@
       "inputPerMTok": 15.0,
       "outputPerMTok": 75.0
     },
+    "vertex_ai/claude-opus-5": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
+    "vertex_ai/claude-opus-5@default": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 6.25,
+      "inputPerMTok": 5.0,
+      "outputPerMTok": 25.0
+    },
     "vertex_ai/claude-sonnet-4": {
       "cacheReadPerMTok": 0.3,
       "cacheWrite1hPerMTok": 6.0,
@@ -14114,6 +14443,27 @@
       "cacheWrite5mPerMTok": 1.875,
       "inputPerMTok": 1.5,
       "outputPerMTok": 9.0
+    },
+    "vertex_ai/gemini-3.5-flash-lite": {
+      "cacheReadPerMTok": 0.03,
+      "cacheWrite1hPerMTok": 0.6,
+      "cacheWrite5mPerMTok": 0.375,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 2.5
+    },
+    "vertex_ai/gemini-3.6-flash": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 1.5,
+      "cacheWrite5mPerMTok": 0.9375,
+      "inputPerMTok": 0.75,
+      "outputPerMTok": 3.75
+    },
+    "vertex_ai/gemini-3.7-flash": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 1.5,
+      "cacheWrite5mPerMTok": 0.9375,
+      "inputPerMTok": 0.75,
+      "outputPerMTok": 3.75
     },
     "vertex_ai/google/gemma-4-26b-a4b-it-maas": {
       "cacheReadPerMTok": 0.015,
@@ -14899,33 +15249,47 @@
       "inputPerMTok": 3.0,
       "outputPerMTok": 15.0
     },
+    "xai/grok-4.20-0309-non-reasoning": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 2.5
+    },
     "xai/grok-4.20-0309-reasoning": {
       "cacheReadPerMTok": 0.2,
-      "cacheWrite1hPerMTok": 4.0,
-      "cacheWrite5mPerMTok": 2.5,
-      "inputPerMTok": 2.0,
-      "outputPerMTok": 6.0
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 2.5
     },
     "xai/grok-4.20-beta-0309-non-reasoning": {
       "cacheReadPerMTok": 0.2,
-      "cacheWrite1hPerMTok": 4.0,
-      "cacheWrite5mPerMTok": 2.5,
-      "inputPerMTok": 2.0,
-      "outputPerMTok": 6.0
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 2.5
     },
     "xai/grok-4.20-beta-0309-reasoning": {
       "cacheReadPerMTok": 0.2,
-      "cacheWrite1hPerMTok": 4.0,
-      "cacheWrite5mPerMTok": 2.5,
-      "inputPerMTok": 2.0,
-      "outputPerMTok": 6.0
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 2.5
+    },
+    "xai/grok-4.20-multi-agent-0309": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 2.5
     },
     "xai/grok-4.20-multi-agent-beta-0309": {
       "cacheReadPerMTok": 0.2,
-      "cacheWrite1hPerMTok": 4.0,
-      "cacheWrite5mPerMTok": 2.5,
-      "inputPerMTok": 2.0,
-      "outputPerMTok": 6.0
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 1.5625,
+      "inputPerMTok": 1.25,
+      "outputPerMTok": 2.5
     },
     "xai/grok-4.3": {
       "cacheReadPerMTok": 0.2,
@@ -14942,13 +15306,20 @@
       "outputPerMTok": 2.5
     },
     "xai/grok-4.5": {
-      "cacheReadPerMTok": 0.5,
+      "cacheReadPerMTok": 0.3,
       "cacheWrite1hPerMTok": 4.0,
       "cacheWrite5mPerMTok": 2.5,
       "inputPerMTok": 2.0,
       "outputPerMTok": 6.0
     },
     "xai/grok-4.5-latest": {
+      "cacheReadPerMTok": 0.3,
+      "cacheWrite1hPerMTok": 4.0,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 6.0
+    },
+    "xai/grok-4.6": {
       "cacheReadPerMTok": 0.5,
       "cacheWrite1hPerMTok": 4.0,
       "cacheWrite5mPerMTok": 2.5,
@@ -14962,26 +15333,33 @@
       "inputPerMTok": 5.0,
       "outputPerMTok": 15.0
     },
+    "xai/grok-build-0.1": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 2.0
+    },
     "xai/grok-code-fast": {
-      "cacheReadPerMTok": 0.02,
-      "cacheWrite1hPerMTok": 0.4,
-      "cacheWrite5mPerMTok": 0.25,
-      "inputPerMTok": 0.2,
-      "outputPerMTok": 1.5
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 2.0
     },
     "xai/grok-code-fast-1": {
-      "cacheReadPerMTok": 0.02,
-      "cacheWrite1hPerMTok": 0.4,
-      "cacheWrite5mPerMTok": 0.25,
-      "inputPerMTok": 0.2,
-      "outputPerMTok": 1.5
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 2.0
     },
     "xai/grok-code-fast-1-0825": {
-      "cacheReadPerMTok": 0.02,
-      "cacheWrite1hPerMTok": 0.4,
-      "cacheWrite5mPerMTok": 0.25,
-      "inputPerMTok": 0.2,
-      "outputPerMTok": 1.5
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 2.0,
+      "cacheWrite5mPerMTok": 1.25,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 2.0
     },
     "xai/grok-vision-beta": {
       "cacheReadPerMTok": 0.5,
@@ -15089,6 +15467,6 @@
       "outputPerMTok": 4.4
     }
   },
-  "snapshotVersion": "5a3a9fa6e503",
+  "snapshotVersion": "c0a101a67dfd",
   "source": "litellm"
 }

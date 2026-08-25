@@ -15,7 +15,10 @@ public enum TokenMeterDatabaseSchema {
     ///    不属于模型身份，用户裁定），重建以重算既有事件的 model_canonical
     /// 10：Codex/OpenCode fork 回放改为跨 session 作用域去重，补 OpenCode v2/WAL 快照，
     ///     并重算 Codex 的迟到模型归属。
-    public static let derivedVersion: Int64 = 10
+    /// 11：新增 DSH（DeepSeek Harness）数据源 + 定价补齐（muse-spark-1.2 等官价、meta 前缀剥离），重建以覆盖 unknown 为 computed
+    /// 12：usage_events 加 reported_cost_usd_micros（原始上报价留底）。custom-pricing.json 的
+    ///     ignoreReported 会把 reported 行改写成 computed，没有这一列，移除覆盖后原始值不可还原。
+    public static let derivedVersion: Int64 = 12
 
     /// 用户配置。永不删除。这三张表存的是无法从会话文件重建的东西：
     /// - settings：过滤器 / 菜单栏偏好 / 自动刷新间隔
@@ -68,7 +71,7 @@ public enum TokenMeterDatabaseSchema {
 
     CREATE TABLE IF NOT EXISTS scan_roots (
       id INTEGER PRIMARY KEY,
-      kind TEXT NOT NULL CHECK (kind IN ('claude_jsonl', 'codex_jsonl', 'omp_jsonl', 'opencode_sqlite', 'reasonix_stats')),
+      kind TEXT NOT NULL CHECK (kind IN ('claude_jsonl', 'codex_jsonl', 'omp_jsonl', 'opencode_sqlite', 'reasonix_stats', 'dsh_jsonl')),
       root_path TEXT NOT NULL,
       display_name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
@@ -203,6 +206,9 @@ public enum TokenMeterDatabaseSchema {
       ) VIRTUAL,
       cost_usd_micros INTEGER,
       cost_source TEXT NOT NULL CHECK (cost_source IN ('reported', 'computed', 'unknown')),
+      -- 原始上报价留底。cost_source != 'reported' 但本列非空 = 这行的上报价被
+      -- custom-pricing 的 ignoreReported 覆盖成了本地计价；移除覆盖后据此还原。
+      reported_cost_usd_micros INTEGER,
       dedupe_key TEXT,
       dedupe_scope_key TEXT,
       source_offset INTEGER NOT NULL,

@@ -37,7 +37,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.version, 1)
         XCTAssertEqual(snapshot.menuBarPrimaryProviderId, "codex")
         XCTAssertEqual(snapshot.autoRefreshSeconds, 300)
-        XCTAssertEqual(snapshot.enabledAgentKinds, ["claudeCode", "codex", "opencode", "omp", "reasonix"])
+        XCTAssertEqual(snapshot.enabledAgentKinds, ["claudeCode", "codex", "opencode", "omp", "reasonix", "dsh"])
         XCTAssertEqual(snapshot.providerOverrides.first { $0.providerId == "codex" }?.enabled, true)
         XCTAssertEqual(snapshot.providerOverrides.first { $0.providerId == "claude-code" }?.enabled, false)
     }
@@ -67,7 +67,7 @@ final class SettingsStoreTests: XCTestCase {
         )[0]
 
         XCTAssertEqual(row.string("value_type"), "json")
-        XCTAssertEqual(try store.snapshot().enabledAgentKinds, ["claudeCode", "codex", "opencode", "omp", "reasonix"])
+        XCTAssertEqual(try store.snapshot().enabledAgentKinds, ["claudeCode", "codex", "opencode", "omp", "reasonix", "dsh"])
 
         try database.execute(
             "UPDATE settings SET value_json = ?, value_type = ? WHERE key = ?",
