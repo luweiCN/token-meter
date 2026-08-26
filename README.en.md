@@ -50,6 +50,7 @@ Heavy coding-agent users ask the same three questions every day: **How many toke
 | Codex CLI | `~/.codex/sessions/*.jsonl` |
 | OMP (Oh My Pi) | `~/.omp/agent/sessions/*.jsonl` |
 | OpenCode | `~/.local/share/opencode/opencode.db` |
+| Grok Build | `$GROK_HOME/sessions/*/*/updates.jsonl` (default `~/.grok/sessions`) |
 
 **Subscription quotas** (uses credentials already on your machine, or an API key):
 
@@ -59,6 +60,7 @@ Heavy coding-agent users ask the same three questions every day: **How many toke
 | Codex | `~/.codex/auth.json` |
 | Zhipu GLM | In-app key (stored in Keychain) or `ZHIPU_API_KEY` |
 | OpenCode Go | In-app "Sign in with OpenCode Go" (WebView login, valid 1 year) |
+| Grok Build | `~/.grok/auth.json` (`grok login`) |
 
 ## Architecture
 

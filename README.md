@@ -50,6 +50,7 @@
 | Codex CLI | `~/.codex/sessions/*.jsonl` |
 | OMP (Oh My Pi) | `~/.omp/agent/sessions/*.jsonl` |
 | OpenCode | `~/.local/share/opencode/opencode.db` |
+| Grok Build | `$GROK_HOME/sessions/*/*/updates.jsonl`（默认 `~/.grok/sessions`） |
 
 **订阅额度**（读取本机已登录凭证或 API Key）：
 
@@ -59,6 +60,7 @@
 | Codex | `~/.codex/auth.json` |
 | 智谱 GLM | 应用内填写（存钥匙串）或 `ZHIPU_API_KEY` |
 | OpenCode Go | 设置页「登录 OpenCode Go」（WebView 登录，登录态一年有效） |
+| Grok Build | `~/.grok/auth.json`（`grok login`） |
 
 ## 架构
 

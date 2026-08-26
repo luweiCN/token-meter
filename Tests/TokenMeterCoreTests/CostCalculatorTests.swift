@@ -336,4 +336,12 @@ final class CostCalculatorTests: XCTestCase {
         ))
         XCTAssertEqual(result.micros, 440_000)
     }
+
+    func testGrok46PricingKeysResolve() throws {
+        let snapshot = try PricingSnapshot.loadBundled()
+        let calculator = CostCalculator(snapshot: snapshot)
+        let result = calculator.cost(for: event(model: "grok-4.6-build", input: 1_000_000, output: 1_000_000))
+        XCTAssertEqual(result.source, .computed)
+        XCTAssertEqual(result.micros, 8_000_000)
+    }
 }

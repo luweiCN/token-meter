@@ -8508,6 +8508,20 @@
       "inputPerMTok": 1.1,
       "outputPerMTok": 4.4
     },
+    "grok-4.6": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 0.0,
+      "cacheWrite5mPerMTok": 0.0,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 6.0
+    },
+    "grok-4.6-build": {
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite1hPerMTok": 0.0,
+      "cacheWrite5mPerMTok": 0.0,
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 6.0
+    },
     "groq/gemma-7b-it": {
       "cacheReadPerMTok": 0.005,
       "cacheWrite1hPerMTok": 0.1,

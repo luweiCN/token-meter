@@ -188,6 +188,22 @@
       "cacheWrite5mPerMTok": 2.1875,
       "cacheWrite1hPerMTok": 3.5,
       "note": "暂按 gpt-5.3-codex 同档计价（cx/codex-auto-review 无独立 LiteLLM 价），DB 中 14 条 unknown 由此覆盖，后续有官价再替换"
+    },
+    "grok-4.6": {
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 6.0,
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite5mPerMTok": 0.0,
+      "cacheWrite1hPerMTok": 0.0,
+      "note": "xAI 官方牌价（docs.x.ai，2026-08 公开表）：grok-4.6 <200K prompt 为 input $2 / cached $0.50 / output $6 per 1M；缓存写入无单独档位记 0。实现时若官网拆价再改"
+    },
+    "grok-4.6-build": {
+      "inputPerMTok": 2.0,
+      "outputPerMTok": 6.0,
+      "cacheReadPerMTok": 0.5,
+      "cacheWrite5mPerMTok": 0.0,
+      "cacheWrite1hPerMTok": 0.0,
+      "note": "与 grok-4.6 同价（Grok Build 会话 modelUsage 键为 grok-4.6-build）；官网未拆价"
     }
   }
 }
