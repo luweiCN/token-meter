@@ -56,6 +56,15 @@ public enum ProviderConfigLoader {
                     credential: CredentialConfig(environmentVariable: "ZHIPU_API_KEY"),
                     endpoint: "https://bigmodel.cn/api/monitor/usage/quota/limit",
                     manualUsage: nil
+                ),
+                ProviderConfig(
+                    id: "grok",
+                    type: .grok,
+                    displayName: "Grok Build",
+                    enabled: true,
+                    credential: nil,
+                    endpoint: nil,
+                    manualUsage: nil
                 )
             ]
         )

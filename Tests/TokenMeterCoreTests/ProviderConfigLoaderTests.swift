@@ -9,7 +9,8 @@ final class ProviderConfigLoaderTests: XCTestCase {
             "codex",
             "claude-code",
             "opencode-go",
-            "zhipu"
+            "zhipu",
+            "grok"
         ])
 
         let openCodeGo = try XCTUnwrap(config.providers.first { $0.id == "opencode-go" })

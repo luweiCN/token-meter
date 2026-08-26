@@ -9,6 +9,7 @@ public enum ProviderType: String, Codable, Equatable {
     case quotaCache
     case shellCommand
     case zhipu
+    case grok
 }
 
 public struct TokenMeterConfig: Codable, Equatable {

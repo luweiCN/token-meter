@@ -1324,6 +1324,8 @@ public enum ProviderRegistry {
                     return ShellCommandUsageProvider(config: providerConfig)
                 case .zhipu:
                     return ZhipuUsageProvider(config: providerConfig)
+                case .grok:
+                    return GrokUsageProvider(config: providerConfig)
                 }
             }
     }
@@ -1697,7 +1699,7 @@ private func compactTokenText(_ value: Double) -> String {
     return UsageFormatter.numberText(value)
 }
 
-private func providerErrorSnapshot(providerId: String, displayName: String, message: String) -> ProviderUsageSnapshot {
+func providerErrorSnapshot(providerId: String, displayName: String, message: String) -> ProviderUsageSnapshot {
     ProviderUsageSnapshot(
         providerId: providerId,
         displayName: displayName,
