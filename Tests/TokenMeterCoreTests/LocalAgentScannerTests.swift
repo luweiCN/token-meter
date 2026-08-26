@@ -1028,6 +1028,35 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(try database.query("SELECT provider_id FROM agent_sessions")[0].string("provider_id"), "grok")
     }
 
+    func testGrokFallbackThenUsageReplaysFileAndKeepsOnlyUsageRow() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grok-replay-\(UUID().uuidString)", isDirectory: true)
+        let session = root.appendingPathComponent("%2Ftmp%2Fapp/sess-replay", isDirectory: true)
+        try FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let file = session.appendingPathComponent("updates.jsonl")
+        let fallback = #"{"params":{"sessionId":"sess-replay","update":{"sessionUpdate":"agent_message_chunk"}},"_meta":{"totalTokens":2000,"agentTimestampMs":1700000001000}}"# + "\n"
+        try Data(fallback.utf8).write(to: file)
+
+        let database = try migratedDatabase(rootKind: .grokJSONL, rootPath: root.path)
+        let scanner = LocalAgentScanner(database: database)
+        try await scanner.scanRoot(id: 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT tokens_input AS value FROM usage_events"), 2000)
+
+        try appendJSONL(
+            #"{"params":{"sessionId":"sess-replay","update":{"sessionUpdate":"turn_completed","usage":{"inputTokens":100,"outputTokens":10,"totalTokens":110,"cachedReadTokens":0,"reasoningTokens":0}}},"_meta":{"eventId":"e1","agentTimestampMs":1700000005000}}"#,
+            to: file
+        )
+        try await scanner.scanRoot(id: 1)
+
+        let rows = try database.query("SELECT tokens_input, tokens_output FROM usage_events")
+        XCTAssertEqual(rows.count, 1, "全量重放必须替换兜底行，不能与 usage 叠账")
+        XCTAssertEqual(rows[0].int("tokens_input"), 100)
+        XCTAssertEqual(rows[0].int("tokens_output"), 10)
+    }
+
     func testDefaultCodexRootsHonorCodexHome() {
         let homeDirectory = URL(fileURLWithPath: "/tmp/token-meter-home", isDirectory: true)
         let roots = TokenMeterPaths.defaultScanRoots(

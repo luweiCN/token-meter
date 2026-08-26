@@ -421,9 +421,9 @@ public final class LocalAgentScanner {
         // 绝不能用 max(source_offset)+1：source_offset 是行首字节，加一落在行内——今天靠半行
         // JSON 解析失败侥幸不重复，但以空白开头的行残片仍是合法 JSON，会被重复消费并造成重复计数。
         let planResume = shouldResume(existing: existing, metadata: metadata, file: file)
-        let startOffset: Int64 = planResume ? (existing?.parserState?.resumeOffset ?? 0) : 0
+        var startOffset: Int64 = planResume ? (existing?.parserState?.resumeOffset ?? 0) : 0
         // 只有真正续读（startOffset>0）才把上次的 parser_state 传给 parser；否则全量重读、状态清零。
-        let resumeState = startOffset > 0 ? existing?.parserState : nil
+        var resumeState = startOffset > 0 ? existing?.parserState : nil
         if startOffset == 0, let existingId = existing?.id {
             // 全量重读：清掉这个文件旧的事件，避免"改小/改写"后残留过时行。
             try deleteEvents(sourceFileId: existingId)
@@ -432,7 +432,7 @@ public final class LocalAgentScanner {
         let parser = try makeParser(for: root.kind, resuming: resumeState)
         var sawLine = false
 
-        let readResult: JSONLReadResult
+        var readResult: JSONLReadResult
         do {
             readResult = try JSONLStreamReader.readLines(
                 from: file,
@@ -497,7 +497,7 @@ public final class LocalAgentScanner {
             return false
         }
 
-        let outcome: (session: ParsedSession?, state: ParserState)
+        var outcome: (session: ParsedSession?, state: ParserState)
         do {
             outcome = try parser.finish(sourceURL: file)
         } catch {
@@ -514,6 +514,44 @@ public final class LocalAgentScanner {
                 parserState: existing?.parserState
             )
             throw error
+        }
+
+        // 续读本轮才把 requiresFullReplay 立起来（Grok：先兜底后出现 usage）。
+        // 纠正数据已经在文件里，不能等下次变大；同一次扫描内删旧事件并从头重解析。
+        // 不把该 flag 接到「未变文件跳过」上——Codex 靠跳过避免对 GB 级 rollout 每分钟全读。
+        if outcome.state.requiresFullReplay == true,
+           startOffset > 0,
+           let existingId = existing?.id {
+            try deleteEvents(sourceFileId: existingId)
+            startOffset = 0
+            resumeState = nil
+            let replayParser = try makeParser(for: root.kind, resuming: nil)
+            sawLine = false
+            do {
+                readResult = try JSONLStreamReader.readLines(
+                    from: file,
+                    startingAt: 0,
+                    markers: markers(for: root.kind)
+                ) { line in
+                    sawLine = true
+                    replayParser.consume(line)
+                }
+                outcome = try replayParser.finish(sourceURL: file)
+            } catch {
+                _ = try? upsertSourceFile(
+                    rootId: root.id,
+                    relativePath: relativePath,
+                    canonicalPath: metadata.canonicalPath,
+                    fileType: "jsonl_session",
+                    metadata: metadata,
+                    runId: runId,
+                    parsed: false,
+                    parseStatus: "failed",
+                    parseError: sanitizedError(error),
+                    parserState: existing?.parserState
+                )
+                throw error
+            }
         }
 
         // parser 判定这不是一个会话文件（如 Claude 辅助文件：无 sessionId 且从未见过 usage 对象）：

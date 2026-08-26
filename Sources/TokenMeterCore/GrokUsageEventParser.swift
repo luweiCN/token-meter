@@ -174,7 +174,7 @@ public final class GrokUsageEventParser: UsageEventParser {
                 observedAt: turn.timestamp,
                 modelName: modelName,
                 messageId: nil,
-                dedupeKey: "grok:\(session):delta:\(turn.index)",
+                dedupeKey: "grok:\(session):delta:\(turn.offset)",
                 inputTokens: delta,
                 outputTokens: 0,
                 reasoningTokens: 0,
@@ -269,26 +269,31 @@ public final class GrokUsageEventParser: UsageEventParser {
         }
 
         if let modelName {
-            events = events.map { event in
-                guard event.modelName == nil else { return event }
-                return UsageEvent(
-                    eventSeq: event.eventSeq,
-                    observedAt: event.observedAt,
-                    modelName: modelName,
-                    messageId: event.messageId,
-                    dedupeKey: event.dedupeKey,
-                    dedupeScopeKey: event.dedupeScopeKey,
-                    inputTokens: event.inputTokens,
-                    outputTokens: event.outputTokens,
-                    reasoningTokens: event.reasoningTokens,
-                    cacheReadTokens: event.cacheReadTokens,
-                    cacheWrite5mTokens: event.cacheWrite5mTokens,
-                    cacheWrite1hTokens: event.cacheWrite1hTokens,
-                    reportedCostUSDMicros: event.reportedCostUSDMicros,
-                    sourceOffset: event.sourceOffset,
-                    isSidechain: event.isSidechain
-                )
-            }
+            events = applyingModel(modelName, to: events)
+            fallbackEvents = applyingModel(modelName, to: fallbackEvents)
+        }
+    }
+
+    private func applyingModel(_ modelName: String, to events: [UsageEvent]) -> [UsageEvent] {
+        events.map { event in
+            guard event.modelName == nil else { return event }
+            return UsageEvent(
+                eventSeq: event.eventSeq,
+                observedAt: event.observedAt,
+                modelName: modelName,
+                messageId: event.messageId,
+                dedupeKey: event.dedupeKey,
+                dedupeScopeKey: event.dedupeScopeKey,
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                reasoningTokens: event.reasoningTokens,
+                cacheReadTokens: event.cacheReadTokens,
+                cacheWrite5mTokens: event.cacheWrite5mTokens,
+                cacheWrite1hTokens: event.cacheWrite1hTokens,
+                reportedCostUSDMicros: event.reportedCostUSDMicros,
+                sourceOffset: event.sourceOffset,
+                isSidechain: event.isSidechain
+            )
         }
     }
 

@@ -51,7 +51,9 @@ public struct GrokUsageProvider: UsageProvider {
         let executable = grokExecutable
         let home = grokHome
         self.fetchBilling = fetchBilling ?? {
-            try GrokUsageProvider.spawnBilling(executable: executable(), grokHome: home)
+            try await Task.detached {
+                try GrokUsageProvider.spawnBilling(executable: executable(), grokHome: home)
+            }.value
         }
     }
 
@@ -114,7 +116,7 @@ public struct GrokUsageProvider: UsageProvider {
         return nil
     }
 
-    static func spawnBilling(executable: String?, grokHome: URL) throws -> Data {
+    static func spawnBilling(executable: String?, grokHome: URL, timeout: TimeInterval = 10) throws -> Data {
         guard let executable else {
             throw GrokSpawnError.missingBinary
         }
@@ -128,10 +130,9 @@ public struct GrokUsageProvider: UsageProvider {
         }()
         let stdin = Pipe()
         let stdout = Pipe()
-        let stderr = Pipe()
         process.standardInput = stdin
         process.standardOutput = stdout
-        process.standardError = stderr
+        process.standardError = FileHandle.nullDevice
         try process.run()
 
         let initialize = #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1","clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false}}}}"#
@@ -139,46 +140,87 @@ public struct GrokUsageProvider: UsageProvider {
         stdin.fileHandleForWriting.write(Data((initialize + "\n" + billing + "\n").utf8))
         try? stdin.fileHandleForWriting.close()
 
-        let deadline = Date().addingTimeInterval(10)
+        let lock = NSLock()
         var buffer = Data()
-        while process.isRunning && Date() < deadline {
-            let available = stdout.fileHandleForReading.availableData
-            if !available.isEmpty {
-                buffer.append(available)
-                if let payload = rpcResult(id: 2, in: buffer) {
-                    process.terminate()
-                    process.waitUntilExit()
-                    return payload
-                }
-            } else {
-                Thread.sleep(forTimeInterval: 0.05)
+        var payload: Data?
+        var rpcError: String?
+        let signal = DispatchSemaphore(value: 0)
+        let handle = stdout.fileHandleForReading
+        handle.readabilityHandler = { fileHandle in
+            let chunk = fileHandle.availableData
+            lock.lock()
+            if chunk.isEmpty {
+                fileHandle.readabilityHandler = nil
+                lock.unlock()
+                signal.signal()
+                return
+            }
+            buffer.append(chunk)
+            if rpcError == nil {
+                rpcError = Self.rpcError(id: 2, in: buffer)
+            }
+            if payload == nil {
+                payload = Self.rpcResult(id: 2, in: buffer)
+            }
+            let done = rpcError != nil || payload != nil
+            lock.unlock()
+            if done {
+                fileHandle.readabilityHandler = nil
+                signal.signal()
             }
         }
+
+        let timedOut = signal.wait(timeout: .now() + timeout) == .timedOut
+        handle.readabilityHandler = nil
         if process.isRunning {
             process.terminate()
+            process.waitUntilExit()
+        }
+
+        lock.lock()
+        let capturedError = rpcError
+        let capturedPayload = payload
+        lock.unlock()
+
+        if timedOut {
             throw GrokSpawnError.timedOut
         }
-        buffer.append(stdout.fileHandleForReading.readDataToEndOfFile())
-        if let payload = rpcResult(id: 2, in: buffer) {
-            return payload
+        if let capturedError {
+            throw GrokSpawnError.rpc(capturedError)
+        }
+        if let capturedPayload {
+            return capturedPayload
         }
         throw GrokSpawnError.noResult
     }
 
-    private static func rpcResult(id: Int, in buffer: Data) -> Data? {
+    private static func rpcObject(id: Int, in buffer: Data) -> [String: Any]? {
         guard let text = String(data: buffer, encoding: .utf8) else { return nil }
         for line in text.split(whereSeparator: \.isNewline) {
             guard let data = line.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   JSONDictionary.int64(object, "id") == Int64(id) else { continue }
-            if object["error"] != nil {
-                return nil
-            }
-            if let result = object["result"] {
-                return try? JSONSerialization.data(withJSONObject: result)
-            }
+            return object
         }
         return nil
+    }
+
+    private static func rpcResult(id: Int, in buffer: Data) -> Data? {
+        guard let object = rpcObject(id: id, in: buffer),
+              object["error"] == nil,
+              let result = object["result"] else { return nil }
+        return try? JSONSerialization.data(withJSONObject: result)
+    }
+
+    private static func rpcError(id: Int, in buffer: Data) -> String? {
+        guard let object = rpcObject(id: id, in: buffer),
+              let error = object["error"] else { return nil }
+        if let dict = error as? [String: Any],
+           let message = dict["message"] as? String,
+           !message.isEmpty {
+            return message
+        }
+        return "Grok RPC error"
     }
 
     private static func userFacingMessage(_ message: String) -> String {
@@ -196,12 +238,14 @@ private enum GrokSpawnError: LocalizedError {
     case missingBinary
     case timedOut
     case noResult
+    case rpc(String)
 
     var errorDescription: String? {
         switch self {
         case .missingBinary: return "未检测到 Grok 命令行"
         case .timedOut: return "命令超时"
         case .noResult: return "Grok 响应中没有可用的额度字段"
+        case let .rpc(message): return message
         }
     }
 }

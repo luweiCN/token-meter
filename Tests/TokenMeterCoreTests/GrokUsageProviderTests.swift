@@ -78,4 +78,76 @@ final class GrokUsageProviderTests: XCTestCase {
         XCTAssertEqual(snapshot.groups[0].items[0].usedPercent, 3)
         XCTAssertEqual(snapshot.groups[0].items[0].label, "7d")
     }
+
+    func testSpawnTimesOutWhenChildWritesNothing() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("grok-spawn-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let stub = try writeExecutable("exec /bin/sleep 86400")
+        defer { try? FileManager.default.removeItem(at: stub) }
+
+        let started = Date()
+        XCTAssertThrowsError(
+            try GrokUsageProvider.spawnBilling(executable: stub.path, grokHome: home, timeout: 0.4)
+        ) { error in
+            XCTAssertTrue(
+                error.localizedDescription.contains("命令超时"),
+                "got \(error.localizedDescription)"
+            )
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 3)
+    }
+
+    func testSpawnRPCErrorSurfacesMessage() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("grok-rpc-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let stub = try writeExecutable(
+            """
+            cat >/dev/null
+            printf '%s\\n' '{"jsonrpc":"2.0","id":2,"error":{"message":"weekly limit"}}'
+            """
+        )
+        defer { try? FileManager.default.removeItem(at: stub) }
+
+        XCTAssertThrowsError(
+            try GrokUsageProvider.spawnBilling(executable: stub.path, grokHome: home, timeout: 2)
+        ) { error in
+            XCTAssertTrue(
+                error.localizedDescription.lowercased().contains("weekly limit"),
+                "got \(error.localizedDescription)"
+            )
+        }
+    }
+
+    func testSpawnRPCWeeklyLimitIsQuotaExhausted() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("grok-quota-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try Data(#"{"https://auth.x.ai::abc":{"key":"secret","expires_at":"2099-01-01T00:00:00Z"}}"#.utf8)
+            .write(to: home.appendingPathComponent("auth.json"))
+        let stub = try writeExecutable(
+            """
+            cat >/dev/null
+            printf '%s\\n' '{"jsonrpc":"2.0","id":2,"error":{"message":"weekly limit"}}'
+            """
+        )
+        defer { try? FileManager.default.removeItem(at: stub) }
+
+        let provider = GrokUsageProvider(
+            config: config(),
+            grokHome: home,
+            grokExecutable: { stub.path }
+        )
+        let snapshot = await provider.fetchProviderUsage()
+        XCTAssertEqual(snapshot.status, .error)
+        XCTAssertEqual(snapshot.message, "额度用尽")
+    }
+
+    private func writeExecutable(_ body: String) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("grok-stub-\(UUID().uuidString)")
+        try Data("#!/bin/sh\n\(body)\n".utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        return url
+    }
 }

@@ -115,6 +115,41 @@ final class GrokUsageEventParserTests: XCTestCase {
         XCTAssertEqual(session.events[0].modelName, "grok-4.6")
     }
 
+    func testFallbackDedupeKeysStayDistinctAcrossResume() throws {
+        let firstLines = [
+            line(#"{"params":{"sessionId":"sess-1","update":{"sessionUpdate":"user_message_chunk"}},"_meta":{"totalTokens":1000,"agentTimestampMs":1700000001000}}"#, offset: 0),
+            line(#"{"params":{"sessionId":"sess-1","update":{"sessionUpdate":"agent_message_chunk"}},"_meta":{"totalTokens":1500,"agentTimestampMs":1700000002000}}"#, offset: 40)
+        ]
+        let first = try parse(firstLines)
+        XCTAssertEqual(first.session?.events.map(\.inputTokens), [1500])
+
+        let secondLines = [
+            line(#"{"params":{"sessionId":"sess-1","update":{"sessionUpdate":"user_message_chunk"}},"_meta":{"totalTokens":1500,"agentTimestampMs":1700000003000}}"#, offset: 80),
+            line(#"{"params":{"sessionId":"sess-1","update":{"sessionUpdate":"agent_message_chunk"}},"_meta":{"totalTokens":1800,"agentTimestampMs":1700000004000}}"#, offset: 120)
+        ]
+        let second = try parse(secondLines, resuming: first.state)
+        let firstKey = try XCTUnwrap(first.session?.events[0].dedupeKey)
+        let secondKey = try XCTUnwrap(second.session?.events[0].dedupeKey)
+        XCTAssertNotEqual(firstKey, secondKey, "续读后新兜底 turn 不得复用 delta:0")
+        XCTAssertEqual(firstKey, "grok:sess-1:delta:40")
+        XCTAssertEqual(secondKey, "grok:sess-1:delta:120")
+        XCTAssertEqual(second.session?.events.map(\.inputTokens), [300])
+    }
+
+    func testFinishAppliesSummaryModelToFallbackEvents() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grok-fb-sum-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data(#"{"info":{"cwd":"/Users/me/code/app"},"current_model_id":"grok-4.6"}"#.utf8)
+            .write(to: dir.appendingPathComponent("summary.json"))
+        let updates = dir.appendingPathComponent("updates.jsonl")
+        let json = #"{"params":{"sessionId":"sess-fb","update":{"sessionUpdate":"agent_message_chunk"}},"_meta":{"totalTokens":800,"agentTimestampMs":1700000001000}}"#
+        let session = try XCTUnwrap(try parse([line(json, offset: 0)], sourceURL: updates).session)
+        XCTAssertEqual(session.events[0].modelName, "grok-4.6")
+        XCTAssertEqual(session.projectPath, "/Users/me/code/app")
+    }
+
     func testFinishDecodesWorkspaceDirectoryWhenSummaryMissing() throws {
         let url = URL(fileURLWithPath: "/tmp/sessions/%2FUsers%2Fme%2Fproj/abc-uuid/updates.jsonl")
         let json = #"{"params":{"sessionId":"abc-uuid","update":{"sessionUpdate":"turn_completed","usage":{"inputTokens":10,"outputTokens":1,"totalTokens":11}}},"_meta":{"agentTimestampMs":1700000000000}}"#
