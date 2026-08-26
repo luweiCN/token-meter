@@ -918,7 +918,9 @@ public final class LocalAgentScanner {
             return ReasonixStatsParser(resuming: state)
         case .dshJSONL:
             return DshUsageEventParser(resuming: state)
-        case .grokJSONL, .opencodeSQLite:
+        case .grokJSONL:
+            return GrokUsageEventParser(resuming: state)
+        case .opencodeSQLite:
             throw LocalAgentParserError.unsupportedFormat
         }
     }
