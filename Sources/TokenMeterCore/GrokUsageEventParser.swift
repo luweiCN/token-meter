@@ -199,6 +199,8 @@ public final class GrokUsageEventParser: UsageEventParser {
             flushFallbackTurn()
         }
 
+        applySummarySidecar(nextTo: sourceURL)
+
         let emitted = grokSawUsage ? events : fallbackEvents
         let requiresReplay = grokSawUsage && resumedWithoutUsage && resumedEventSeq > 0
 
@@ -234,6 +236,60 @@ public final class GrokUsageEventParser: UsageEventParser {
             subagentLabel: subagentLabel
         )
         return (session, state)
+    }
+
+    private func applySummarySidecar(nextTo sourceURL: URL) {
+        let sidecar = sourceURL.deletingLastPathComponent().appendingPathComponent("summary.json")
+        if let data = try? Data(contentsOf: sidecar),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if projectPath == nil {
+                if let info = JSONDictionary.dictionary(object, "info"),
+                   let cwd = JSONDictionary.string(info, "cwd"), !cwd.isEmpty {
+                    projectPath = cwd
+                } else if let cwd = JSONDictionary.string(object, "cwd"), !cwd.isEmpty {
+                    projectPath = cwd
+                }
+            }
+            if rootSessionKey == nil {
+                rootSessionKey = JSONDictionary.string(object, "parent_session_id")
+            }
+            if subagentLabel == nil {
+                subagentLabel = JSONDictionary.string(object, "agent_name")
+            }
+            if modelName == nil {
+                modelName = JSONDictionary.string(object, "current_model_id")
+            }
+        }
+
+        if projectPath == nil {
+            let encoded = sourceURL.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent
+            if let decoded = encoded.removingPercentEncoding, !decoded.isEmpty {
+                projectPath = decoded
+            }
+        }
+
+        if let modelName {
+            events = events.map { event in
+                guard event.modelName == nil else { return event }
+                return UsageEvent(
+                    eventSeq: event.eventSeq,
+                    observedAt: event.observedAt,
+                    modelName: modelName,
+                    messageId: event.messageId,
+                    dedupeKey: event.dedupeKey,
+                    dedupeScopeKey: event.dedupeScopeKey,
+                    inputTokens: event.inputTokens,
+                    outputTokens: event.outputTokens,
+                    reasoningTokens: event.reasoningTokens,
+                    cacheReadTokens: event.cacheReadTokens,
+                    cacheWrite5mTokens: event.cacheWrite5mTokens,
+                    cacheWrite1hTokens: event.cacheWrite1hTokens,
+                    reportedCostUSDMicros: event.reportedCostUSDMicros,
+                    sourceOffset: event.sourceOffset,
+                    isSidechain: event.isSidechain
+                )
+            }
+        }
     }
 
     private func metaInt64(object: [String: Any], params: [String: Any]?, key: String) -> Int64? {

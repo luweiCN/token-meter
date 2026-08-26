@@ -96,4 +96,31 @@ final class GrokUsageEventParserTests: XCTestCase {
         XCTAssertEqual(events[0].inputTokens, 100)
         XCTAssertEqual(events[0].outputTokens, 10)
     }
+
+    func testFinishReadsSummarySidecar() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grok-sum-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let summary = """
+        {"info":{"id":"child-1","cwd":"/Users/me/code/app"},"parent_session_id":"root-9","current_model_id":"grok-4.6","agent_name":"explore"}
+        """
+        try Data(summary.utf8).write(to: dir.appendingPathComponent("summary.json"))
+        let updates = dir.appendingPathComponent("updates.jsonl")
+        let json = #"{"params":{"sessionId":"child-1","update":{"sessionUpdate":"turn_completed","usage":{"inputTokens":10,"outputTokens":2,"totalTokens":12,"cachedReadTokens":0}}},"_meta":{"agentTimestampMs":1700000000000}}"#
+        let session = try XCTUnwrap(try parse([line(json, offset: 0)], sourceURL: updates).session)
+        XCTAssertEqual(session.projectPath, "/Users/me/code/app")
+        XCTAssertEqual(session.rootSessionKey, "root-9")
+        XCTAssertEqual(session.subagentLabel, "explore")
+        XCTAssertEqual(session.events[0].modelName, "grok-4.6")
+    }
+
+    func testFinishDecodesWorkspaceDirectoryWhenSummaryMissing() throws {
+        let url = URL(fileURLWithPath: "/tmp/sessions/%2FUsers%2Fme%2Fproj/abc-uuid/updates.jsonl")
+        let json = #"{"params":{"sessionId":"abc-uuid","update":{"sessionUpdate":"turn_completed","usage":{"inputTokens":10,"outputTokens":1,"totalTokens":11}}},"_meta":{"agentTimestampMs":1700000000000}}"#
+        let session = try XCTUnwrap(try parse([line(json, offset: 0)], sourceURL: url).session)
+        XCTAssertEqual(session.sessionKey, "abc-uuid")
+        XCTAssertEqual(session.projectPath, "/Users/me/proj")
+        XCTAssertNil(session.rootSessionKey)
+    }
 }
