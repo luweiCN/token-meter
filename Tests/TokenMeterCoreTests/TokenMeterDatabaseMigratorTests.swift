@@ -434,4 +434,38 @@ final class TokenMeterDatabaseMigratorTests: XCTestCase {
             "configTables 声明的表与白名单不一致。不在白名单里的配置表会被重建过程删除。"
         )
     }
+
+    func testEnsureScanRootsKindAcceptsGrokJsonl() throws {
+        let database = try memoryDatabase()
+        try TokenMeterDatabaseMigrator.migrate(database)
+        try database.execute(
+            "INSERT INTO scan_roots(kind, root_path, display_name, stable_source_key) VALUES ('grok_jsonl', '/tmp/g', 'Grok Build', 'grok_jsonl:/tmp/g')"
+        )
+        XCTAssertEqual(try rowCount(database, "scan_roots"), 1)
+    }
+
+    func testEnsureNewAgentDefaultsAppendsGrokToUntouchedSet() throws {
+        let database = try memoryDatabase()
+        try TokenMeterDatabaseMigrator.migrate(database)
+        try database.execute(
+            "INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by) VALUES ('filters.enabledAgentKinds', ?, 'json', 1, 'importer')",
+            [.text("[\"claudeCode\",\"codex\",\"opencode\",\"omp\",\"reasonix\",\"dsh\"]")]
+        )
+        try TokenMeterDatabaseMigrator.migrate(database)
+        let json = try XCTUnwrap(database.query("SELECT value_json FROM settings WHERE key = 'filters.enabledAgentKinds'").first?.string("value_json"))
+        let kinds = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String])
+        XCTAssertEqual(Set(kinds), Set(["claudeCode","codex","opencode","omp","reasonix","dsh","grok"]))
+    }
+
+    func testEnsureNewAgentDefaultsDoesNotTouchCustomizedSet() throws {
+        let database = try memoryDatabase()
+        try TokenMeterDatabaseMigrator.migrate(database)
+        try database.execute(
+            "INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by) VALUES ('filters.enabledAgentKinds', ?, 'json', 1, 'electron')",
+            [.text("[\"codex\"]")]
+        )
+        try TokenMeterDatabaseMigrator.migrate(database)
+        let json = try XCTUnwrap(database.query("SELECT value_json FROM settings WHERE key = 'filters.enabledAgentKinds'").first?.string("value_json"))
+        XCTAssertEqual(json, "[\"codex\"]")
+    }
 }

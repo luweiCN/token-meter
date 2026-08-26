@@ -71,7 +71,7 @@ public enum TokenMeterDatabaseMigrator {
         let createSQL = try database.query(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'scan_roots'"
         )[0].string("sql") ?? ""
-        guard !createSQL.contains("dsh_jsonl") else { return }
+        guard !createSQL.contains("grok_jsonl") else { return }
 
         try database.execute("PRAGMA foreign_keys = OFF")
         defer { try? database.execute("PRAGMA foreign_keys = ON") }
@@ -79,7 +79,7 @@ public enum TokenMeterDatabaseMigrator {
             """
             CREATE TABLE scan_roots_new (
               id INTEGER PRIMARY KEY,
-              kind TEXT NOT NULL CHECK (kind IN ('claude_jsonl', 'codex_jsonl', 'omp_jsonl', 'opencode_sqlite', 'reasonix_stats', 'dsh_jsonl')),
+              kind TEXT NOT NULL CHECK (kind IN ('claude_jsonl', 'codex_jsonl', 'omp_jsonl', 'opencode_sqlite', 'reasonix_stats', 'dsh_jsonl', 'grok_jsonl')),
               root_path TEXT NOT NULL,
               display_name TEXT NOT NULL,
               enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
@@ -143,6 +143,20 @@ public enum TokenMeterDatabaseMigrator {
            var kinds = try? JSONSerialization.jsonObject(with: data) as? [String],
            Set(kinds) == legacyWithReasonix {
             kinds.append("dsh")
+            if let updated = String(data: try JSONSerialization.data(withJSONObject: kinds), encoding: .utf8) {
+                try? database.execute(
+                    "UPDATE settings SET value_json = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'filters.enabledAgentKinds'",
+                    [.text(updated)]
+                )
+            }
+        }
+        let legacyWithDsh = Set(["claudeCode", "codex", "opencode", "omp", "reasonix", "dsh"])
+        if let rows = try? database.query("SELECT value_json FROM settings WHERE key = 'filters.enabledAgentKinds'"),
+           let json = rows.first?.string("value_json"),
+           let data = json.data(using: .utf8),
+           var kinds = try? JSONSerialization.jsonObject(with: data) as? [String],
+           Set(kinds) == legacyWithDsh {
+            kinds.append("grok")
             if let updated = String(data: try JSONSerialization.data(withJSONObject: kinds), encoding: .utf8) {
                 try? database.execute(
                     "UPDATE settings SET value_json = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'filters.enabledAgentKinds'",
