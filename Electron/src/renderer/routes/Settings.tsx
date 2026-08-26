@@ -18,7 +18,8 @@ const AGENT_KINDS: Array<{ id: string; label: string; how: string }> = [
   { id: 'omp', label: 'OMP', how: '插件安装到 ~/.omp/agent/extensions' },
   { id: 'opencode', label: 'OpenCode', how: '暂无集成 · 仅统计开关' },
   { id: 'reasonix', label: 'Reasonix', how: '自动统计 ~/.reasonix/stats 用量流水' },
-  { id: 'dsh', label: 'DeepSeek Harness', how: '自动统计 ~/.dsh 会话流水' }
+  { id: 'dsh', label: 'DeepSeek Harness', how: '自动统计 ~/.dsh 会话流水' },
+  { id: 'grok', label: 'Grok Build', how: '自动统计 ~/.grok 会话流水' }
 ];
 
 /// 供应商额度接入（OpenDesign 稿 B 区）。keyed = 支持应用内填 API Key（存钥匙串，
@@ -27,7 +28,8 @@ const QUOTA_PROVIDERS: Array<{ id: string; name: string; pill: string; how: stri
   { id: 'codex', name: 'Codex', pill: '自动接入', how: '自动读取本机登录凭证', src: '~/.codex/auth.json' },
   { id: 'claude-code', name: 'Claude Code', pill: '自动接入', how: '自动读取本机登录凭证', src: '钥匙串 · Claude Code-credentials' },
   { id: 'zhipu', name: '智谱 GLM', pill: '环境变量', how: 'API Key · 应用内填写或读取环境变量', src: 'ZHIPU_API_KEY', keyed: true },
-  { id: 'opencode-go', name: 'OpenCode Go', pill: '自动接入', how: 'WebView 登录 opencode.ai · 登录态一年有效', src: '~/.config/opencode/opencode-quota/opencode-go.json', login: true }
+  { id: 'opencode-go', name: 'OpenCode Go', pill: '自动接入', how: 'WebView 登录 opencode.ai · 登录态一年有效', src: '~/.config/opencode/opencode-quota/opencode-go.json', login: true },
+  { id: 'grok', name: 'Grok Build', pill: '自动接入', how: '自动读取本机登录凭证', src: '~/.grok/auth.json' }
 ];
 
 const SCAN_INTERVALS: Array<{ seconds: number; label: string }> = [

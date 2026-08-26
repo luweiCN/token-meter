@@ -24,7 +24,8 @@ public enum AgentBinaryDetector {
         ("codex", "codex"),
         ("omp", "omp"),
         ("opencode", "opencode"),
-        ("dsh", "dsh")
+        ("dsh", "dsh"),
+        ("grok", "grok")
     ]
 
     public static func detect(
@@ -52,6 +53,7 @@ public enum AgentBinaryDetector {
         }
         directories += [
             "\(homeDirectory)/.local/bin",
+            "\(homeDirectory)/.grok/bin",
             "\(homeDirectory)/.codex/packages/standalone/current/bin",
             "\(homeDirectory)/.bun/bin",
             "/opt/homebrew/bin",

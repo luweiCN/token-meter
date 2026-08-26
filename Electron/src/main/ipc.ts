@@ -176,7 +176,8 @@ export function registerIpcHandlers() {
     omp: 'omp_jsonl',
     opencode: 'opencode_sqlite',
     reasonix: 'reasonix_stats',
-    dsh: 'dsh_jsonl'
+    dsh: 'dsh_jsonl',
+    grok: 'grok_jsonl'
   };
   subscribeEvents((event) => {
     if (event.kind !== 'agent.sessionEvent' && event.kind !== 'data.changed') return;

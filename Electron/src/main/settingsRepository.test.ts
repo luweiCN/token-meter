@@ -213,6 +213,12 @@ describe('SettingsRepository', () => {
     expect(repo.get().enabledAgentKinds).toEqual(['claudeCode', 'codex', 'opencode', 'omp', 'reasonix']);
   });
 
+  it('accepts grok in enabledAgentKinds', () => {
+    const { repo } = openRepo();
+    repo.update({ enabledAgentKinds: ['claudeCode', 'codex', 'opencode', 'omp', 'reasonix', 'dsh', 'grok'] }, 3);
+    expect(repo.get().enabledAgentKinds).toEqual(['claudeCode', 'codex', 'opencode', 'omp', 'reasonix', 'dsh', 'grok']);
+  });
+
   it('stores provider enable flags into overrides and bumps the settings version', () => {
     const { repo } = openRepo();
 

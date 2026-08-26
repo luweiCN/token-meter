@@ -23,11 +23,12 @@ final class AgentBinaryDetectorTests: XCTestCase {
     func testDetectReportsFoundPathAndFirstVersionLine() throws {
         try installFakeBinary("claude", versionOutput: "2.1.207 (Claude Code)")
         try installFakeBinary("omp", versionOutput: "omp/16.4.8")
+        try installFakeBinary("grok", versionOutput: "grok 1.0.5")
 
         let statuses = AgentBinaryDetector.detect(in: [bin.path])
         let byKind = Dictionary(uniqueKeysWithValues: statuses.map { ($0.kind, $0) })
 
-        XCTAssertEqual(statuses.map(\.kind), ["claudeCode", "codex", "omp", "opencode", "dsh"])
+        XCTAssertEqual(statuses.map(\.kind), ["claudeCode", "codex", "omp", "opencode", "dsh", "grok"])
         XCTAssertEqual(byKind["claudeCode"]?.found, true)
         XCTAssertEqual(byKind["claudeCode"]?.path, bin.appendingPathComponent("claude").path)
         XCTAssertEqual(byKind["claudeCode"]?.version, "2.1.207 (Claude Code)")
@@ -35,6 +36,13 @@ final class AgentBinaryDetectorTests: XCTestCase {
         XCTAssertEqual(byKind["codex"]?.found, false)
         XCTAssertNil(byKind["codex"]?.path)
         XCTAssertEqual(byKind["opencode"]?.found, false)
+        XCTAssertEqual(byKind["grok"]?.found, true)
+        XCTAssertEqual(byKind["grok"]?.version, "grok 1.0.5")
+    }
+
+    func testSearchDirectoriesIncludeGrokBin() {
+        let dirs = AgentBinaryDetector.searchDirectories(homeDirectory: "/Users/me")
+        XCTAssertTrue(dirs.contains("/Users/me/.grok/bin"))
     }
 
     func testVersionFailureStillCountsAsFound() throws {
