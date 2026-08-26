@@ -55,6 +55,7 @@
   --s3: #44ffb1;
   --s4: #ffe073;
   --s5: #ff7a5c;
+  --s6: #111111;
 
   /* Chart segment fills (StackedBarChart reads these via --seg-*). Assigned to
      keep adjacent stack segments far apart in hue and to give the dominant
@@ -129,6 +130,7 @@
   --s3: #0f9d6e;
   --s4: #9a7500;
   --s5: #c2542e;
+  --s6: #e6e6e6;
 
   --seg-input: #0895bd;
   --seg-cache-write: #0f9d6e;

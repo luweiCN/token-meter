@@ -45,6 +45,7 @@ struct MBTheme: Equatable {
         case "opencode": return warn
         case "reasonix": return self == .light ? Color(hex: 0xC2542E) : Color(hex: 0xFF7A5C)
         case "dsh": return self == .light ? Color(hex: 0x1E90FF) : Color(hex: 0x4A9EFF)
+        case "grok": return self == .light ? Color(hex: 0x111111) : Color(hex: 0xE6E6E6)
         default: return muted
         }
     }
@@ -147,6 +148,7 @@ enum MenuBarProviderName {
         case "opencode": return "OpenCode"
         case "reasonix": return "Reasonix"
         case "dsh": return "DeepSeek Harness"
+        case "grok": return "Grok Build"
         default: return providerId
         }
     }

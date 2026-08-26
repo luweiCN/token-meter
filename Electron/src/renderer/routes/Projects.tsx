@@ -11,7 +11,8 @@ const AGENT_LABEL: Record<string, string> = {
   codex: 'Codex CLI',
   omp: 'OMP',
   opencode: 'OpenCode',
-  reasonix: 'Reasonix'
+  reasonix: 'Reasonix',
+  grok: 'Grok Build'
 };
 import { SessionCell, SessionDetail } from './Sessions.js';
 

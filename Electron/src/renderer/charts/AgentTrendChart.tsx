@@ -11,7 +11,8 @@ const KNOWN_PROVIDERS: Array<{ id: string; label: string; cssVar: string }> = [
   { id: 'claude-code', label: 'Claude Code', cssVar: 'var(--s1)' },
   { id: 'codex', label: 'Codex CLI', cssVar: 'var(--s2)' },
   { id: 'omp', label: 'OMP', cssVar: 'var(--s3)' },
-  { id: 'opencode', label: 'OpenCode', cssVar: 'var(--s4)' }
+  { id: 'opencode', label: 'OpenCode', cssVar: 'var(--s4)' },
+  { id: 'grok', label: 'Grok Build', cssVar: 'var(--s6)' }
 ];
 const OTHER = { id: '__other', label: '其他', cssVar: 'var(--muted)' };
 
