@@ -62,4 +62,38 @@ final class GrokUsageEventParserTests: XCTestCase {
         let result = try parse([line(json, offset: 0)])
         XCTAssertNil(result.session)
     }
+
+    func testTotalTokensDeltasBecomeInputWhenNoUsage() throws {
+        let lines = [
+            line(#"{"params":{"update":{"sessionUpdate":"user_message_chunk"}},"_meta":{"totalTokens":1000,"agentTimestampMs":1700000001000}}"#, offset: 0),
+            line(#"{"params":{"update":{"sessionUpdate":"agent_message_chunk"}},"_meta":{"totalTokens":1500,"agentTimestampMs":1700000002000}}"#, offset: 50),
+            line(#"{"params":{"update":{"sessionUpdate":"agent_message_chunk"}},"_meta":{"totalTokens":1400,"agentTimestampMs":1700000002500}}"#, offset: 80),
+            line(#"{"params":{"update":{"sessionUpdate":"user_message_chunk"}},"_meta":{"totalTokens":1500,"agentTimestampMs":1700000003000}}"#, offset: 100),
+            line(#"{"params":{"update":{"sessionUpdate":"agent_thought_chunk"}},"_meta":{"totalTokens":1800,"agentTimestampMs":1700000004000}}"#, offset: 120)
+        ]
+        let result = try parse(lines)
+        let session = try XCTUnwrap(result.session)
+        XCTAssertEqual(session.events.map(\.inputTokens), [1500, 300])
+        XCTAssertTrue(session.events.allSatisfy { $0.outputTokens == 0 && $0.cacheReadTokens == 0 })
+        XCTAssertEqual(result.state.grokSawUsage, false)
+    }
+
+    func testUsageDiscardsFallbackAndRequestsReplayIfFallbackAlreadyEmitted() throws {
+        let fallback = line(#"{"params":{"sessionId":"sess-1","update":{"sessionUpdate":"agent_message_chunk"}},"_meta":{"totalTokens":2000,"agentTimestampMs":1700000001000}}"#, offset: 0)
+        let first = try parse([fallback])
+        XCTAssertEqual(first.session?.events.count, 1)
+        XCTAssertEqual(first.state.grokSawUsage, false)
+
+        let usage = line(
+            #"{"params":{"sessionId":"sess-1","update":{"sessionUpdate":"turn_completed","usage":{"inputTokens":100,"outputTokens":10,"totalTokens":110,"cachedReadTokens":0,"reasoningTokens":0}},"_meta":{"eventId":"e1","agentTimestampMs":1700000005000}}}"#,
+            offset: 40
+        )
+        let second = try parse([fallback, usage], resuming: first.state)
+        XCTAssertEqual(second.state.requiresFullReplay, true)
+        XCTAssertEqual(second.state.grokSawUsage, true)
+        let events = try XCTUnwrap(second.session?.events)
+        XCTAssertEqual(events.count, 1)
+        XCTAssertEqual(events[0].inputTokens, 100)
+        XCTAssertEqual(events[0].outputTokens, 10)
+    }
 }

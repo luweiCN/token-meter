@@ -9,9 +9,23 @@ public final class GrokUsageEventParser: UsageEventParser {
     private var startedAt: Date?
     private var updatedAt: Date?
     private var events: [UsageEvent] = []
+    private var fallbackEvents: [UsageEvent] = []
     private var eventSeq: Int
     private var grokSawUsage: Bool
     private var resumeOffset: Int64
+    private var lastTotal: Int64?
+    private var activeTurn: ActiveTurn?
+    private var fallbackTurnIndex: Int
+    private let resumedWithoutUsage: Bool
+    private let resumedEventSeq: Int
+
+    private struct ActiveTurn {
+        var baseline: Int64
+        var maxTotal: Int64
+        var timestamp: Date
+        var offset: Int64
+        var index: Int
+    }
 
     public init(resuming state: ParserState?) {
         eventSeq = state?.lastEventSeq ?? 0
@@ -24,6 +38,10 @@ public final class GrokUsageEventParser: UsageEventParser {
         updatedAt = state?.updatedAt
         grokSawUsage = state?.grokSawUsage ?? false
         resumeOffset = state?.resumeOffset ?? 0
+        lastTotal = state?.lastCumulative?.inputTokens
+        fallbackTurnIndex = 0
+        resumedWithoutUsage = !(state?.grokSawUsage ?? false)
+        resumedEventSeq = state?.lastEventSeq ?? 0
     }
 
     public func consume(_ line: JSONLLine) {
@@ -41,8 +59,40 @@ public final class GrokUsageEventParser: UsageEventParser {
             updatedAt = timestamp
         }
 
-        guard let usage = usageObject(params: params) else { return }
-        grokSawUsage = true
+        let sessionUpdate = params
+            .flatMap { JSONDictionary.dictionary($0, "update") }
+            .flatMap { JSONDictionary.string($0, "sessionUpdate") }
+        if sessionUpdate == "user_message_chunk" {
+            flushFallbackTurn()
+            let baseline = lastTotal ?? 0
+            activeTurn = ActiveTurn(
+                baseline: baseline,
+                maxTotal: baseline,
+                timestamp: timestamp ?? Date(),
+                offset: line.offset,
+                index: fallbackTurnIndex
+            )
+            fallbackTurnIndex += 1
+        }
+
+        if let usage = usageObject(params: params) {
+            grokSawUsage = true
+            consumeUsage(usage, object: object, params: params, timestamp: timestamp, line: line)
+            return
+        }
+
+        if let total = metaInt64(object: object, params: params, key: "totalTokens"), total >= 0 {
+            consumeTotalTokens(total, timestamp: timestamp, offset: line.offset)
+        }
+    }
+
+    private func consumeUsage(
+        _ usage: [String: Any],
+        object: [String: Any],
+        params: [String: Any]?,
+        timestamp: Date?,
+        line: JSONLLine
+    ) {
 
         let rawInput = firstInt64(in: usage, keys: ["inputTokens", "input_tokens", "promptTokens"])
         let rawOutput = firstInt64(in: usage, keys: ["outputTokens", "output_tokens", "completionTokens"])
@@ -85,6 +135,58 @@ public final class GrokUsageEventParser: UsageEventParser {
         )
     }
 
+    private func consumeTotalTokens(_ total: Int64, timestamp: Date?, offset: Int64) {
+        if let previous = lastTotal, total < previous {
+            return
+        }
+        if activeTurn == nil {
+            let baseline = lastTotal ?? 0
+            activeTurn = ActiveTurn(
+                baseline: baseline,
+                maxTotal: baseline,
+                timestamp: timestamp ?? Date(),
+                offset: offset,
+                index: fallbackTurnIndex
+            )
+            fallbackTurnIndex += 1
+        }
+        if var turn = activeTurn {
+            if total > turn.maxTotal {
+                turn.maxTotal = total
+                if let timestamp { turn.timestamp = timestamp }
+                turn.offset = offset
+                activeTurn = turn
+            }
+        }
+        lastTotal = total
+    }
+
+    private func flushFallbackTurn() {
+        guard let turn = activeTurn else { return }
+        activeTurn = nil
+        let delta = turn.maxTotal - turn.baseline
+        guard delta > 0 else { return }
+        eventSeq += 1
+        let session = sessionKey ?? "unknown"
+        fallbackEvents.append(
+            UsageEvent(
+                eventSeq: eventSeq,
+                observedAt: turn.timestamp,
+                modelName: modelName,
+                messageId: nil,
+                dedupeKey: "grok:\(session):delta:\(turn.index)",
+                inputTokens: delta,
+                outputTokens: 0,
+                reasoningTokens: 0,
+                cacheReadTokens: 0,
+                cacheWrite5mTokens: 0,
+                cacheWrite1hTokens: 0,
+                reportedCostUSDMicros: nil,
+                sourceOffset: turn.offset
+            )
+        )
+    }
+
     public func finish(sourceURL: URL) throws -> (session: ParsedSession?, state: ParserState) {
         if sessionKey == nil || sessionKey?.isEmpty == true {
             let fromPath = sourceURL.deletingLastPathComponent().lastPathComponent
@@ -93,9 +195,16 @@ public final class GrokUsageEventParser: UsageEventParser {
             }
         }
 
+        if !grokSawUsage {
+            flushFallbackTurn()
+        }
+
+        let emitted = grokSawUsage ? events : fallbackEvents
+        let requiresReplay = grokSawUsage && resumedWithoutUsage && resumedEventSeq > 0
+
         let state = ParserState(
             lastEventSeq: eventSeq,
-            lastCumulative: nil,
+            lastCumulative: lastTotal.map { CumulativeTokenTotals(inputTokens: $0) },
             sessionKey: sessionKey,
             projectPath: projectPath,
             modelName: modelName,
@@ -103,11 +212,12 @@ public final class GrokUsageEventParser: UsageEventParser {
             updatedAt: updatedAt,
             rootSessionKey: rootSessionKey,
             subagentLabel: subagentLabel,
+            requiresFullReplay: requiresReplay ? true : nil,
             grokSawUsage: grokSawUsage,
             resumeOffset: resumeOffset
         )
 
-        guard !events.isEmpty, let sessionKey, !sessionKey.isEmpty else {
+        guard !emitted.isEmpty, let sessionKey, !sessionKey.isEmpty else {
             return (nil, state)
         }
 
@@ -116,14 +226,27 @@ public final class GrokUsageEventParser: UsageEventParser {
             sessionKey: sessionKey,
             projectPath: projectPath,
             cliVersion: nil,
-            startedAt: startedAt ?? events.first?.observedAt,
-            updatedAt: updatedAt ?? events.last?.observedAt,
-            events: events,
+            startedAt: startedAt ?? emitted.first?.observedAt,
+            updatedAt: updatedAt ?? emitted.last?.observedAt,
+            events: emitted,
             rawMeta: ["source": "grok"],
             rootSessionKey: rootSessionKey,
             subagentLabel: subagentLabel
         )
         return (session, state)
+    }
+
+    private func metaInt64(object: [String: Any], params: [String: Any]?, key: String) -> Int64? {
+        if let params,
+           let meta = JSONDictionary.dictionary(params, "_meta"),
+           let value = JSONDictionary.int64(meta, key) {
+            return value
+        }
+        if let meta = JSONDictionary.dictionary(object, "_meta"),
+           let value = JSONDictionary.int64(meta, key) {
+            return value
+        }
+        return nil
     }
 
     private func usageObject(params: [String: Any]?) -> [String: Any]? {
