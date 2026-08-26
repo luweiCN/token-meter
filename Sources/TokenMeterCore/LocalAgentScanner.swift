@@ -254,6 +254,9 @@ public final class LocalAgentScanner {
             case .dshJSONL:
                 try scanDshRoot(root, runId: runId, progress: progress, reporter: reporter)
 
+            case .grokJSONL:
+                break
+
             case .opencodeSQLite:
                 try scanOpenCodeRoot(root, runId: runId, progress: progress, reporter: reporter)
             }
@@ -341,6 +344,8 @@ public final class LocalAgentScanner {
                     files += 1
                     bytes += (try? fileMetadata(for: file).sizeBytes) ?? 0
                 }
+            case .grokJSONL:
+                break
             case .opencodeSQLite:
                 let databaseURL = root.sourceDatabaseURL ?? root.rootURL
                 if fileExists(at: databaseURL) {
@@ -913,7 +918,7 @@ public final class LocalAgentScanner {
             return ReasonixStatsParser(resuming: state)
         case .dshJSONL:
             return DshUsageEventParser(resuming: state)
-        case .opencodeSQLite:
+        case .grokJSONL, .opencodeSQLite:
             throw LocalAgentParserError.unsupportedFormat
         }
     }
@@ -926,7 +931,7 @@ public final class LocalAgentScanner {
         switch kind {
         case .codexJSONL:
             return ["token_count", "session_meta", "turn_context", "task_started"]
-        case .claudeJSONL, .ompJSONL, .opencodeSQLite, .reasonixStats, .dshJSONL:
+        case .claudeJSONL, .ompJSONL, .opencodeSQLite, .reasonixStats, .dshJSONL, .grokJSONL:
             return nil
         }
     }

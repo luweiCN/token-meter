@@ -97,6 +97,11 @@ public enum TokenMeterPaths {
                 kind: .dshJSONL,
                 rootURL: DshPaths.sessionsRoot(homeDirectory: homeDirectory, environment: environment),
                 displayName: "DeepSeek Harness"
+            ),
+            DefaultScanRoot(
+                kind: .grokJSONL,
+                rootURL: GrokPaths.sessionsRoot(homeDirectory: homeDirectory, environment: environment),
+                displayName: "Grok Build"
             )
         ]
     }
@@ -118,5 +123,39 @@ public enum DshPaths {
                 .standardizedFileURL
         }
         return homeDirectory.appendingPathComponent(".dsh/sessions", isDirectory: true)
+    }
+}
+
+public enum GrokPaths {
+    public static func sessionsRoot(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> URL {
+        if let configured = environment["GROK_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !configured.isEmpty {
+            return URL(fileURLWithPath: (configured as NSString).expandingTildeInPath, isDirectory: true)
+                .appendingPathComponent("sessions", isDirectory: true)
+                .standardizedFileURL
+        }
+        return homeDirectory.appendingPathComponent(".grok/sessions", isDirectory: true)
+    }
+
+    public static func updatesFiles(under root: URL) throws -> [URL] {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return [] }
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: []
+        ) else { return [] }
+        var files: [URL] = []
+        for case let file as URL in enumerator where file.lastPathComponent == "updates.jsonl" {
+            let values = try file.resourceValues(forKeys: [.isRegularFileKey])
+            if values.isRegularFile == true {
+                files.append(file)
+            }
+        }
+        return files.sorted { $0.path < $1.path }
     }
 }

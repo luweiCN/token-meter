@@ -131,6 +131,7 @@ public final class UsageEventWriter {
         case .opencodeSQLite: return "opencode"
         case .reasonixStats: return "reasonix"
         case .dshJSONL: return "dsh"
+        case .grokJSONL: return "grok"
         }
     }
 

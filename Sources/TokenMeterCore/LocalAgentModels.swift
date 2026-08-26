@@ -7,6 +7,7 @@ public enum LocalAgentKind: String, Codable, Equatable, CaseIterable {
     case omp
     case reasonix
     case dsh
+    case grok
 }
 
 public enum SourceKind: String, Codable, Equatable {
@@ -16,6 +17,7 @@ public enum SourceKind: String, Codable, Equatable {
     case opencodeSQLite = "opencode_sqlite"
     case reasonixStats = "reasonix_stats"
     case dshJSONL = "dsh_jsonl"
+    case grokJSONL = "grok_jsonl"
 }
 
 public struct SourceFileFingerprint: Codable, Equatable {

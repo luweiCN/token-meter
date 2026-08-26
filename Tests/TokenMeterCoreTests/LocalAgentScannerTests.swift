@@ -953,7 +953,9 @@ final class LocalAgentScannerTests: XCTestCase {
         let homeDirectory = URL(fileURLWithPath: "/tmp/token-meter-home", isDirectory: true)
         let roots = TokenMeterPaths.defaultScanRoots(homeDirectory: homeDirectory, environment: [:])
 
-        XCTAssertEqual(roots.map(\.kind), [.claudeJSONL, .codexJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL, .reasonixStats, .dshJSONL])
+        XCTAssertEqual(roots.map(\.kind), [
+            .claudeJSONL, .codexJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL, .reasonixStats, .dshJSONL, .grokJSONL
+        ])
         XCTAssertEqual(roots.map { $0.rootURL.path }, [
             "/tmp/token-meter-home/.claude/projects",
             "/tmp/token-meter-home/.codex/sessions",
@@ -961,14 +963,15 @@ final class LocalAgentScannerTests: XCTestCase {
             "/tmp/token-meter-home/.local/share/opencode/opencode.db",
             "/tmp/token-meter-home/.omp/agent/sessions",
             "/tmp/token-meter-home/.reasonix/stats",
-            "/tmp/token-meter-home/.dsh/sessions"
+            "/tmp/token-meter-home/.dsh/sessions",
+            "/tmp/token-meter-home/.grok/sessions"
         ])
 
         let database = try SQLiteDatabase(path: ":memory:")
         try TokenMeterDatabaseMigrator.migrate(database)
         try LocalAgentScanner.seedDefaultScanRoots(database: database, homeDirectory: homeDirectory, environment: [:])
 
-        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM scan_roots"), 7)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM scan_roots"), 8)
         // 两个 codex root 的 stable_source_key 靠 path 区分，不撞 UNIQUE(stable_source_key)。
         XCTAssertEqual(
             try database.query("SELECT stable_source_key FROM scan_roots WHERE kind = ? ORDER BY root_path", [.text(SourceKind.codexJSONL.rawValue)])
@@ -978,6 +981,31 @@ final class LocalAgentScannerTests: XCTestCase {
                 "codex_jsonl:/tmp/token-meter-home/.codex/sessions"
             ]
         )
+    }
+
+    func testGrokHomeOverridesDefaultSessionsRoot() {
+        let home = URL(fileURLWithPath: "/tmp/token-meter-home", isDirectory: true)
+        let roots = TokenMeterPaths.defaultScanRoots(
+            homeDirectory: home,
+            environment: ["GROK_HOME": "/opt/custom-grok"]
+        )
+        let grok = roots.first(where: { $0.kind == .grokJSONL })
+        XCTAssertEqual(grok?.rootURL.path, "/opt/custom-grok/sessions")
+        XCTAssertEqual(grok?.displayName, "Grok Build")
+    }
+
+    func testGrokUpdatesFilesIgnoresSiblingJsonl() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grok-files-\(UUID().uuidString)", isDirectory: true)
+        let session = root.appendingPathComponent("%2Ftmp%2Fproj/sess-1", isDirectory: true)
+        try FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)
+        try Data().write(to: session.appendingPathComponent("updates.jsonl"))
+        try Data().write(to: session.appendingPathComponent("events.jsonl"))
+        try Data().write(to: session.appendingPathComponent("chat_history.jsonl"))
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let files = try GrokPaths.updatesFiles(under: root)
+        XCTAssertEqual(files.map(\.lastPathComponent), ["updates.jsonl"])
     }
 
     func testDefaultCodexRootsHonorCodexHome() {

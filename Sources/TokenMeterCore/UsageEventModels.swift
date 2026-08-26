@@ -164,6 +164,8 @@ public struct ParserState: Equatable, Codable {
     /// OpenCode 使用 WAL；主数据库文件不变时，`-wal` 仍可能新增、更新或删除消息。
     /// 保存主库与 WAL 的轻量版本，任一变化都触发完整 SQLite 快照替换。
     public var openCodeStorageRevision: String?
+    /// Grok：本文件是否见过 `params.update.usage`。缺 key 的旧 parser_state 当 false。
+    public var grokSawUsage: Bool?
 
     /// 下次续读的起点：上一次 `readLines` 停下的字节位置（`JSONLReadResult.nextOffset`）。
     ///
@@ -195,6 +197,7 @@ public struct ParserState: Equatable, Codable {
         codexTaskStartedTurnIDs: Set<String>? = nil,
         codexIsUserFork: Bool? = nil,
         openCodeStorageRevision: String? = nil,
+        grokSawUsage: Bool? = nil,
         resumeOffset: Int64 = 0
     ) {
         self.lastEventSeq = lastEventSeq
@@ -217,6 +220,7 @@ public struct ParserState: Equatable, Codable {
         self.codexTaskStartedTurnIDs = codexTaskStartedTurnIDs
         self.codexIsUserFork = codexIsUserFork
         self.openCodeStorageRevision = openCodeStorageRevision
+        self.grokSawUsage = grokSawUsage
         self.resumeOffset = resumeOffset
     }
 }

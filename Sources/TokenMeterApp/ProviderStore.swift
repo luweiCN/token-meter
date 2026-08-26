@@ -414,7 +414,7 @@ final class ProviderStore: ObservableObject {
 
 private extension SourceKind {
     static var allCasesForLocalIndex: [SourceKind] {
-        [.claudeJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL, .reasonixStats, .dshJSONL]
+        [.claudeJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL, .reasonixStats, .dshJSONL, .grokJSONL]
     }
 }
 
@@ -433,6 +433,8 @@ private extension LocalAgentKind {
             .reasonixStats
         case .dsh:
             .dshJSONL
+        case .grok:
+            .grokJSONL
         }
     }
 }
