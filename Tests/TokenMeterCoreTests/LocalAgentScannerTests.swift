@@ -1008,6 +1008,26 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(files.map(\.lastPathComponent), ["updates.jsonl"])
     }
 
+    func testGrokScanIndexesUpdatesJsonlOnly() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grok-scan-\(UUID().uuidString)", isDirectory: true)
+        let session = root.appendingPathComponent("%2Ftmp%2Fapp/sess-a", isDirectory: true)
+        try FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let usage = #"{"params":{"sessionId":"sess-a","update":{"sessionUpdate":"turn_completed","usage":{"inputTokens":50,"outputTokens":5,"totalTokens":55,"cachedReadTokens":0}}},"_meta":{"eventId":"e","agentTimestampMs":1700000000000}}"# + "\n"
+        try Data(usage.utf8).write(to: session.appendingPathComponent("updates.jsonl"))
+        try Data(#"{"type":"noise"}"#.utf8).write(to: session.appendingPathComponent("events.jsonl"))
+
+        let database = try migratedDatabase(rootKind: .grokJSONL, rootPath: root.path)
+        try await LocalAgentScanner(database: database).scanRoot(id: 1)
+
+        let files = try database.query("SELECT relative_path FROM source_files")
+        XCTAssertEqual(files.compactMap { $0.string("relative_path") }.filter { $0.hasSuffix("events.jsonl") }, [])
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1)
+        XCTAssertEqual(try database.query("SELECT provider_id FROM agent_sessions")[0].string("provider_id"), "grok")
+    }
+
     func testDefaultCodexRootsHonorCodexHome() {
         let homeDirectory = URL(fileURLWithPath: "/tmp/token-meter-home", isDirectory: true)
         let roots = TokenMeterPaths.defaultScanRoots(

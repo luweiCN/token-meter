@@ -248,14 +248,11 @@ public final class LocalAgentScanner {
 
         do {
             switch root.kind {
-            case .claudeJSONL, .codexJSONL, .ompJSONL, .reasonixStats:
+            case .claudeJSONL, .codexJSONL, .ompJSONL, .reasonixStats, .grokJSONL:
                 try scanJSONLRoot(root, runId: runId, progress: progress, reporter: reporter)
 
             case .dshJSONL:
                 try scanDshRoot(root, runId: runId, progress: progress, reporter: reporter)
-
-            case .grokJSONL:
-                break
 
             case .opencodeSQLite:
                 try scanOpenCodeRoot(root, runId: runId, progress: progress, reporter: reporter)
@@ -345,7 +342,10 @@ public final class LocalAgentScanner {
                     bytes += (try? fileMetadata(for: file).sizeBytes) ?? 0
                 }
             case .grokJSONL:
-                break
+                for file in try GrokPaths.updatesFiles(under: root.rootURL) {
+                    files += 1
+                    bytes += (try? fileMetadata(for: file).sizeBytes) ?? 0
+                }
             case .opencodeSQLite:
                 let databaseURL = root.sourceDatabaseURL ?? root.rootURL
                 if fileExists(at: databaseURL) {
@@ -359,7 +359,10 @@ public final class LocalAgentScanner {
 
     private func scanJSONLRoot(_ root: ScanRoot, runId: Int64, progress: ScanProgress, reporter: FullRescanProgress?) throws {
         var failureCount = 0
-        for file in try jsonlFiles(under: root.rootURL) {
+        let files = root.kind == .grokJSONL
+            ? try GrokPaths.updatesFiles(under: root.rootURL)
+            : try jsonlFiles(under: root.rootURL)
+        for file in files {
             progress.filesSeen += 1
             do {
                 // 每个文件包一层 autoreleasepool：JSONSerialization / FileManager 返回的是
