@@ -71,7 +71,8 @@ const MENUBAR_PROVIDERS: Array<{ id: string; name: string; demoId: string; short
   { id: 'claude-code', name: 'Claude Code', demoId: 'claude', short: 'CC' },
   { id: 'codex', name: 'Codex', demoId: 'codex', short: 'CX' },
   { id: 'zhipu', name: '智谱 GLM', demoId: 'zhipu', short: '智谱' },
-  { id: 'opencode-go', name: 'OpenCode Go', demoId: 'opencodeGo', short: 'Go', windows: ['5h', '7d', '30d'] }
+  { id: 'opencode-go', name: 'OpenCode Go', demoId: 'opencodeGo', short: 'Go', windows: ['5h', '7d', '30d'] },
+  { id: 'grok', name: 'Grok Build', demoId: 'grok', short: 'Grok', windows: ['7d'] }
 ];
 
 /// settings → 预览状态：真实 override 映射到 demo 家；OMP 无真实映射，恒显示（演示密度）。

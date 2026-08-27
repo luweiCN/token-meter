@@ -69,12 +69,13 @@ interface DemoProvider {
   stale: boolean;
 }
 
-/// 演示数据（稿 data 口径）：CC 5h62/7d41 · CX 34/18 · 智谱 8/55 · Go 98/100 · OMP 过期 12m。
+/// 演示数据（稿 data 口径）：CC 5h62/7d41 · CX 34/18 · 智谱 8/55 · Go 98/100 · Grok 单窗 42 · OMP 过期 12m。
 export const PREVIEW_PROVIDERS: DemoProvider[] = [
   { id: 'claude', short: 'CC', mono: 'C', w5: { p: 62, c: 'ok' }, w7: { p: 41, c: 'ok' }, w3: null, stale: false },
   { id: 'codex', short: 'CX', mono: 'X', w5: { p: 34, c: 'warn' }, w7: { p: 18, c: 'warn' }, w3: null, stale: false },
   { id: 'zhipu', short: '智谱', mono: '智', w5: { p: 8, c: 'bad' }, w7: { p: 55, c: 'ok' }, w3: null, stale: false },
   { id: 'opencodeGo', short: 'Go', mono: 'G', w5: { p: 98, c: 'ok' }, w7: { p: 100, c: 'ok' }, w3: { p: 100, c: 'ok' }, stale: false },
+  { id: 'grok', short: 'Grok', mono: 'G', w5: { p: 42, c: 'ok' }, w7: null, w3: null, stale: false },
   { id: 'omp', short: 'OMP', mono: 'O', w5: { p: 71, c: 'ok' }, w7: { p: 30, c: 'ok' }, w3: null, stale: true }
 ];
 

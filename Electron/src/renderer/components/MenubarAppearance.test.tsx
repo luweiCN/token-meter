@@ -100,6 +100,22 @@ describe('MenubarAppearance', () => {
     expect(spy).toHaveBeenCalledWith(expect.objectContaining({ providerGlyphWindows: { codex: ['7d'] } }));
   });
 
+  it('includes Grok Build as a single 7d window row', async () => {
+    const spy = vi
+      .spyOn(settingsStore, 'applyPatch')
+      .mockResolvedValue({ requestedVersion: 4, status: 'pending' });
+    await mount();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Grok Build 菜单栏显示' }));
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ providerMenubarVisible: { grok: false } }));
+
+    const grokRow = screen.getByRole('button', { name: 'Grok Build 菜单栏显示' }).closest('tr');
+    expect(grokRow).not.toBeNull();
+    const labels = Array.from(grokRow?.querySelectorAll('.seg.mini')[0]?.querySelectorAll('button') ?? [])
+      .map((button) => button.textContent);
+    expect(labels).toEqual(['7d']);
+  });
+
   it('window order segment patches menubarWindowOrder', async () => {
     const spy = vi
       .spyOn(settingsStore, 'applyPatch')

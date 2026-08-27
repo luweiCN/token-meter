@@ -29,8 +29,8 @@ function onlyProviders(...ids: string[]): MenubarPreviewState['providers'] {
 describe('MenubarPreviewBar', () => {
   it('renders one cell per visible provider plus the usage tail for rings', () => {
     const { container } = render(<MenubarPreviewBar mode="dark" state={base} />);
-    // 4 家可见（CC/CX/智谱/Go，OMP 恒藏）+ 今日尾巴 = 5 个 cell
-    expect(container.querySelectorAll('.mbcell').length).toBe(5);
+    // 5 家可见（CC/CX/智谱/Go/Grok，OMP 恒藏）+ 今日尾巴 = 6 个 cell
+    expect(container.querySelectorAll('.mbcell').length).toBe(6);
     expect(container.querySelectorAll('svg').length).toBeGreaterThan(0);
     expect(screen.getByText('214.8M')).toBeTruthy();
   });
