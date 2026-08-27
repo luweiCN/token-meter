@@ -27,12 +27,18 @@ public enum GrokBillingParser {
         let start = date(in: root, keys: [
             ["billingCycle", "billingPeriodStart"],
             ["currentPeriod", "start"],
-            ["billingPeriodStart"]
+            ["billingPeriodStart"],
+            ["config", "billingCycle", "billingPeriodStart"],
+            ["config", "currentPeriod", "start"],
+            ["config", "billingPeriodStart"]
         ])
         let end = date(in: root, keys: [
             ["billingCycle", "billingPeriodEnd"],
             ["currentPeriod", "end"],
-            ["billingPeriodEnd"]
+            ["billingPeriodEnd"],
+            ["config", "billingCycle", "billingPeriodEnd"],
+            ["config", "currentPeriod", "end"],
+            ["config", "billingPeriodEnd"]
         ])
 
         let window = windowKind(start: start, end: end)

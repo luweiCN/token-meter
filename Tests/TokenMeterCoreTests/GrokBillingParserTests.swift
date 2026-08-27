@@ -55,4 +55,19 @@ final class GrokBillingParserTests: XCTestCase {
         let items = try GrokBillingParser.parse(data: Data(json.utf8), providerId: "grok", displayName: "Grok Build").groups[0].items
         XCTAssertEqual(items.count, 1)
     }
+
+    func testNestedConfigPeriodIsWeeklyWindow() throws {
+        let json = """
+        {"config":{"creditUsagePercent":51,"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-08-26T11:25:34Z","end":"2026-09-02T11:25:34Z"},"billingPeriodStart":"2026-08-26T11:25:34Z","billingPeriodEnd":"2026-09-02T11:25:34Z"}}
+        """
+        let metric = try GrokBillingParser.parse(
+            data: Data(json.utf8),
+            providerId: "grok",
+            displayName: "Grok Build"
+        ).groups[0].items[0]
+        XCTAssertEqual(metric.label, "7d")
+        XCTAssertEqual(metric.windowDurationMinutes, 10_080)
+        XCTAssertEqual(metric.usedPercent, 51)
+        XCTAssertEqual(metric.resetAt, ISO8601DateFormatter().date(from: "2026-09-02T11:25:34Z"))
+    }
 }

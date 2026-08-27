@@ -1237,9 +1237,14 @@ struct QuotaDisplayModel {
         let tone: UsageMetricTone
     }
 
+    /// 登录过期时悬浮在感叹号上的操作说明。
+    static let grokLoginHelp = "登录已过期。打开终端运行 grok login，完成后点重试或等待下次自动刷新。"
+
     let badge: String
     let name: String
     let isWarn: Bool
+    let needsLogin: Bool
+    let statusHelp: String?
     let staleMinutes: Int?
     let summaryText: String
     let summarySegments: [SummarySegment]
@@ -1268,6 +1273,13 @@ struct QuotaDisplayModel {
         let warnStatuses: [UsageStatus] = [.warning, .error]
         isWarn = snapshot.status == .warning || snapshot.status == .error
             || metrics.contains { warnStatuses.contains($0.status) || ($0.usedPercent ?? 0) >= 99.5 }
+        let loginHint = [snapshot.message, snapshot.summary]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: " ")
+        needsLogin = snapshot.status == .error && (
+            loginHint.contains("未登录") || loginHint.contains("grok login")
+        )
+        statusHelp = needsLogin ? Self.grokLoginHelp : snapshot.message
 
         let staleSeconds = now.timeIntervalSince(snapshot.fetchedAt)
         staleMinutes = staleSeconds >= 600 ? Int(staleSeconds / 60) : nil
@@ -1447,11 +1459,17 @@ private struct QuotaGroupView: View {
                     .foregroundStyle(theme.fg)
                     .lineLimit(1)
 
-                // 数据过期只给一个警告三角：文字胶囊（「14m 未更新」）会把 provider
-                // 名和右侧概要挤出省略号；具体过期多久展开后的 StaleCard 里有。
-                if model.isWarn || model.staleMinutes != nil {
+                // 登录过期用感叹号 + hover 说明怎么重新登录；其它告警仍用警告三角。
+                if model.needsLogin {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(theme.danger)
+                        .help(model.statusHelp ?? QuotaDisplayModel.grokLoginHelp)
+                        .accessibilityLabel("需要重新登录")
+                } else if model.isWarn || model.staleMinutes != nil {
                     WarnTriangle()
                         .frame(width: 14, height: 14)
+                        .help(model.statusHelp ?? "")
                 }
 
                 Spacer(minLength: 8)
@@ -1534,7 +1552,7 @@ private struct AlertCard: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(theme.fg2)
                     .lineSpacing(2)
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .truncationMode(.tail)
             }
 

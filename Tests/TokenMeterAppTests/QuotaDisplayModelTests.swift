@@ -225,6 +225,41 @@ final class QuotaDisplayModelTests: XCTestCase {
         XCTAssertEqual(model.summaryText, model.summarySegments.map(\.text).joined(separator: " · "))
     }
 
+    func testGrokLoginErrorShowsHelpAndNeedsLogin() {
+        let snapshot = ProviderUsageSnapshot(
+            providerId: "grok",
+            displayName: "Grok Build",
+            status: .error,
+            fetchedAt: Date(),
+            summary: nil,
+            message: "未登录 Grok Build。请在终端运行 grok login，完成后点重试或等待下次自动刷新。",
+            groups: [
+                UsageGroup(
+                    id: "grok",
+                    title: "Grok Build",
+                    subtitle: nil,
+                    items: [
+                        UsageMetric(
+                            id: "grok-error",
+                            label: "状态",
+                            kind: .quota,
+                            usedPercent: nil,
+                            remainingPercent: nil,
+                            resetText: nil,
+                            status: .error,
+                            detail: nil
+                        )
+                    ]
+                )
+            ]
+        )
+        let model = QuotaDisplayModel(snapshot: snapshot)
+        XCTAssertTrue(model.needsLogin)
+        XCTAssertTrue(model.isWarn)
+        XCTAssertEqual(model.statusHelp, QuotaDisplayModel.grokLoginHelp)
+        XCTAssertTrue(model.statusHelp?.contains("grok login") == true)
+    }
+
     func testWarnStatusOrDepletionOverridesPaceTone() {
         let depleted = UsageMetric(
             id: "empty", label: "x", kind: .quota,

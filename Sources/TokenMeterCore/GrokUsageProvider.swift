@@ -1,21 +1,42 @@
 import Foundation
 
 enum GrokAuth {
+    static let loginHelp = "未登录 Grok Build。请在终端运行 grok login，完成后点重试或等待下次自动刷新。"
+
     static func isUsable(authURL: URL, now: Date) -> Bool {
+        bearerToken(authURL: authURL, now: now) != nil
+    }
+
+    static func bearerToken(authURL: URL, now: Date) -> String? {
+        usableEntry(authURL: authURL, now: now).flatMap { entry in
+            (entry["key"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        }
+    }
+
+    static func userId(authURL: URL, now: Date) -> String? {
+        usableEntry(authURL: authURL, now: now).flatMap { entry in
+            (entry["user_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        }
+    }
+
+    private static func usableEntry(authURL: URL, now: Date) -> [String: Any]? {
         guard let data = try? Data(contentsOf: authURL),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              !object.isEmpty else { return false }
+              !object.isEmpty else { return nil }
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let plain = ISO8601DateFormatter()
-        for value in object.values {
-            guard let entry = value as? [String: Any] else { continue }
-            guard let raw = entry["expires_at"] as? String else { return true }
-            let expiry = fractional.date(from: raw) ?? plain.date(from: raw)
-            if expiry == nil { return true }
-            if let expiry, expiry > now { return true }
+        let preferred = object.keys.sorted { lhs, rhs in
+            lhs.contains("auth.x.ai") && !rhs.contains("auth.x.ai")
         }
-        return false
+        for key in preferred {
+            guard let entry = object[key] as? [String: Any] else { continue }
+            guard let raw = entry["expires_at"] as? String else { return entry }
+            let expiry = fractional.date(from: raw) ?? plain.date(from: raw)
+            if expiry == nil { return entry }
+            if let expiry, expiry > now { return entry }
+        }
+        return nil
     }
 }
 
@@ -26,6 +47,8 @@ public struct GrokUsageProvider: UsageProvider {
     private let grokExecutable: () -> String?
     private let now: () -> Date
     private let fetchBilling: () async throws -> Data
+    private let fetchREST: (String) async throws -> Data
+    private let fetchGRPC: (String) async throws -> Data
 
     public init(config: ProviderConfig) {
         let home = GrokPaths.sessionsRoot().deletingLastPathComponent()
@@ -41,7 +64,9 @@ public struct GrokUsageProvider: UsageProvider {
         grokHome: URL,
         grokExecutable: @escaping () -> String?,
         now: @escaping () -> Date = Date.init,
-        fetchBilling: (() async throws -> Data)? = nil
+        fetchBilling: (() async throws -> Data)? = nil,
+        fetchREST: ((String) async throws -> Data)? = nil,
+        fetchGRPC: ((String) async throws -> Data)? = nil
     ) {
         self.id = config.id
         self.displayName = config.displayName
@@ -53,6 +78,17 @@ public struct GrokUsageProvider: UsageProvider {
         self.fetchBilling = fetchBilling ?? {
             try await Task.detached {
                 try GrokUsageProvider.spawnBilling(executable: executable(), grokHome: home)
+            }.value
+        }
+        self.fetchREST = fetchREST ?? { token in
+            try await Task.detached {
+                try GrokUsageProvider.fetchCreditsREST(token: token, grokHome: home)
+            }.value
+        }
+        self.fetchGRPC = fetchGRPC ?? { token in
+            try await Task.detached {
+                let raw = try GrokUsageProvider.fetchCreditsGRPC(token: token)
+                return try GrokCreditsGrpcParser.parse(data: raw)
             }.value
         }
     }
@@ -72,11 +108,7 @@ public struct GrokUsageProvider: UsageProvider {
 
         let authURL = grokHome.appendingPathComponent("auth.json")
         guard GrokAuth.isUsable(authURL: authURL, now: now()) else {
-            return providerErrorSnapshot(
-                providerId: id,
-                displayName: displayName,
-                message: "未登录 Grok Build，请运行 grok login"
-            )
+            return loginErrorSnapshot()
         }
 
         do {
@@ -87,14 +119,79 @@ public struct GrokUsageProvider: UsageProvider {
                 displayName: displayName
             )
         } catch {
-            return providerErrorSnapshot(
-                providerId: id,
-                displayName: displayName,
-                message: Self.userFacingMessage(
-                    ProviderErrorMessage.sanitized(providerName: "Grok Build", errorMessage: error.localizedDescription)
-                )
-            )
+            if Self.shouldFallback(error), let token = GrokAuth.bearerToken(authURL: authURL, now: now()) {
+                if let snapshot = await httpSnapshot(token: token) {
+                    return snapshot
+                }
+            }
+            return errorSnapshot(error)
         }
+    }
+
+    private func loginErrorSnapshot() -> ProviderUsageSnapshot {
+        providerErrorSnapshot(
+            providerId: id,
+            displayName: displayName,
+            message: GrokAuth.loginHelp
+        )
+    }
+
+    private func errorSnapshot(_ error: Error) -> ProviderUsageSnapshot {
+        if Self.isUnauthorized(error) {
+            return loginErrorSnapshot()
+        }
+        return providerErrorSnapshot(
+            providerId: id,
+            displayName: displayName,
+            message: Self.userFacingMessage(
+                ProviderErrorMessage.sanitized(providerName: "Grok Build", errorMessage: error.localizedDescription)
+            )
+        )
+    }
+
+    private func httpSnapshot(token: String) async -> ProviderUsageSnapshot? {
+        do {
+            let data = try await fetchREST(token)
+            return try GrokBillingParser.parse(data: data, providerId: id, displayName: displayName)
+        } catch {
+            if Self.isUnauthorized(error) {
+                return loginErrorSnapshot()
+            }
+        }
+        do {
+            let data = try await fetchGRPC(token)
+            return try GrokBillingParser.parse(data: data, providerId: id, displayName: displayName)
+        } catch {
+            if Self.isUnauthorized(error) {
+                return loginErrorSnapshot()
+            }
+            return nil
+        }
+    }
+
+    private static func shouldFallback(_ error: Error) -> Bool {
+        if let spawn = error as? GrokSpawnError {
+            switch spawn {
+            case .timedOut, .noResult: return true
+            case .rpc(let message):
+                return message.lowercased().contains("method not found")
+            case .missingBinary, .unauthorized, .httpStatus:
+                return false
+            }
+        }
+        return error.localizedDescription.lowercased().contains("method not found")
+    }
+
+    private static func isUnauthorized(_ error: Error) -> Bool {
+        if let spawn = error as? GrokSpawnError {
+            switch spawn {
+            case .unauthorized: return true
+            case .httpStatus(let code): return code == 401 || code == 403
+            default: return false
+            }
+        }
+        let text = error.localizedDescription.lowercased()
+        return text.contains("unauthorized") || text.contains("401") || text.contains("403")
     }
 
     static func locateGrokExecutable(
@@ -134,111 +231,113 @@ public struct GrokUsageProvider: UsageProvider {
         process.standardOutput = stdout
         process.standardError = FileHandle.nullDevice
         try process.run()
+        defer {
+            if process.isRunning {
+                process.terminate()
+                process.waitUntilExit()
+            }
+        }
 
-        let initialize = #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1","clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false}}}}"#
-        let billing = #"{"jsonrpc":"2.0","id":2,"method":"x.ai/billing","params":{}}"#
-        stdin.fileHandleForWriting.write(Data((initialize + "\n" + billing + "\n").utf8))
+        let session = RPCSession(stdout: stdout, timeout: timeout)
+        try send(stdin, id: 1, method: "initialize", params: #"{"protocolVersion":"1","clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false}}}"#)
+        _ = try session.wait(id: 1)
+        try send(stdin, id: 2, method: "authenticate", params: #"{"methodId":"cached_token"}"#)
+        _ = try? session.wait(id: 2)
+
+        let billingCalls: [(Int, String)] = [(3, "_x.ai/billing"), (4, "x.ai/billing")]
+        for (id, method) in billingCalls {
+            try send(stdin, id: id, method: method, params: "{}")
+            do {
+                let payload = try session.wait(id: id)
+                try? stdin.fileHandleForWriting.close()
+                return payload
+            } catch GrokSpawnError.rpc(let message) where message.lowercased().contains("method not found") {
+                continue
+            }
+        }
         try? stdin.fileHandleForWriting.close()
+        throw GrokSpawnError.rpc("Method not found")
+    }
 
-        let lock = NSLock()
-        var buffer = Data()
-        var payload: Data?
-        var rpcError: String?
-        let signal = DispatchSemaphore(value: 0)
-        let handle = stdout.fileHandleForReading
-        handle.readabilityHandler = { fileHandle in
-            let chunk = fileHandle.availableData
-            lock.lock()
-            if chunk.isEmpty {
-                fileHandle.readabilityHandler = nil
-                lock.unlock()
-                signal.signal()
-                return
-            }
-            buffer.append(chunk)
-            if rpcError == nil {
-                rpcError = Self.rpcError(id: 2, in: buffer)
-            }
-            if payload == nil {
-                payload = Self.rpcResult(id: 2, in: buffer)
-            }
-            let done = rpcError != nil || payload != nil
-            lock.unlock()
-            if done {
-                fileHandle.readabilityHandler = nil
-                signal.signal()
-            }
+    private static func send(_ stdin: Pipe, id: Int, method: String, params: String) throws {
+        let line = "{\"jsonrpc\":\"2.0\",\"id\":\(id),\"method\":\"\(method)\",\"params\":\(params)}\n"
+        stdin.fileHandleForWriting.write(Data(line.utf8))
+    }
+
+    static func fetchCreditsREST(token: String, grokHome: URL, urlSession: URLSession = .shared) throws -> Data {
+        let authURL = grokHome.appendingPathComponent("auth.json")
+        var request = URLRequest(url: URL(string: "https://cli-chat-proxy.grok.com/v1/billing?format=credits")!)
+        request.httpMethod = "GET"
+        applyGrokHeaders(&request, token: token, userId: GrokAuth.userId(authURL: authURL, now: Date()))
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        return try sendHTTP(request, urlSession: urlSession)
+    }
+
+    static func fetchCreditsGRPC(token: String, urlSession: URLSession = .shared) throws -> Data {
+        var request = URLRequest(url: URL(string: "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig")!)
+        request.httpMethod = "POST"
+        applyGrokHeaders(&request, token: token, userId: nil)
+        request.setValue("application/grpc-web+proto", forHTTPHeaderField: "Accept")
+        request.setValue("application/grpc-web+proto", forHTTPHeaderField: "Content-Type")
+        request.setValue("1", forHTTPHeaderField: "X-Grpc-Web")
+        request.httpBody = Data([0, 0, 0, 0, 0])
+        return try sendHTTP(request, urlSession: urlSession)
+    }
+
+    private static func applyGrokHeaders(_ request: inout URLRequest, token: String, userId: String?) {
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("xai-grok-cli", forHTTPHeaderField: "X-XAI-Token-Auth")
+        request.setValue("Grok Build", forHTTPHeaderField: "User-Agent")
+        if let userId {
+            request.setValue(userId, forHTTPHeaderField: "x-userid")
         }
+    }
 
-        let timedOut = signal.wait(timeout: .now() + timeout) == .timedOut
-        handle.readabilityHandler = nil
-        if process.isRunning {
-            process.terminate()
-            process.waitUntilExit()
-        }
-
-        lock.lock()
-        let capturedError = rpcError
-        let capturedPayload = payload
-        lock.unlock()
-
-        if timedOut {
+    private static func sendHTTP(_ request: URLRequest, urlSession: URLSession) throws -> Data {
+        let box = HTTPBox()
+        let semaphore = DispatchSemaphore(value: 0)
+        urlSession.dataTask(with: request) { data, response, error in
+            box.error = error
+            box.data = data
+            box.response = response
+            semaphore.signal()
+        }.resume()
+        if semaphore.wait(timeout: .now() + 10) == .timedOut {
             throw GrokSpawnError.timedOut
         }
-        if let capturedError {
-            throw GrokSpawnError.rpc(capturedError)
+        if let error = box.error {
+            throw error
         }
-        if let capturedPayload {
-            return capturedPayload
+        if let http = box.response as? HTTPURLResponse {
+            if http.statusCode == 401 || http.statusCode == 403 {
+                throw GrokSpawnError.unauthorized
+            }
+            if !(200..<300).contains(http.statusCode) {
+                throw GrokSpawnError.httpStatus(http.statusCode)
+            }
         }
-        throw GrokSpawnError.noResult
-    }
-
-    private static func rpcObject(id: Int, in buffer: Data) -> [String: Any]? {
-        guard let text = String(data: buffer, encoding: .utf8) else { return nil }
-        for line in text.split(whereSeparator: \.isNewline) {
-            guard let data = line.data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  JSONDictionary.int64(object, "id") == Int64(id) else { continue }
-            return object
+        guard let data = box.data, !data.isEmpty else {
+            throw GrokSpawnError.noResult
         }
-        return nil
-    }
-
-    private static func rpcResult(id: Int, in buffer: Data) -> Data? {
-        guard let object = rpcObject(id: id, in: buffer),
-              object["error"] == nil,
-              let result = object["result"] else { return nil }
-        return try? JSONSerialization.data(withJSONObject: result)
-    }
-
-    private static func rpcError(id: Int, in buffer: Data) -> String? {
-        guard let object = rpcObject(id: id, in: buffer),
-              let error = object["error"] else { return nil }
-        if let dict = error as? [String: Any],
-           let message = dict["message"] as? String,
-           !message.isEmpty {
-            return message
-        }
-        return "Grok RPC error"
+        return data
     }
 
     private static func userFacingMessage(_ message: String) -> String {
         let lowercased = message.lowercased()
-        if lowercased.contains("weekly limit")
-            || lowercased.contains("credits")
-            || lowercased.contains("402") {
+        if lowercased.contains("weekly limit") || lowercased.contains("402") {
             return "额度用尽"
         }
         return message
     }
 }
 
-private enum GrokSpawnError: LocalizedError {
+enum GrokSpawnError: LocalizedError {
     case missingBinary
     case timedOut
     case noResult
     case rpc(String)
+    case unauthorized
+    case httpStatus(Int)
 
     var errorDescription: String? {
         switch self {
@@ -246,6 +345,91 @@ private enum GrokSpawnError: LocalizedError {
         case .timedOut: return "命令超时"
         case .noResult: return "Grok 响应中没有可用的额度字段"
         case let .rpc(message): return message
+        case .unauthorized: return GrokAuth.loginHelp
+        case let .httpStatus(code): return "Grok 接口返回 \(code)"
         }
+    }
+}
+
+private final class HTTPBox: @unchecked Sendable {
+    var data: Data?
+    var response: URLResponse?
+    var error: Error?
+}
+
+private final class RPCSession {
+    private let lock = NSLock()
+    private var buffer = Data()
+    private var objects: [[String: Any]] = []
+    private let deadline: DispatchTime
+    private let signal = DispatchSemaphore(value: 0)
+
+    init(stdout: Pipe, timeout: TimeInterval) {
+        deadline = .now() + timeout
+        let handle = stdout.fileHandleForReading
+        handle.readabilityHandler = { [weak self] fileHandle in
+            guard let self else { return }
+            let chunk = fileHandle.availableData
+            self.lock.lock()
+            if chunk.isEmpty {
+                fileHandle.readabilityHandler = nil
+                self.lock.unlock()
+                self.signal.signal()
+                return
+            }
+            self.buffer.append(chunk)
+            self.drainLines()
+            self.lock.unlock()
+            self.signal.signal()
+        }
+    }
+
+    func wait(id: Int) throws -> Data {
+        while true {
+            lock.lock()
+            if let object = objects.first(where: { JSONDictionary.int64($0, "id") == Int64(id) }) {
+                lock.unlock()
+                if object["error"] != nil {
+                    throw GrokSpawnError.rpc(Self.errorMessage(object))
+                }
+                guard let result = object["result"],
+                      JSONSerialization.isValidJSONObject(result),
+                      let data = try? JSONSerialization.data(withJSONObject: result) else {
+                    throw GrokSpawnError.noResult
+                }
+                return data
+            }
+            lock.unlock()
+            if signal.wait(timeout: deadline) == .timedOut {
+                throw GrokSpawnError.timedOut
+            }
+        }
+    }
+
+    private func drainLines() {
+        guard let text = String(data: buffer, encoding: .utf8) else { return }
+        var consumed = 0
+        var search = text.startIndex
+        while let newline = text.range(of: "\n", range: search..<text.endIndex) {
+            let line = text[search..<newline.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+            if let data = line.data(using: .utf8),
+               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                objects.append(object)
+            }
+            search = newline.upperBound
+            consumed = text.distance(from: text.startIndex, to: search)
+        }
+        if consumed > 0 {
+            buffer = Data(text.utf8.dropFirst(consumed))
+        }
+    }
+
+    private static func errorMessage(_ object: [String: Any]) -> String {
+        if let error = object["error"] as? [String: Any],
+           let message = error["message"] as? String,
+           !message.isEmpty {
+            return message
+        }
+        return "Grok RPC error"
     }
 }
