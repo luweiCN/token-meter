@@ -23,6 +23,7 @@ public final class CodexUsageEventParser: UsageEventParser {
     private var inheritedReportedTotal: Int64?
     private var taskStartedTurnIDs: Set<String>
     private var isUserFork: Bool
+    private var serviceTier: String?
 
     private let dateFormatters = ClaudeCodeUsageEventParser.makeDateFormatters()
 
@@ -45,6 +46,7 @@ public final class CodexUsageEventParser: UsageEventParser {
         inheritedReportedTotal = state?.codexInheritedReportedTotal
         taskStartedTurnIDs = state?.codexTaskStartedTurnIDs ?? []
         isUserFork = state?.codexIsUserFork ?? false
+        serviceTier = state?.codexServiceTier
     }
 
     public func consume(_ line: JSONLLine) {
@@ -66,6 +68,9 @@ public final class CodexUsageEventParser: UsageEventParser {
         let eventModel = payloadModel ?? infoModel
 
         if waitingForTurnContext {
+            if entryType == "thread_settings_applied" || payloadType == "thread_settings_applied" {
+                consumeThreadSettings(payload)
+            }
             if entryType == "turn_context",
                forkedChildTurnStartsOwnSession(turnID: JSONDictionary.string(payload, "turn_id")) {
                 waitingForTurnContext = false
@@ -75,7 +80,7 @@ public final class CodexUsageEventParser: UsageEventParser {
                 if let childSessionId { sessionKey = childSessionId }
                 if let payloadModel { modelName = payloadModel }
                 projectPath = JSONDictionary.string(payload, "cwd") ?? projectPath
-                if let modelName { flushPendingModelEvents(model: modelName) }
+                if let modelName { flushPendingModelEvents(model: billedModelName(base: modelName) ?? modelName) }
                 return
             }
 
@@ -112,12 +117,19 @@ public final class CodexUsageEventParser: UsageEventParser {
         case "session_meta":
             consumeSessionMeta(payload)
 
+        case "thread_settings_applied":
+            consumeThreadSettings(payload)
+
         case "turn_context":
             if let payloadModel { modelName = payloadModel }
             projectPath = JSONDictionary.string(payload, "cwd") ?? projectPath
-            if let modelName { flushPendingModelEvents(model: modelName) }
+            if let modelName { flushPendingModelEvents(model: billedModelName(base: modelName) ?? modelName) }
 
         case "event_msg":
+            if payloadType == "thread_settings_applied" {
+                consumeThreadSettings(payload)
+                return
+            }
             guard isTokenCount, let info, let observedAt = timestamp(in: object) else { return }
             consumeTokenCount(
                 info: info,
@@ -167,7 +179,8 @@ public final class CodexUsageEventParser: UsageEventParser {
                 codexInheritedBaseline: inheritedBaseline,
                 codexInheritedReportedTotal: inheritedReportedTotal,
                 codexTaskStartedTurnIDs: taskStartedTurnIDs,
-                codexIsUserFork: isUserFork
+                codexIsUserFork: isUserFork,
+                codexServiceTier: serviceTier
             )
         )
     }
@@ -277,6 +290,7 @@ public final class CodexUsageEventParser: UsageEventParser {
 
         let resolvedModel = eventModel ?? modelName
         if let resolvedModel { modelName = resolvedModel }
+        let billed = billedModelName(base: resolvedModel)
         let scopeID = forkedFromId ?? sessionKey ?? childSessionId ?? "unknown"
 
         eventSeq += 1
@@ -302,9 +316,9 @@ public final class CodexUsageEventParser: UsageEventParser {
             dedupeScopeKey: "codex:\(scopeID)"
         )
 
-        if let resolvedModel {
-            if !pendingModelEvents.isEmpty { flushPendingModelEvents(model: resolvedModel) }
-            events.append(resolvedEvent(pending, model: resolvedModel))
+        if let billed {
+            if !pendingModelEvents.isEmpty { flushPendingModelEvents(model: billed) }
+            events.append(resolvedEvent(pending, model: billed))
         } else {
             pendingModelEvents.append(pending)
         }
@@ -423,6 +437,21 @@ public final class CodexUsageEventParser: UsageEventParser {
         let key = parts.joined().lowercased()
         guard key.allSatisfy(\.isHexDigit) else { return nil }
         return key
+    }
+
+    private func consumeThreadSettings(_ payload: [String: Any]) {
+        let settings = JSONDictionary.dictionary(payload, "thread_settings") ?? payload
+        if let tier = JSONDictionary.string(settings, "service_tier") {
+            serviceTier = tier
+        }
+    }
+
+    private func billedModelName(base: String?) -> String? {
+        guard let base, !base.isEmpty else { return base }
+        let tier = (serviceTier ?? "").lowercased()
+        guard tier == "fast" || tier == "priority" else { return base }
+        if base.lowercased().hasSuffix("-fast") { return base }
+        return base + "-fast"
     }
 
     private func extractModel(from payload: [String: Any]) -> String? {

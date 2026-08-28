@@ -361,4 +361,79 @@ final class CodexUsageEventParserTests: XCTestCase {
             XCTAssertEqual(error as? LocalAgentParserError, .missingSessionKey)
         }
     }
+
+    func testFastServiceTierAppendsFastSuffix() throws {
+        let settings = #"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"model":"gpt-5.5","service_tier":"fast"}}}"#
+        let token = #"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":900,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":1050}}}}"#
+        let lines = [line(meta, offset: 0), line(turnContext, offset: 1), line(settings, offset: 2), line(token, offset: 3)]
+        let (session, state) = try CodexUsageEventParser.parse(
+            lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
+        )
+        XCTAssertEqual(session.events[0].modelName, "gpt-5.5-fast")
+        XCTAssertEqual(state.codexServiceTier, "fast")
+        XCTAssertEqual(state.modelName, "gpt-5.5", "基础 slug 仍是 turn_context 的值")
+    }
+
+    func testPriorityServiceTierIsFast() throws {
+        let settings = #"{"type":"thread_settings_applied","payload":{"thread_settings":{"service_tier":"priority"}}}"#
+        let token = #"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":1}}}}"#
+        let lines = [line(meta, offset: 0), line(turnContext, offset: 1), line(settings, offset: 2), line(token, offset: 3)]
+        let (session, _) = try CodexUsageEventParser.parse(
+            lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
+        )
+        XCTAssertEqual(session.events[0].modelName, "gpt-5.5-fast")
+    }
+
+    func testDefaultServiceTierKeepsBaseModel() throws {
+        let settings = #"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"service_tier":"default"}}}"#
+        let token = #"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":1}}}}"#
+        let lines = [line(meta, offset: 0), line(turnContext, offset: 1), line(settings, offset: 2), line(token, offset: 3)]
+        let (session, _) = try CodexUsageEventParser.parse(
+            lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
+        )
+        XCTAssertEqual(session.events[0].modelName, "gpt-5.5")
+    }
+
+    func testMissingServiceTierKeepsBaseModel() throws {
+        let token = #"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":1}}}}"#
+        let lines = [line(meta, offset: 0), line(turnContext, offset: 1), line(token, offset: 2)]
+        let (session, state) = try CodexUsageEventParser.parse(
+            lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
+        )
+        XCTAssertEqual(session.events[0].modelName, "gpt-5.5")
+        XCTAssertNil(state.codexServiceTier)
+    }
+
+    func testFastToggleOnlyAffectsLaterEvents() throws {
+        let tokenA = #"{"type":"event_msg","timestamp":"2026-07-08T01:05:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":1}}}}"#
+        let on = #"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"service_tier":"fast"}}}"#
+        let tokenB = #"{"type":"event_msg","timestamp":"2026-07-08T01:06:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":20,"cached_input_tokens":0,"output_tokens":2}}}}"#
+        let off = #"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"service_tier":"default"}}}"#
+        let tokenC = #"{"type":"event_msg","timestamp":"2026-07-08T01:07:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":30,"cached_input_tokens":0,"output_tokens":3}}}}"#
+        let lines = [
+            line(meta, offset: 0), line(turnContext, offset: 1),
+            line(tokenA, offset: 2), line(on, offset: 3),
+            line(tokenB, offset: 4), line(off, offset: 5), line(tokenC, offset: 6)
+        ]
+        let (session, _) = try CodexUsageEventParser.parse(
+            lines: lines, sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"), resuming: nil
+        )
+        XCTAssertEqual(session.events.map(\.modelName), ["gpt-5.5", "gpt-5.5-fast", "gpt-5.5"])
+    }
+
+    func testResumesFastServiceTierFromParserState() throws {
+        let token = #"{"type":"event_msg","timestamp":"2026-07-08T01:06:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":1}}}}"#
+        let previous = ParserState(
+            lastEventSeq: 4,
+            sessionKey: "s1",
+            modelName: "gpt-5.5",
+            codexServiceTier: "fast"
+        )
+        let (session, _) = try CodexUsageEventParser.parse(
+            lines: [line(meta, offset: 0), line(token, offset: 1)],
+            sourceURL: URL(fileURLWithPath: "/tmp/c.jsonl"),
+            resuming: previous
+        )
+        XCTAssertEqual(session.events[0].modelName, "gpt-5.5-fast")
+    }
 }
