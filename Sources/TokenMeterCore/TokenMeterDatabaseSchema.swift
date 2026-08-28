@@ -18,7 +18,8 @@ public enum TokenMeterDatabaseSchema {
     /// 11：新增 DSH（DeepSeek Harness）数据源 + 定价补齐（muse-spark-1.2 等官价、meta 前缀剥离），重建以覆盖 unknown 为 computed
     /// 12：usage_events 加 reported_cost_usd_micros（原始上报价留底）。custom-pricing.json 的
     ///     ignoreReported 会把 reported 行改写成 computed，没有这一列，移除覆盖后原始值不可还原。
-    public static let derivedVersion: Int64 = 12
+    /// 13：Codex Fast 从 service_tier 合成 {base}-fast；OpenCode *-fast 按 API Fast 价重算
+    public static let derivedVersion: Int64 = 13
 
     /// 用户配置。永不删除。这三张表存的是无法从会话文件重建的东西：
     /// - settings：过滤器 / 菜单栏偏好 / 自动刷新间隔
