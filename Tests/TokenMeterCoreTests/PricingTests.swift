@@ -46,6 +46,23 @@ final class PricingTests: XCTestCase {
         }
     }
 
+    func testBundledSnapshotIncludesCodexFastRates() throws {
+        let snapshot = try PricingSnapshot.loadBundled()
+        let solFast = try XCTUnwrap(snapshot.models["gpt-5.6-sol-fast"], "缺 gpt-5.6-sol-fast，OpenCode/Codex Fast 会 unknown")
+        XCTAssertEqual(solFast.inputPerMTok, 8.0)
+        XCTAssertEqual(solFast.outputPerMTok, 40.0)
+        XCTAssertEqual(solFast.cacheReadPerMTok, 0.8)
+        XCTAssertEqual(solFast.cacheWrite5mPerMTok, 10.0)
+        XCTAssertEqual(solFast.cacheWrite1hPerMTok, 10.0)
+
+        let lunaFast = try XCTUnwrap(snapshot.models["gpt-5.6-luna-fast"])
+        XCTAssertEqual(lunaFast.inputPerMTok, 0.4)
+        XCTAssertEqual(lunaFast.outputPerMTok, 2.4)
+
+        let standard = try XCTUnwrap(snapshot.models["gpt-5.6-sol"])
+        XCTAssertNotEqual(standard.inputPerMTok, solFast.inputPerMTok)
+    }
+
     func testEveryBundledModelHasPositiveBasePrices() throws {
         let snapshot = try PricingSnapshot.loadBundled()
         // 转换脚本会跳过没有基础价的条目，快照里不该有零价模型
