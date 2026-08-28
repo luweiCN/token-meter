@@ -95,6 +95,20 @@ final class OpenCodeUsageEventAdapterTests: XCTestCase {
         XCTAssertNil(sessions[0].events[0].reportedCostUSDMicros)
     }
 
+    func testLunaFastWithZeroCostIsPricedFromBundledSnapshot() throws {
+        let database = try makeDatabase()
+        try insert(database, id: "m1", sessionId: "s1", createdMs: 1_000,
+            data: #"{"id":"m1","sessionID":"s1","role":"assistant","modelID":"gpt-5.6-luna-fast","providerID":"openai","cost":0,"time":{"created":1000},"tokens":{"input":1000000,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}"#)
+        let sessions = try OpenCodeUsageEventAdapter(sourceDatabase: database).changedSessions(after: nil)
+        let event = try XCTUnwrap(sessions.first?.events.first)
+        XCTAssertEqual(event.modelName, "gpt-5.6-luna-fast")
+        XCTAssertNil(event.reportedCostUSDMicros)
+
+        let priced = try CostCalculator(snapshot: PricingSnapshot.loadBundled()).cost(for: event)
+        XCTAssertEqual(priced.source, .computed)
+        XCTAssertEqual(priced.micros, 400_000)
+    }
+
     func testPositiveCostIsReported() throws {
         let database = try makeDatabase()
         try insert(database, id: "m1", sessionId: "s1", createdMs: 1_000,
