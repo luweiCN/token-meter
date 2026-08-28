@@ -128,7 +128,15 @@ public enum ProviderSnapshotDiskCache {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(snapshots.filter { !$0.groups.isEmpty })
+        let data = try encoder.encode(snapshots.filter(hasUsableQuota))
         try data.write(to: url, options: .atomic)
+    }
+
+    /// 只认带剩余/已用百分比的额度。`providerErrorSnapshot` 会塞一条无数字的
+    /// 「状态」组，groups 非空但菜单栏画不出环；写进磁盘会把下次启动的缓存毒成空白。
+    static func hasUsableQuota(_ snapshot: ProviderUsageSnapshot) -> Bool {
+        snapshot.groups.contains { group in
+            group.items.contains { $0.usedPercent != nil || $0.remainingPercent != nil }
+        }
     }
 }

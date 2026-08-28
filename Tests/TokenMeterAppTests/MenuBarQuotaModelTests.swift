@@ -319,6 +319,32 @@ final class MenuBarQuotaModelTests: XCTestCase {
         )
         XCTAssertEqual(projection.cells[0].staleMinutes, 12)
         XCTAssertTrue(projection.cells[0].isStale)
+        XCTAssertEqual(projection.cells[0].longWindow.remainingPercent, 55)
+    }
+
+    func testAggregateWorstNumberIncludesStaleLastKnownPercent() {
+        // 查询失败后 fetchedAt 停在上次成功。超过 10 分钟会标 stale，但不能从聚合数字里消失。
+        let fresh = cell("claude-code", short: (96, .ok), long: (55, .ok))
+        let staleGrok = cell("grok", badge: "Grok", mono: "G", short: nil, long: (12, .ok), staleMinutes: 12)
+        let worst = MenuBarQuotaModel.aggregateWorstNumber(cells: [fresh, staleGrok])
+        XCTAssertEqual(worst?.cell.providerId, "grok")
+        XCTAssertEqual(worst?.window.remainingPercent, 12)
+    }
+
+    func testStaleSnapshotStillProjectsMenuBarCellWithLastPercent() {
+        let snapshot = twoWindowSnapshot(
+            "grok", "Grok Build",
+            shortRemaining: 12, longRemaining: 12,
+            fetchedAt: Date(timeIntervalSinceNow: -3_600)
+        )
+        let projection = MenuBarQuotaModel.projection(
+            snapshots: [snapshot],
+            settings: nil,
+            todaySummary: .empty
+        )
+        XCTAssertEqual(projection.cells.count, 1)
+        XCTAssertEqual(projection.cells[0].longWindow.remainingPercent, 12)
+        XCTAssertTrue(projection.cells[0].isStale)
     }
 
     // MARK: - 按家隐藏与尾巴

@@ -165,6 +165,50 @@ final class ProviderSnapshotCacheTests: XCTestCase {
         XCTAssertEqual(merged[0].groups, previous.groups)
     }
 
+    func testKeepsPreviousRemainingWhenFailedRefreshUsesDummyErrorGroup() {
+        // 生产路径 providerErrorSnapshot 会塞一条无百分比的「状态」组，不是空 groups。
+        // 菜单栏环只认 usedPercent；若合并把这条当成新数据，12% 会从菜单栏消失。
+        let previous = ProviderUsageSnapshot(
+            providerId: "grok",
+            displayName: "Grok Build",
+            status: .ok,
+            fetchedAt: Date(timeIntervalSince1970: 100),
+            summary: "7d 12%",
+            message: nil,
+            groups: [
+                UsageGroup(
+                    id: "grok",
+                    title: "Grok Build",
+                    subtitle: nil,
+                    items: [
+                        UsageMetric(
+                            id: "grok-7d",
+                            label: "7d",
+                            kind: .quota,
+                            usedPercent: 88,
+                            remainingPercent: 12,
+                            resetText: "5d",
+                            status: .ok,
+                            detail: nil,
+                            windowDurationMinutes: 10_080
+                        )
+                    ]
+                )
+            ]
+        )
+        let failed = providerErrorSnapshot(
+            providerId: "grok",
+            displayName: "Grok Build",
+            message: "未检测到 Grok 命令行"
+        )
+
+        let merged = ProviderSnapshotCache.merge(previous: [previous], refreshed: [failed])
+
+        XCTAssertEqual(merged[0].status, .warning)
+        XCTAssertEqual(merged[0].groups[0].items[0].remainingPercent, 12)
+        XCTAssertEqual(merged[0].message, "未检测到 Grok 命令行")
+    }
+
     func testKeepsCachedSnapshotDataAcrossRepeatedRefreshFailures() {
         let cachedWarning = ProviderUsageSnapshot(
             providerId: "claude-code",
@@ -294,6 +338,22 @@ final class ProviderSnapshotCacheTests: XCTestCase {
         try ProviderSnapshotDiskCache.write([cachedWarning, pureError], to: cacheURL)
 
         XCTAssertEqual(try ProviderSnapshotDiskCache.read(from: cacheURL), [cachedWarning])
+    }
+
+    func testDoesNotPersistDummyErrorGroupsWithoutPercents() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let cacheURL = directory.appendingPathComponent("snapshots.json")
+        let dummyError = providerErrorSnapshot(
+            providerId: "grok",
+            displayName: "Grok Build",
+            message: "未检测到 Grok 命令行"
+        )
+        XCTAssertFalse(dummyError.groups.isEmpty, "生产 error 快照带占位组，不能靠 groups.isEmpty 过滤")
+
+        try ProviderSnapshotDiskCache.write([dummyError], to: cacheURL)
+
+        XCTAssertEqual(try ProviderSnapshotDiskCache.read(from: cacheURL), [])
     }
 
     func testMergePreservesResetCreditsWhenRefreshFails() {

@@ -52,6 +52,28 @@ final class QuotaDisplayModelTests: XCTestCase {
         XCTAssertEqual(model.bars.map(\.percent), [56.0, 91.0])
     }
 
+    func testWarningStatusStillShowsLastKnownRings() {
+        // 刷新失败后 merge 把 status 标成 warning、组数据沿用上次成功。
+        // 环必须还在，否则菜单栏 compactMap 会把这家整格丢掉。
+        let snapshot = ProviderUsageSnapshot(
+            providerId: "grok",
+            displayName: "Grok Build",
+            status: .warning,
+            fetchedAt: Date(timeIntervalSinceNow: -3_600),
+            summary: "7d 12%",
+            message: "未检测到 Grok 命令行",
+            groups: [
+                UsageGroup(id: "grok", title: "Grok Build", subtitle: nil, items: [
+                    metric(id: "grok-7d", used: 88, windowMinutes: 10_080)
+                ])
+            ]
+        )
+        let model = QuotaDisplayModel(snapshot: snapshot, now: Date())
+        XCTAssertEqual(model.rings.map(\.percent), [12.0])
+        XCTAssertTrue(model.isWarn)
+        XCTAssertEqual(model.staleMinutes, 60)
+    }
+
     /// 智谱主组 5h/7d/MCP 三指标只有前两个有窗口时长（MCP 是次数额度）：
     /// 环只给 5h/7d，MCP 降为水平条、保留 detail（已用/总次数）。
     func testZhipuMcpBecomesBarNotRing() {

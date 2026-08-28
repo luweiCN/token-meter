@@ -144,38 +144,33 @@ struct CellNameText: View {
     }
 }
 
-/// 数字组：双数字各自跟随所属窗口 tone（S0 用户裁定的打磨，推广到全族）；
-/// stale 显示 "—"。分隔点弱化、基线对齐（异色数字 center 对齐有高低错觉）。
+/// 数字组：双数字各自跟随所属窗口 tone（S0 用户裁定的打磨，推广到全族）。
+/// 过期仍显示上次剩余%，只降透明——查询失败不等于额度归零，不能换成 "—"。
+/// 分隔点弱化、基线对齐（异色数字 center 对齐有高低错觉）。
 struct CellNumbersView: View {
     let windows: [MenuBarQuotaModel.Window]
     let isStale: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        if isStale {
-            Text("—")
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundStyle(.tertiary)
-                .fixedSize()
-        } else {
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
-                ForEach(Array(windows.enumerated()), id: \.offset) { index, window in
-                    if index > 0 {
-                        Text("·")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 1.5)
-                    }
-                    Text("\(window.roundedPercent)")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .monospacedDigit()
-                        .foregroundStyle(MenuBarToneColor.color(window.tone))
-                        .fixedSize()
-                        .contentTransition(reduceMotion ? .identity : .numericText())
-                        .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: window.roundedPercent)
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
+            ForEach(Array(windows.enumerated()), id: \.offset) { index, window in
+                if index > 0 {
+                    Text("·")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 1.5)
                 }
+                Text("\(window.roundedPercent)")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(MenuBarToneColor.color(window.tone))
+                    .fixedSize()
+                    .contentTransition(reduceMotion ? .identity : .numericText())
+                    .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: window.roundedPercent)
             }
         }
+        .opacity(isStale ? 0.7 : 1)
     }
 }
 
@@ -447,10 +442,14 @@ struct SentinelView: View {
         case let .stale(minutes):
             HStack(spacing: 4) {
                 MiniBrandLogo(tint: MenuBarToneColor.color(.muted))
-                Text("\(minutes)m")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                    .fixedSize()
+                if let worst = MenuBarQuotaModel.aggregateWorstNumber(cells: projection.cells) {
+                    CellNumbersView(windows: [worst.window], isStale: true)
+                } else {
+                    Text("\(minutes)m")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize()
+                }
             }
             .fixedSize()
         }

@@ -100,9 +100,10 @@ enum MenuBarQuotaModel {
         return .quiet
     }
 
-    /// 聚合样式的组件级最险数字（跳过 stale 家；数字窗口口径）。
+    /// 聚合样式的组件级最险数字（数字窗口口径）。
+    /// 过期家仍计入：查询失败不等于额度归零，菜单栏应继续显示上次剩余%。
     static func aggregateWorstNumber(cells: [Cell]) -> (cell: Cell, window: Window)? {
-        cells.filter { !$0.isStale }
+        cells
             .map { (cell: $0, window: $0.worstNumberWindow) }
             .min { $0.window.remainingPercent < $1.window.remainingPercent }
     }
