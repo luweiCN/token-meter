@@ -197,6 +197,54 @@ final class CostCalculatorTests: XCTestCase {
         XCTAssertEqual(result.source, .unknown)
     }
 
+    private func fastAwareCalculator() -> CostCalculator {
+        func card(_ input: Double, _ output: Double) -> ModelPricing {
+            ModelPricing(
+                inputPerMTok: input, outputPerMTok: output,
+                cacheReadPerMTok: input * 0.1, cacheWrite5mPerMTok: input * 1.25,
+                cacheWrite1hPerMTok: input * 2.0
+            )
+        }
+        let snapshot = PricingSnapshot(
+            snapshotVersion: "test",
+            source: "litellm",
+            models: [
+                "gpt-5.6-sol": card(5.0, 30.0),
+                "gpt-5.6-sol-fast": card(8.0, 40.0),
+                "gpt-5.6-luna-fast": card(0.40, 2.40),
+                "grok-4-fast": card(0.20, 0.50)
+            ]
+        )
+        return CostCalculator(snapshot: snapshot)
+    }
+
+    func testFastModelUsesItsOwnRateNotStandard() {
+        let calc = fastAwareCalculator()
+        let fast = calc.cost(for: event(model: "gpt-5.6-sol-fast", input: 1_000_000))
+        XCTAssertEqual(fast.micros, 8_000_000)
+        XCTAssertEqual(fast.source, .computed)
+        let standard = calc.cost(for: event(model: "gpt-5.6-sol", input: 1_000_000))
+        XCTAssertEqual(standard.micros, 5_000_000)
+    }
+
+    func testOpenCodeLunaFastComputesWhenUnreported() {
+        let result = fastAwareCalculator().cost(for: event(model: "gpt-5.6-luna-fast", input: 1_000_000))
+        XCTAssertEqual(result.micros, 400_000)
+        XCTAssertEqual(result.source, .computed)
+    }
+
+    func testGrokFastKeepsItsOwnPrice() {
+        let result = fastAwareCalculator().cost(for: event(model: "grok-4-fast", input: 1_000_000))
+        XCTAssertEqual(result.micros, 200_000)
+    }
+
+    func testUnknownFastSuffixStaysUnknown() {
+        // 禁止剥 -fast 去借 gpt-5.6-sol。没登记的 Fast 身份就是不知道。
+        let result = fastAwareCalculator().cost(for: event(model: "gpt-5.6-terra-fast", input: 1_000_000))
+        XCTAssertNil(result.micros)
+        XCTAssertEqual(result.source, .unknown)
+    }
+
     func testCanonicalCollisionResolvesToLexicographicallyFirstKey() {
         // 三组撞名，每组四个原始 key，只有字典序最小的那个价格独特。
         //
