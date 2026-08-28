@@ -94,4 +94,15 @@ final class ModelNameNormalizerTests: XCTestCase {
         XCTAssertEqual(ModelNameNormalizer.canonical("claude-opus-4-8-2026010"), "claude-opus-4-8-2026010")
         XCTAssertEqual(ModelNameNormalizer.canonical("claude-opus-4-8-202601011"), "claude-opus-4-8-202601011")
     }
+
+    func testDoesNotStripFastSuffix() {
+        // Fast 改单价，不是 effort。剥掉会把 gpt-5.6-sol-fast 并进 sol，
+        // 也会把真模型 grok-4-fast 错剥成 grok-4。
+        XCTAssertEqual(ModelNameNormalizer.canonical("gpt-5.6-sol-fast"), "gpt-5.6-sol-fast")
+        XCTAssertEqual(ModelNameNormalizer.canonical("gpt-5.6-luna-fast"), "gpt-5.6-luna-fast")
+        XCTAssertEqual(ModelNameNormalizer.canonical("GPT-5.5-Fast"), "gpt-5.5-fast")
+        XCTAssertEqual(ModelNameNormalizer.canonical("codex/gpt-5.6-sol-fast"), "gpt-5.6-sol-fast")
+        XCTAssertEqual(ModelNameNormalizer.canonical("grok-4-fast"), "grok-4-fast")
+        XCTAssertEqual(ModelNameNormalizer.canonical("gpt-5.5-xhigh"), "gpt-5.5")
+    }
 }

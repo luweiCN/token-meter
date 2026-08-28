@@ -158,6 +158,8 @@ final class CostCalculatorTests: XCTestCase {
         XCTAssertEqual(CostCalculator.pricingKeyCanonical("omniroute/cx/gpt-5.5"), "gpt-5.5")
         XCTAssertEqual(CostCalculator.pricingKeyCanonical("claude-3-opus-20240229"), "claude-3-opus")
         XCTAssertEqual(CostCalculator.pricingKeyCanonical("gpt-5.5-xhigh"), "gpt-5.5")
+        XCTAssertEqual(CostCalculator.pricingKeyCanonical("gpt-5.6-sol-fast"), "gpt-5.6-sol-fast")
+        XCTAssertEqual(CostCalculator.pricingKeyCanonical("grok-4-fast"), "grok-4-fast")
     }
 
     func testCacheTiersArePricedSeparately() {

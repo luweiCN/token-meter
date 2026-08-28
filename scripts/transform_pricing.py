@@ -31,6 +31,7 @@ PROVIDER_PREFIXES = (
 
 # 与 Swift 的 ModelNameNormalizer.effortSuffixes 对齐：OmniRoute 网关层的档位别名，
 # 计价按基础模型。-medium/-low 刻意不收（mistral-medium 的 medium 是尺寸不是档位）。
+# -fast 也不收：Fast 改单价；grok-4-fast 是独立产品。
 EFFORT_SUFFIXES = ("-xhigh", "-high")
 
 

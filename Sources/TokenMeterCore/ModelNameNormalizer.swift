@@ -7,6 +7,7 @@ public enum ModelNameNormalizer {
     /// 计价上就是基础模型：档位只改推理 token 用量，不改单价。
     /// 只收数据里实际见过的档位后缀。-medium/-low 刻意不收：
     /// mistral-medium、whisper-medium 的 medium 是尺寸不是档位，剥了就错了。
+    /// -fast 也不收：Codex/OpenCode 的 Fast 改单价；grok-4-fast 是独立产品。
     private static let effortSuffixes = ["-xhigh", "-high"]
 
     public static func canonical(_ raw: String?) -> String {

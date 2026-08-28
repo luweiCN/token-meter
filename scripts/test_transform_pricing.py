@@ -168,6 +168,8 @@ class CanonicalTests(unittest.TestCase):
         self.assertEqual(canonical("omniroute/cx/gpt-5.5"), "gpt-5.5")   # 叠加前缀循环剥离
         self.assertEqual(canonical("gpt-5.5-xhigh"), "gpt-5.5")          # 网关档位别名归一到基础模型
         self.assertEqual(canonical("mistral-medium"), "mistral-medium")  # medium 是尺寸不是档位，不剥
+        self.assertEqual(canonical("gpt-5.6-sol-fast"), "gpt-5.6-sol-fast")  # Fast 不是 effort，不剥
+        self.assertEqual(canonical("grok-4-fast"), "grok-4-fast")
 
 
 class OverrideTests(unittest.TestCase):
