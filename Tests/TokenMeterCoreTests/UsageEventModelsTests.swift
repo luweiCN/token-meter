@@ -61,4 +61,17 @@ final class UsageEventModelsTests: XCTestCase {
         let decoded = try JSONDecoder().decode(ParserState.self, from: data)
         XCTAssertEqual(decoded, state)
     }
+
+    func testParserStateRoundTripsCodexServiceTier() throws {
+        let state = ParserState(lastEventSeq: 1, codexServiceTier: "fast")
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(ParserState.self, from: data)
+        XCTAssertEqual(decoded.codexServiceTier, "fast")
+    }
+
+    func testParserStateMissingCodexServiceTierDecodesAsNil() throws {
+        let json = #"{"lastEventSeq":1,"resumeOffset":0}"#
+        let decoded = try JSONDecoder().decode(ParserState.self, from: Data(json.utf8))
+        XCTAssertNil(decoded.codexServiceTier)
+    }
 }

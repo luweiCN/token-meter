@@ -161,6 +161,8 @@ public struct ParserState: Equatable, Codable {
     public var codexInheritedReportedTotal: Int64?
     public var codexTaskStartedTurnIDs: Set<String>?
     public var codexIsUserFork: Bool?
+    /// Codex Fast：最近一次 `thread_settings.service_tier`。缺 key 的旧 parser_state 当 nil（Standard）。
+    public var codexServiceTier: String?
     /// OpenCode 使用 WAL；主数据库文件不变时，`-wal` 仍可能新增、更新或删除消息。
     /// 保存主库与 WAL 的轻量版本，任一变化都触发完整 SQLite 快照替换。
     public var openCodeStorageRevision: String?
@@ -196,6 +198,7 @@ public struct ParserState: Equatable, Codable {
         codexInheritedReportedTotal: Int64? = nil,
         codexTaskStartedTurnIDs: Set<String>? = nil,
         codexIsUserFork: Bool? = nil,
+        codexServiceTier: String? = nil,
         openCodeStorageRevision: String? = nil,
         grokSawUsage: Bool? = nil,
         resumeOffset: Int64 = 0
@@ -219,6 +222,7 @@ public struct ParserState: Equatable, Codable {
         self.codexInheritedReportedTotal = codexInheritedReportedTotal
         self.codexTaskStartedTurnIDs = codexTaskStartedTurnIDs
         self.codexIsUserFork = codexIsUserFork
+        self.codexServiceTier = codexServiceTier
         self.openCodeStorageRevision = openCodeStorageRevision
         self.grokSawUsage = grokSawUsage
         self.resumeOffset = resumeOffset
