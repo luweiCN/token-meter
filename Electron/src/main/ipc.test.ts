@@ -410,6 +410,21 @@ describe('Electron secure scaffold', () => {
     expect(mockSwiftClient.notifySwift).not.toHaveBeenCalled();
   });
 
+  it('credentials:set stores the key and triggers an immediate non-blocking quota refresh', async () => {
+    mockSwiftClient.notifySwift
+      .mockResolvedValueOnce({ ok: true, result: { hasToken: 'true' } })
+      .mockResolvedValueOnce({ ok: true, result: { status: 'refreshed' } });
+    const credentialsHandler = registerAndFindHandler('credentials:set');
+
+    await expect(credentialsHandler({} as never, 'command-code', 'test-api-key')).resolves.toBe(true);
+
+    expect(mockSwiftClient.notifySwift).toHaveBeenNthCalledWith(1, 'credentials.set', {
+      providerId: 'command-code',
+      token: 'test-api-key'
+    });
+    expect(mockSwiftClient.notifySwift).toHaveBeenNthCalledWith(2, 'quota.refresh');
+  });
+
   it('overview:query reads the assembled payload through OverviewRepository without renderer args', async () => {
     const payload = { dataState: 'needs-reindex' };
     mockOverviewRepository.buildOverview.mockReturnValue(payload);

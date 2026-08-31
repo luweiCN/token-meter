@@ -38,6 +38,15 @@ public enum ProviderConfigLoader {
                     manualUsage: nil
                 ),
                 ProviderConfig(
+                    id: "command-code",
+                    type: .commandCode,
+                    displayName: "Command Code",
+                    enabled: true,
+                    credential: CredentialConfig(environmentVariable: "COMMAND_CODE_API_KEY"),
+                    endpoint: "https://api.commandcode.ai",
+                    manualUsage: nil
+                ),
+                ProviderConfig(
                     id: "zhipu",
                     type: .zhipu,
                     displayName: "智谱",

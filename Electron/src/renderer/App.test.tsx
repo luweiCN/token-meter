@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
@@ -354,6 +354,7 @@ describe('AppShell renderer routes', () => {
   });
 
   afterEach(() => {
+    cleanup();
     vi.restoreAllMocks();
     dismissToast();
     Reflect.deleteProperty(window, 'tokenMeter');
@@ -600,24 +601,26 @@ describe('AppShell renderer routes', () => {
     });
   });
 
-  it('saves an in-app API key to the keychain and can clear it later', async () => {
+  it('saves a Command Code API key to the keychain without requiring its CLI', async () => {
     const user = userEvent.setup();
     api.credentials.state.mockResolvedValue(true);   // 已配置过 → 显示清除按钮
     render(<AppShell />);
     await user.click(screen.getByRole('button', { name: '设置' }));
 
-    const keyInput = await screen.findByLabelText('智谱 GLM API Key');
+    const keyInput = await screen.findByLabelText('Command Code API Key');
+    const providerRow = keyInput.closest('.qprov');
+    if (!(providerRow instanceof HTMLElement)) throw new Error('Command Code provider row missing');
     expect(keyInput.getAttribute('data-slot')).toBe('input');
     await user.type(keyInput, 'sk-test-123');
-    await user.click(screen.getByRole('button', { name: '存入钥匙串' }));
+    await user.click(within(providerRow).getByRole('button', { name: '存入钥匙串' }));
 
     await waitFor(() => {
-      expect(api.credentials.set).toHaveBeenCalledWith('zhipu', 'sk-test-123');
+      expect(api.credentials.set).toHaveBeenCalledWith('command-code', 'sk-test-123');
     });
 
-    await user.click(screen.getByRole('button', { name: '清除' }));
+    await user.click(within(providerRow).getByRole('button', { name: '清除' }));
     await waitFor(() => {
-      expect(api.credentials.set).toHaveBeenCalledWith('zhipu', '');
+      expect(api.credentials.set).toHaveBeenCalledWith('command-code', '');
     });
     expectNoEnglishScaffold();
   });

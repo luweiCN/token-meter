@@ -64,24 +64,24 @@ interface DemoProvider {
   w5: DemoWindow;
   /// null = 单窗家（唯一窗放 w5 之外的语义由 pick 处理；演示数据全双窗，真实端才有单窗）。
   w7: DemoWindow | null;
-  /// 第三窗（OpenCode Go 的月度）；null = 双窗家。
+  /// 第三窗（OpenCode Go / Command Code 的月度）；null = 双窗家。
   w3: DemoWindow | null;
-  stale: boolean;
 }
 
-/// 演示数据（稿 data 口径）：CC 5h62/7d41 · CX 34/18 · 智谱 8/55 · Go 98/100 · Grok 单窗 42 · OMP 过期 12m。
+/// 演示数据（稿 data 口径）：CC 5h62/7d41 · CX 34/18 · 智谱 8/55 · Go 98/100 · Command 75/80/80 · Grok 单窗 42 · OMP 71/30。
 export const PREVIEW_PROVIDERS: DemoProvider[] = [
-  { id: 'claude', short: 'CC', mono: 'C', w5: { p: 62, c: 'ok' }, w7: { p: 41, c: 'ok' }, w3: null, stale: false },
-  { id: 'codex', short: 'CX', mono: 'X', w5: { p: 34, c: 'warn' }, w7: { p: 18, c: 'warn' }, w3: null, stale: false },
-  { id: 'zhipu', short: '智谱', mono: '智', w5: { p: 8, c: 'bad' }, w7: { p: 55, c: 'ok' }, w3: null, stale: false },
-  { id: 'opencodeGo', short: 'Go', mono: 'G', w5: { p: 98, c: 'ok' }, w7: { p: 100, c: 'ok' }, w3: { p: 100, c: 'ok' }, stale: false },
-  { id: 'grok', short: 'Grok', mono: 'G', w5: { p: 42, c: 'ok' }, w7: null, w3: null, stale: false },
-  { id: 'omp', short: 'OMP', mono: 'O', w5: { p: 71, c: 'ok' }, w7: { p: 30, c: 'ok' }, w3: null, stale: true }
+  { id: 'claude', short: 'CC', mono: 'C', w5: { p: 62, c: 'ok' }, w7: { p: 41, c: 'ok' }, w3: null },
+  { id: 'codex', short: 'CX', mono: 'X', w5: { p: 34, c: 'warn' }, w7: { p: 18, c: 'warn' }, w3: null },
+  { id: 'zhipu', short: '智谱', mono: '智', w5: { p: 8, c: 'bad' }, w7: { p: 55, c: 'ok' }, w3: null },
+  { id: 'opencodeGo', short: 'Go', mono: 'G', w5: { p: 98, c: 'ok' }, w7: { p: 100, c: 'ok' }, w3: { p: 100, c: 'ok' } },
+  { id: 'commandCode', short: 'Command', mono: 'M', w5: { p: 75, c: 'ok' }, w7: { p: 80, c: 'ok' }, w3: { p: 80, c: 'ok' } },
+  { id: 'grok', short: 'Grok', mono: 'G', w5: { p: 42, c: 'ok' }, w7: null, w3: null },
+  { id: 'omp', short: 'OMP', mono: 'O', w5: { p: 71, c: 'ok' }, w7: { p: 30, c: 'ok' }, w3: null }
 ];
 
 const COL = {
-  dark: { ok: '#30d158', warn: '#ffd60a', bad: '#ff453a', off: 'rgba(255,255,255,.38)', tr: 'rgba(255,255,255,.16)' },
-  light: { ok: '#1d9a46', warn: '#b48b00', bad: '#d70015', off: 'rgba(0,0,0,.32)', tr: 'rgba(0,0,0,.12)' }
+  dark: { ok: '#30d158', warn: '#ffd60a', bad: '#ff453a', tr: 'rgba(255,255,255,.16)' },
+  light: { ok: '#1d9a46', warn: '#b48b00', bad: '#d70015', tr: 'rgba(0,0,0,.12)' }
 } as const;
 
 const COMPACT: Record<string, true> = { grid: true, sentinel: true, monogram: true, strip: true, tagnum: true, deck2: true };
@@ -144,9 +144,8 @@ function nwins(ctx: CellContext, d: DemoProvider): DemoWindow[] {
   return pick(d, config?.numberWindow ?? 'both', ctx.state.windowOrder, config?.numberWindows);
 }
 
-/// 数字组：stale → "—"；双数字各自染所属窗口色（与 Swift CellNumbersView 同裁定）。
-function Numbers({ d, ws }: { d: DemoProvider; ws: DemoWindow[] }) {
-  if (d.stale) return <span className="pct">—</span>;
+/// 数字组：双数字各自染所属窗口色（与 Swift CellNumbersView 同裁定）。
+function Numbers({ ws }: { ws: DemoWindow[] }) {
   return (
     <span className="pct">
       {ws.map((w, index) => (
@@ -180,9 +179,8 @@ function ringArc(cx: number, cy: number, r: number, pct: number, color: string, 
   );
 }
 
-function windowColor(ctx: CellContext, d: DemoProvider, w: DemoWindow): string {
-  const pal = COL[ctx.mode];
-  return d.stale ? pal.off : pal[w.c];
+function windowColor(ctx: CellContext, w: DemoWindow): string {
+  return COL[ctx.mode][w.c];
 }
 
 /// 单家图形（基础族 + 混合系借用）。
@@ -197,8 +195,8 @@ function Glyph({ ctx, d }: { ctx: CellContext; d: DemoProvider }) {
     return (
       <span className="mbglyph">
         <svg width={17} height={17} viewBox="0 0 17 17">
-          {ringArc(8.5, 8.5, 7, ws[0].p, windowColor(ctx, d, ws[0]), pal.tr, 1.8)}
-          {ws.length > 1 ? ringArc(8.5, 8.5, 4, ws[1].p, windowColor(ctx, d, ws[1]), pal.tr, 1.8) : null}
+          {ringArc(8.5, 8.5, 7, ws[0].p, windowColor(ctx, ws[0]), pal.tr, 1.8)}
+          {ws.length > 1 ? ringArc(8.5, 8.5, 4, ws[1].p, windowColor(ctx, ws[1]), pal.tr, 1.8) : null}
         </svg>
       </span>
     );
@@ -208,7 +206,7 @@ function Glyph({ ctx, d }: { ctx: CellContext; d: DemoProvider }) {
     return (
       <span className="mbglyph">
         <svg width={15} height={15} viewBox="0 0 15 15">
-          {ringArc(7.5, 7.5, 6, w.p, windowColor(ctx, d, w), pal.tr, 2)}
+          {ringArc(7.5, 7.5, 6, w.p, windowColor(ctx, w), pal.tr, 2)}
         </svg>
       </span>
     );
@@ -218,7 +216,7 @@ function Glyph({ ctx, d }: { ctx: CellContext; d: DemoProvider }) {
       <span className="mb-vbars">
         {ws.map((w, index) => (
           <span className="tr" key={index}>
-            <i className={d.stale ? 'g-off' : `g-${w.c}`} style={{ height: `${w.p}%`, opacity: d.stale ? 0.5 : 1 }} />
+            <i className={`g-${w.c}`} style={{ height: `${w.p}%` }} />
           </span>
         ))}
       </span>
@@ -229,7 +227,7 @@ function Glyph({ ctx, d }: { ctx: CellContext; d: DemoProvider }) {
       <span className="mb-hbar">
         {ws.map((w, index) => (
           <span className="tr" key={index} style={ws.length === 1 ? { height: 4 } : undefined}>
-            <i className={d.stale ? 'g-off' : `g-${w.c}`} style={{ width: `${w.p}%`, opacity: d.stale ? 0.5 : 1 }} />
+            <i className={`g-${w.c}`} style={{ width: `${w.p}%` }} />
           </span>
         ))}
       </span>
@@ -239,7 +237,7 @@ function Glyph({ ctx, d }: { ctx: CellContext; d: DemoProvider }) {
     return (
       <span className="mb-dots">
         {ws.map((w, index) => (
-          <i className={d.stale ? 'g-off' : `g-${w.c}`} key={index} />
+          <i className={`g-${w.c}`} key={index} />
         ))}
       </span>
     );
@@ -249,7 +247,7 @@ function Glyph({ ctx, d }: { ctx: CellContext; d: DemoProvider }) {
       <span className="mb-caps">
         {ws.map((w, index) => (
           <span className="c" key={index}>
-            <i className={d.stale ? 'g-off' : `g-${w.c}`} style={{ width: `${w.p}%`, opacity: d.stale ? 0.5 : 1 }} />
+            <i className={`g-${w.c}`} style={{ width: `${w.p}%` }} />
           </span>
         ))}
       </span>
@@ -263,7 +261,7 @@ function Glyph({ ctx, d }: { ctx: CellContext; d: DemoProvider }) {
           return (
             <span className="mb-ticks" key={wi}>
               {Array.from({ length: 5 }, (_, i) => (
-                <i className={i < lit ? `f ${d.stale ? 'g-off' : `g-${w.c}`}` : ''} key={i} />
+                <i className={i < lit ? `f g-${w.c}` : ''} key={i} />
               ))}
             </span>
           );
@@ -298,12 +296,12 @@ function ProviderCell({ ctx, d }: { ctx: CellContext; d: DemoProvider }) {
   if (hybrid) {
     const ws = nwins(ctx, d);
     return (
-      <span className={`mbcell${d.stale ? ' g-off' : ''}`}>
+      <span className="mbcell">
         <Glyph ctx={ctx} d={d} />
         <span className="mb-deck2">
           <span className="u">
             {state.showName ? <b>{d.short}</b> : null}
-            <Numbers d={d} ws={ws} />
+            <Numbers ws={ws} />
           </span>
         </span>
       </span>
@@ -325,10 +323,10 @@ function ProviderCell({ ctx, d }: { ctx: CellContext; d: DemoProvider }) {
   }
 
   return (
-    <span className={`mbcell${d.stale ? ' g-off' : ''}`}>
+    <span className="mbcell">
       {state.showName ? <span className="nm">{d.short}</span> : null}
       {glyphVisible ? <Glyph ctx={ctx} d={d} /> : null}
-      {numberVisible ? <Numbers d={d} ws={numberWs} /> : null}
+      {numberVisible ? <Numbers ws={numberWs} /> : null}
     </span>
   );
 }
@@ -338,12 +336,11 @@ function CompactCell({ ctx, providers }: { ctx: CellContext; providers: DemoProv
   const { state } = ctx;
   const style = state.style;
   const worstNumber = (d: DemoProvider) => worstOf(nwins(ctx, d));
-  const fresh = providers.filter((d) => !d.stale);
-  const worstEntry = fresh.length > 0
-    ? fresh.map((d) => ({ d, w: worstNumber(d) })).reduce((a, b) => (b.w.p < a.w.p ? b : a))
+  const worstEntry = providers.length > 0
+    ? providers.map((d) => ({ d, w: worstNumber(d) })).reduce((a, b) => (b.w.p < a.w.p ? b : a))
     : null;
   const aggregateNumber =
-    state.showNumber && worstEntry !== null ? <Numbers d={worstEntry.d} ws={[worstEntry.w]} /> : null;
+    state.showNumber && worstEntry !== null ? <Numbers ws={[worstEntry.w]} /> : null;
 
   if (style === 'grid') {
     const cols = providers.length === 4 ? 2 : Math.max(1, Math.min(providers.length, 3));
@@ -352,7 +349,7 @@ function CompactCell({ ctx, providers }: { ctx: CellContext; providers: DemoProv
         {state.showName ? LOGO : null}
         <span className="mb-grid4" style={{ gridTemplateColumns: `repeat(${cols}, 5.5px)` }}>
           {providers.map((d) => (
-            <i className={d.stale ? 'g-off' : `g-${worstOf(gwins(ctx, d)).c}`} key={d.id} />
+            <i className={`g-${worstOf(gwins(ctx, d)).c}`} key={d.id} />
           ))}
         </span>
         {aggregateNumber}
@@ -365,11 +362,7 @@ function CompactCell({ ctx, providers }: { ctx: CellContext; providers: DemoProv
         {state.showName ? LOGO : null}
         <span className="mb-strip">
           {providers.map((d) => (
-            <i
-              className={d.stale ? 'g-off' : `g-${worstOf(gwins(ctx, d)).c}`}
-              style={d.stale ? { opacity: 0.55 } : undefined}
-              key={d.id}
-            />
+            <i className={`g-${worstOf(gwins(ctx, d)).c}`} key={d.id} />
           ))}
         </span>
         {aggregateNumber}
@@ -381,7 +374,7 @@ function CompactCell({ ctx, providers }: { ctx: CellContext; providers: DemoProv
       <span className="mbcell">
         <span className="mb-monogram">
           {providers.map((d) => (
-            <b className={`${d.stale ? 'g-off mb-stale' : `g-${worstNumber(d).c}`}`} key={d.id}>
+            <b className={`g-${worstNumber(d).c}`} key={d.id}>
               {d.mono}
             </b>
           ))}
@@ -398,15 +391,7 @@ function CompactCell({ ctx, providers }: { ctx: CellContext; providers: DemoProv
         <span className="mbcell">
           {state.showGlyph ? <span className={cls}>{LOGO}</span> : null}
           {state.showName ? <span className={`nm ${cls}`}>{worstEntry.d.short}</span> : null}
-          {state.showNumber ? <Numbers d={worstEntry.d} ws={[worstEntry.w]} /> : null}
-        </span>
-      );
-    }
-    if (providers.some((d) => d.stale)) {
-      return (
-        <span className="mbcell g-off">
-          {LOGO}
-          <span className="pct">12m</span>
+          {state.showNumber ? <Numbers ws={[worstEntry.w]} /> : null}
         </span>
       );
     }
@@ -418,9 +403,9 @@ function CompactCell({ ctx, providers }: { ctx: CellContext; providers: DemoProv
     <span className="mbcell">
       <span className={cls}>
         {providers.map((d) => (
-          <span className={`u${d.stale ? ' g-off' : ''}`} key={d.id}>
+          <span className="u" key={d.id}>
             {state.showName ? <b>{style === 'tagnum' ? d.mono : d.short}</b> : null}
-            <Numbers d={d} ws={nwins(ctx, d)} />
+            <Numbers ws={nwins(ctx, d)} />
           </span>
         ))}
       </span>

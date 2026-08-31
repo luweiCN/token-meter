@@ -29,8 +29,8 @@ function onlyProviders(...ids: string[]): MenubarPreviewState['providers'] {
 describe('MenubarPreviewBar', () => {
   it('renders one cell per visible provider plus the usage tail for rings', () => {
     const { container } = render(<MenubarPreviewBar mode="dark" state={base} />);
-    // 5 家可见（CC/CX/智谱/Go/Grok，OMP 恒藏）+ 今日尾巴 = 6 个 cell
-    expect(container.querySelectorAll('.mbcell').length).toBe(6);
+    // 6 家可见（CC/CX/智谱/Go/Command/Grok，OMP 恒藏）+ 今日尾巴 = 7 个 cell
+    expect(container.querySelectorAll('.mbcell').length).toBe(7);
     expect(container.querySelectorAll('svg').length).toBeGreaterThan(0);
     expect(screen.getByText('214.8M')).toBeTruthy();
   });
@@ -72,6 +72,25 @@ describe('MenubarPreviewBar', () => {
     // 智谱 5h 剩 8（红）是最险家
     expect(alerting.container.textContent).toContain('智谱');
     expect(alerting.container.textContent).toContain('8');
+  });
+
+  it('keeps last-known quota visuals unchanged instead of previewing a stale state', () => {
+    const digits = render(
+      <MenubarPreviewBar
+        mode="dark"
+        state={{ ...base, style: 'digits', usage: 'off', providers: onlyProviders('omp') }}
+      />
+    );
+    expect(digits.container.textContent).toContain('30·71');
+    expect(digits.container.textContent).not.toContain('—');
+
+    const sentinel = render(
+      <MenubarPreviewBar
+        mode="dark"
+        state={{ ...base, style: 'sentinel', usage: 'off', providers: onlyProviders('omp') }}
+      />
+    );
+    expect(sentinel.container.textContent).not.toContain('12m');
   });
 
   it('renders cost tail and the hidden-all placeholder', () => {

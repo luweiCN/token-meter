@@ -179,7 +179,7 @@ Grok 的桶是**含子集**的：`inputTokens` 含 cache read，`outputTokens` �
 `fetchProviderUsage()` 顺序：
 
 1. 找不到 `grok` 可执行文件 → `providerErrorSnapshot`，文案「未检测到 Grok 命令行」。搜索路径 = Codex 现有列表 **加上** `~/.grok/bin` 与 `$GROK_HOME/bin`（LaunchAgent 的 PATH 只有系统四件套）。
-2. `~/.grok/auth.json` 不存在，或所有条目的 `expires_at` 都已过期 → 「未登录 Grok Build，请运行 grok login」。只检查文件存在与 `expires_at` 字符串，**不把 `key` / `refresh_token` 读进日志或错误文案**。
+2. `~/.grok/auth.json` 不存在，或既没有未过期 access token、也没有 `refresh_token` → 「未登录 Grok Build，请运行 grok login」。access token 已过期但仍有 refresh token 时必须启动 CLI，让 CLI 在无 UI、无既有 Grok 进程的情况下自行续期；TokenMeter 不发送 refresh token，也不把 `key` / `refresh_token` 写进日志或错误文案。
 3. spawn `grok agent --no-leader stdio`（可执行文件用第 1 步找到的绝对路径，避免再依赖 PATH）：
    - stdin 写 JSON-RPC 行：`initialize`（ACP 握手，protocolVersion `"1"`，最小 capabilities）然后 `{"jsonrpc":"2.0","id":2,"method":"x.ai/billing","params":{}}`
    - 读 stdout 行，直到 `id == 2` 的响应
@@ -347,3 +347,9 @@ Electron `LOCAL_AGENT_KIND_ALLOWED` 与 Swift `validateEnabledAgentKinds` 同步
 | 设置 / Electron 名单 | 开关与显示名 | 现有设置页 | 无 |
 
 改 parser 内部拆桶不应迫使额度代码变化；改 billing JSON 路径不应迫使扫描变化。
+
+---
+
+## 7. 参考
+
+- [xAI Grok Build · Authentication](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md)：`auth.json` 复用、后台自动刷新，以及存在 `refresh_token` 时无需重新打开浏览器的 OIDC 静默续期。

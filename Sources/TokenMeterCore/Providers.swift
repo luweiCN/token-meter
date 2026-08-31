@@ -1312,6 +1312,8 @@ public enum ProviderRegistry {
                     return ClaudeCodeUsageProvider(config: providerConfig)
                 case .codex:
                     return CodexUsageProvider(config: providerConfig)
+                case .commandCode:
+                    return CommandCodeUsageProvider(config: providerConfig)
                 case .manual:
                     return ManualUsageProvider(config: providerConfig)
                 case .opencodeGo:
@@ -1586,7 +1588,11 @@ private func credentialToken(_ credential: CredentialConfig?, environment: [Stri
     credentialTokens(credential, environment: environment).first
 }
 
-private func environmentCredentialToken(_ credential: CredentialConfig?, environment: [String: String]) -> String? {
+func environmentCredentialToken(
+    _ credential: CredentialConfig?,
+    environment: [String: String],
+    loginShellValue: (String) -> String? = { LoginShellEnvironment.value(for: $0) }
+) -> String? {
     guard let name = credential?.environmentVariable else {
         return nil
     }
@@ -1597,7 +1603,7 @@ private func environmentCredentialToken(_ credential: CredentialConfig?, environ
 
     // LaunchAgent 拉起的进程看不到用户在 shell 配置里 export 的变量——
     // 起一次用户登录 shell 查询作回退（智谱额度因此断了十天）。
-    return normalizedCredentialToken(LoginShellEnvironment.value(for: name))
+    return normalizedCredentialToken(loginShellValue(name))
 }
 
 /// 从用户登录 shell 读环境变量。每个变量只查一次（成败都缓存）：失败的查询带
@@ -1651,7 +1657,7 @@ private func credentialTokens(_ credential: CredentialConfig?, environment: [Str
     return tokens
 }
 
-private func normalizedCredentialToken(_ value: String?) -> String? {
+func normalizedCredentialToken(_ value: String?) -> String? {
     guard var token = value?.trimmingCharacters(in: .whitespacesAndNewlines),
           !token.isEmpty else {
         return nil

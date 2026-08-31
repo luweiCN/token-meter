@@ -29,6 +29,7 @@ const QUOTA_PROVIDERS: Array<{ id: string; name: string; pill: string; how: stri
   { id: 'claude-code', name: 'Claude Code', pill: '自动接入', how: '自动读取本机登录凭证', src: '钥匙串 · Claude Code-credentials' },
   { id: 'zhipu', name: '智谱 GLM', pill: '环境变量', how: 'API Key · 应用内填写或读取环境变量', src: 'ZHIPU_API_KEY', keyed: true },
   { id: 'opencode-go', name: 'OpenCode Go', pill: '自动接入', how: 'WebView 登录 opencode.ai · 登录态一年有效', src: '~/.config/opencode/opencode-quota/opencode-go.json', login: true },
+  { id: 'command-code', name: 'Command Code', pill: 'API Key', how: 'Studio API Key · 不依赖 Command Code CLI', src: 'COMMAND_CODE_API_KEY · ~/.commandcode/auth.json', keyed: true },
   { id: 'grok', name: 'Grok Build', pill: '自动接入', how: '自动读取本机登录凭证', src: '~/.grok/auth.json' }
 ];
 

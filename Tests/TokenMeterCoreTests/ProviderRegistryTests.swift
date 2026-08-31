@@ -9,6 +9,7 @@ final class ProviderRegistryTests: XCTestCase {
             "codex",
             "claude-code",
             "opencode-go",
+            "command-code",
             "zhipu",
             "grok"
         ])

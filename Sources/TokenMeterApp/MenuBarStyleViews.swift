@@ -39,10 +39,6 @@ enum MenuBarToneColor {
         }
     }
 
-    /// stale 整 cell 灰：图形/数字染色前先过这层。
-    static func display(_ tone: UsageMetricTone, stale: Bool) -> Color {
-        color(stale ? .muted : tone)
-    }
 }
 
 /// 可见服务商的峰谷聚合标识：色点 + 单字，独占菜单栏最右一块。
@@ -145,11 +141,10 @@ struct CellNameText: View {
 }
 
 /// 数字组：双数字各自跟随所属窗口 tone（S0 用户裁定的打磨，推广到全族）。
-/// 过期仍显示上次剩余%，只降透明——查询失败不等于额度归零，不能换成 "—"。
+/// 查询失败时数据层沿用最后一次有效额度，因此这里始终按额度本身渲染。
 /// 分隔点弱化、基线对齐（异色数字 center 对齐有高低错觉）。
 struct CellNumbersView: View {
     let windows: [MenuBarQuotaModel.Window]
-    let isStale: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -170,7 +165,6 @@ struct CellNumbersView: View {
                     .animation(reduceMotion ? nil : .smooth(duration: 0.4), value: window.roundedPercent)
             }
         }
-        .opacity(isStale ? 0.7 : 1)
     }
 }
 
@@ -179,7 +173,6 @@ struct CellNumbersView: View {
 ///（ZStack 亚像素中心在 Retina 下曾渲染出肉眼可见的偏心）。[0] = 外环。
 struct RingsGlyphView: View {
     let windows: [MenuBarQuotaModel.Window]
-    let isStale: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private func ring(_ window: MenuBarQuotaModel.Window, diameter: CGFloat) -> some View {
@@ -188,7 +181,7 @@ struct RingsGlyphView: View {
             Circle()
                 .trim(from: 0, to: window.remainingPercent / 100)
                 .stroke(
-                    MenuBarToneColor.display(window.tone, stale: isStale),
+                    MenuBarToneColor.color(window.tone),
                     style: StrokeStyle(lineWidth: 2, lineCap: .butt)
                 )
                 .rotationEffect(.degrees(-90))
@@ -204,7 +197,6 @@ struct RingsGlyphView: View {
                     if windows.count > 1 { ring(windows[1], diameter: 8) }
                 }
                 .frame(width: 17, height: 17)
-                .opacity(isStale ? 0.7 : 1)
         }
     }
 }
@@ -212,16 +204,14 @@ struct RingsGlyphView: View {
 /// S1 双竖条：3×13pt 底向上填充。
 struct VBarsGlyphView: View {
     let windows: [MenuBarQuotaModel.Window]
-    let isStale: Bool
     var body: some View {
         HStack(alignment: .bottom, spacing: 2) {
             ForEach(Array(windows.enumerated()), id: \.offset) { _, window in
                 ZStack(alignment: .bottom) {
                     RoundedRectangle(cornerRadius: 1).fill(Color.primary.opacity(0.14))
                     RoundedRectangle(cornerRadius: 1)
-                        .fill(MenuBarToneColor.display(window.tone, stale: isStale))
+                        .fill(MenuBarToneColor.color(window.tone))
                         .frame(height: max(1, 13 * window.remainingPercent / 100))
-                        .opacity(isStale ? 0.5 : 1)
                 }
                 .frame(width: 3, height: 13)
             }
@@ -232,16 +222,14 @@ struct VBarsGlyphView: View {
 /// S2 迷你横条：22×3pt 上下叠（顺序 = windowOrder 首位在上），单窗加粗 4pt。
 struct HBarGlyphView: View {
     let windows: [MenuBarQuotaModel.Window]
-    let isStale: Bool
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(Array(windows.enumerated()), id: \.offset) { _, window in
                 ZStack(alignment: .leading) {
                     RoundedRectangle(cornerRadius: 1.5).fill(Color.primary.opacity(0.14))
                     RoundedRectangle(cornerRadius: 1.5)
-                        .fill(MenuBarToneColor.display(window.tone, stale: isStale))
+                        .fill(MenuBarToneColor.color(window.tone))
                         .frame(width: max(1, 22 * window.remainingPercent / 100))
-                        .opacity(isStale ? 0.5 : 1)
                 }
                 .frame(width: 22, height: windows.count == 1 ? 4 : 3)
             }
@@ -252,12 +240,11 @@ struct HBarGlyphView: View {
 /// S4 状态点：6pt 圆点每窗一点。
 struct DotsGlyphView: View {
     let windows: [MenuBarQuotaModel.Window]
-    let isStale: Bool
     var body: some View {
         HStack(spacing: 3) {
             ForEach(Array(windows.enumerated()), id: \.offset) { _, window in
                 Circle()
-                    .fill(MenuBarToneColor.display(window.tone, stale: isStale))
+                    .fill(MenuBarToneColor.color(window.tone))
                     .frame(width: 6, height: 6)
             }
         }
@@ -267,7 +254,6 @@ struct DotsGlyphView: View {
 /// S5 胶囊电池：14×8pt，描边内缩 1pt 填充（借系统电池心智）。
 struct CapsGlyphView: View {
     let windows: [MenuBarQuotaModel.Window]
-    let isStale: Bool
     var body: some View {
         HStack(spacing: 3) {
             ForEach(Array(windows.enumerated()), id: \.offset) { _, window in
@@ -275,10 +261,9 @@ struct CapsGlyphView: View {
                     RoundedRectangle(cornerRadius: 2.5)
                         .strokeBorder(Color.primary.opacity(0.25), lineWidth: 1)
                     RoundedRectangle(cornerRadius: 1.5)
-                        .fill(MenuBarToneColor.display(window.tone, stale: isStale))
+                        .fill(MenuBarToneColor.color(window.tone))
                         .frame(width: max(1, 12 * window.remainingPercent / 100))
                         .padding(1)
-                        .opacity(isStale ? 0.5 : 1)
                 }
                 .frame(width: 14, height: 8)
             }
@@ -289,7 +274,6 @@ struct CapsGlyphView: View {
 /// S6 分段刻度：5 格 2.5×10pt，亮格 = round(p/20) 至少 1（离散刻度读格数不读长度）。
 struct TicksGlyphView: View {
     let windows: [MenuBarQuotaModel.Window]
-    let isStale: Bool
     var body: some View {
         HStack(spacing: 4) {
             ForEach(Array(windows.enumerated()), id: \.offset) { _, window in
@@ -298,7 +282,7 @@ struct TicksGlyphView: View {
                     ForEach(0..<5, id: \.self) { index in
                         RoundedRectangle(cornerRadius: 1)
                             .fill(index < lit
-                                ? MenuBarToneColor.display(window.tone, stale: isStale)
+                                ? MenuBarToneColor.color(window.tone)
                                 : Color.primary.opacity(0.14))
                             .frame(width: 2.5, height: 10)
                     }
@@ -312,7 +296,6 @@ struct TicksGlyphView: View {
 /// 单弧无双环的端点对称问题，round 端点成立。
 struct Ring1GlyphView: View {
     let window: MenuBarQuotaModel.Window
-    let isStale: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         ZStack {
@@ -320,7 +303,7 @@ struct Ring1GlyphView: View {
             Circle()
                 .trim(from: 0, to: window.remainingPercent / 100)
                 .stroke(
-                    MenuBarToneColor.display(window.tone, stale: isStale),
+                    MenuBarToneColor.color(window.tone),
                     style: StrokeStyle(lineWidth: 2, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
@@ -358,21 +341,20 @@ struct GridAggregateView: View {
             LazyVGrid(columns: columns, spacing: 2) {
                 ForEach(projection.cells, id: \.providerId) { cell in
                     Circle()
-                        .fill(MenuBarToneColor.display(cell.worstGlyphWindow.tone, stale: cell.isStale))
+                        .fill(MenuBarToneColor.color(cell.worstGlyphWindow.tone))
                         .frame(width: 5.5, height: 5.5)
                 }
             }
             .fixedSize()
             if projection.showNumber, let worst = MenuBarQuotaModel.aggregateWorstNumber(cells: projection.cells) {
-                CellNumbersView(windows: [worst.window], isStale: false)
+                CellNumbersView(windows: [worst.window])
             }
         }
         .fixedSize()
     }
 }
 
-/// S11 堆叠条：每家一段 6×13pt、1pt 缝，段色 = 家级最险（图形窗口口径）；
-/// stale 段降透明区分「灰」与「没数据」。
+/// S11 堆叠条：每家一段 6×13pt、1pt 缝，段色 = 家级最险（图形窗口口径）。
 struct StripAggregateView: View {
     let projection: MenuBarQuotaModel.MenuBarProjection
     var body: some View {
@@ -381,22 +363,20 @@ struct StripAggregateView: View {
             HStack(spacing: 1) {
                 ForEach(projection.cells, id: \.providerId) { cell in
                     Rectangle()
-                        .fill(MenuBarToneColor.display(cell.worstGlyphWindow.tone, stale: cell.isStale))
+                        .fill(MenuBarToneColor.color(cell.worstGlyphWindow.tone))
                         .frame(width: 6, height: 13)
-                        .opacity(cell.isStale ? 0.55 : 1)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 3))
             if projection.showNumber, let worst = MenuBarQuotaModel.aggregateWorstNumber(cells: projection.cells) {
-                CellNumbersView(windows: [worst.window], isStale: false)
+                CellNumbersView(windows: [worst.window])
             }
         }
         .fixedSize()
     }
 }
 
-/// S10 字母色徽：单字符警戒色染字（名称即图形即状态），stale 加删除线
-///（色彩之外的第二编码，色盲安全）。
+/// S10 字母色徽：单字符警戒色染字（名称即图形即状态）。
 struct MonogramAggregateView: View {
     let projection: MenuBarQuotaModel.MenuBarProjection
     var body: some View {
@@ -405,13 +385,12 @@ struct MonogramAggregateView: View {
                 ForEach(projection.cells, id: \.providerId) { cell in
                     Text(cell.mono)
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(MenuBarToneColor.display(cell.worstNumberWindow.tone, stale: cell.isStale))
-                        .strikethrough(cell.isStale, color: MenuBarToneColor.color(.muted))
+                        .foregroundStyle(MenuBarToneColor.color(cell.worstNumberWindow.tone))
                         .fixedSize()
                 }
             }
             if projection.showNumber, let worst = MenuBarQuotaModel.aggregateWorstNumber(cells: projection.cells) {
-                CellNumbersView(windows: [worst.window], isStale: false)
+                CellNumbersView(windows: [worst.window])
             }
         }
         .fixedSize()
@@ -419,7 +398,7 @@ struct MonogramAggregateView: View {
 }
 
 /// S9 哨兵：quiet = 单色 logo（史上最窄常态）；alert = 最险家（logo 染色 +
-/// 短名 + 数字，各随元素开关）；stale = 灰 logo + 未更新分钟数。
+/// 完整显示名 + 数字，各随元素开关）。刷新异常由弹窗承载，不改变菜单栏状态。
 struct SentinelView: View {
     let projection: MenuBarQuotaModel.MenuBarProjection
     var body: some View {
@@ -436,20 +415,7 @@ struct SentinelView: View {
                         .foregroundStyle(tint)
                         .fixedSize()
                 }
-                if projection.showNumber { CellNumbersView(windows: [window], isStale: false) }
-            }
-            .fixedSize()
-        case let .stale(minutes):
-            HStack(spacing: 4) {
-                MiniBrandLogo(tint: MenuBarToneColor.color(.muted))
-                if let worst = MenuBarQuotaModel.aggregateWorstNumber(cells: projection.cells) {
-                    CellNumbersView(windows: [worst.window], isStale: true)
-                } else {
-                    Text("\(minutes)m")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                        .fixedSize()
-                }
+                if projection.showNumber { CellNumbersView(windows: [window]) }
             }
             .fixedSize()
         }
@@ -460,7 +426,7 @@ struct SentinelView: View {
 struct DeckUnitView: View {
     let cell: MenuBarQuotaModel.Cell
     let projection: MenuBarQuotaModel.MenuBarProjection
-    /// tagnum 用单字符、deck2/混合系用短名；nil = 名称关闭（裸数字位序）。
+    /// tagnum 用单字符、deck2/混合系用完整显示名；nil = 名称关闭（裸数字位序）。
     let nameText: String?
 
     var body: some View {
@@ -471,7 +437,7 @@ struct DeckUnitView: View {
                     .foregroundStyle(MenuBarToneColor.text)
                     .fixedSize()
             }
-            CellNumbersView(windows: cell.numberWindows(order: projection.windowOrder), isStale: cell.isStale)
+            CellNumbersView(windows: cell.numberWindows(order: projection.windowOrder))
         }
         .fixedSize()
     }
@@ -491,7 +457,7 @@ struct TagnumAggregateView: View {
                             .foregroundStyle(MenuBarToneColor.text)
                             .fixedSize()
                     }
-                    CellNumbersView(windows: cell.numberWindows(order: projection.windowOrder), isStale: cell.isStale)
+                    CellNumbersView(windows: cell.numberWindows(order: projection.windowOrder))
                 }
             }
         }
@@ -523,12 +489,12 @@ struct HybridCellView: View {
         HStack(spacing: 3) {
             if projection.style == .ringdeck {
                 if glyphWindows.count > 1 {
-                    RingsGlyphView(windows: glyphWindows, isStale: cell.isStale)
+                    RingsGlyphView(windows: glyphWindows)
                 } else {
-                    Ring1GlyphView(window: glyphWindows[0], isStale: cell.isStale)
+                    Ring1GlyphView(window: glyphWindows[0])
                 }
             } else {
-                VBarsGlyphView(windows: glyphWindows, isStale: cell.isStale)
+                VBarsGlyphView(windows: glyphWindows)
             }
             DeckUnitView(cell: cell, projection: projection, nameText: projection.showName ? cell.badge : nil)
         }
@@ -567,18 +533,18 @@ struct BasicStyleCellView: View {
             if projection.showName { CellNameText(badge: cell.badge) }
             if projection.showGlyph {
                 switch projection.style {
-                case .rings: RingsGlyphView(windows: glyphWindows, isStale: cell.isStale)
-                case .vbars: VBarsGlyphView(windows: glyphWindows, isStale: cell.isStale)
-                case .hbar: HBarGlyphView(windows: glyphWindows, isStale: cell.isStale)
-                case .dots: DotsGlyphView(windows: glyphWindows, isStale: cell.isStale)
-                case .caps: CapsGlyphView(windows: glyphWindows, isStale: cell.isStale)
-                case .ticks: TicksGlyphView(windows: glyphWindows, isStale: cell.isStale)
-                case .ring1: Ring1GlyphView(window: glyphWindows[0], isStale: cell.isStale)
+                case .rings: RingsGlyphView(windows: glyphWindows)
+                case .vbars: VBarsGlyphView(windows: glyphWindows)
+                case .hbar: HBarGlyphView(windows: glyphWindows)
+                case .dots: DotsGlyphView(windows: glyphWindows)
+                case .caps: CapsGlyphView(windows: glyphWindows)
+                case .ticks: TicksGlyphView(windows: glyphWindows)
+                case .ring1: Ring1GlyphView(window: glyphWindows[0])
                 default: EmptyView()
                 }
             }
             if projection.showNumber && !numberSuppressed {
-                CellNumbersView(windows: numberWindows, isStale: cell.isStale)
+                CellNumbersView(windows: numberWindows)
             }
         }
         .fixedSize()

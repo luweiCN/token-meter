@@ -60,6 +60,28 @@ final class GrokUsageProviderTests: XCTestCase {
         XCTAssertFalse(snapshot.message?.contains("eyJ") == true)
     }
 
+    func testExpiredAccessTokenWithRefreshTokenStillLetsCLIRefreshLogin() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("grok-refresh-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let json = """
+        {"https://auth.x.ai::abc":{"key":"expired-access","refresh_token":"refreshable","expires_at":"2020-01-01T00:00:00Z"}}
+        """
+        try Data(json.utf8).write(to: home.appendingPathComponent("auth.json"))
+        let provider = GrokUsageProvider(
+            config: config(),
+            grokHome: home,
+            grokExecutable: { "/usr/bin/true" },
+            now: { ISO8601DateFormatter().date(from: "2026-08-26T00:00:00Z")! },
+            fetchBilling: { Data(#"{"creditUsagePercent":17}"#.utf8) }
+        )
+
+        let snapshot = await provider.fetchProviderUsage()
+
+        XCTAssertEqual(snapshot.status, .ok)
+        XCTAssertEqual(snapshot.groups.first?.items.first?.usedPercent, 17)
+    }
+
     func testUsableAuthParsesBillingViaInjectedFetch() async throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("grok-auth-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)

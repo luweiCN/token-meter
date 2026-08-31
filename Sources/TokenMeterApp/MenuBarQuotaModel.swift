@@ -15,24 +15,21 @@ enum MenuBarQuotaModel {
 
     struct Cell: Equatable {
         let providerId: String
-        /// 品牌短名（displayName 首词：「Claude」「Codex」「智谱」——缩写认不出是谁，用户裁定）。
+        /// 用户配置的完整显示名；空格属于名称内容，不能在投影层隐式截断。
         let badge: String
         /// 单字符标（monogram/tagnum 用，全组去重后注入）。
         let mono: String
         /// 短窗（5h 类）；单窗家为 nil——唯一窗恒放 longWindow（沿现状「last = 最长窗」口径）。
         let shortWindow: Window?
         let longWindow: Window
-        /// 全部窗口（OpenCode Go 的 5h/周/月三只平级）；双窗家与 short+long 同构。
+        /// 全部窗口（OpenCode Go / Command Code 的 5h/周/月三只平级）；双窗家与 short+long 同构。
         let allWindows: [Window]
-        /// 快照超时分钟数（QuotaDisplayModel 口径：≥10 分钟才非 nil）。
-        let staleMinutes: Int?
         let glyphChoice: MenuBarWindowChoice
         let numberChoice: MenuBarWindowChoice
         /// 多选窗口标签（设置页新交互，优先于 choice）：按 label 在全部窗口里筛选。
         let glyphWindowLabels: [String]?
         let numberWindowLabels: [String]?
 
-        var isStale: Bool { staleMinutes != nil }
         var isSingleWindow: Bool { shortWindow == nil }
 
         /// 窗口展开：多选标签优先（按 label 匹配全部窗口）；否则单窗家恒取唯一窗，
@@ -74,16 +71,14 @@ enum MenuBarQuotaModel {
             ?? Window(label: "", remainingPercent: 0, tone: .muted)
     }
 
-    /// 哨兵样式的组件级状态（spec §3：红 > 黄 > 灰过期 > 安静）。
+    /// 哨兵样式的组件级状态（spec §3：红 > 黄 > 安静）。
     enum SentinelState: Equatable {
         case quiet
         case alert(cell: Cell, window: Window)
-        case stale(minutes: Int)
     }
 
     static func sentinelState(cells: [Cell]) -> SentinelState {
-        let fresh = cells.filter { !$0.isStale }
-        let alerts = fresh
+        let alerts = cells
             .map { (cell: $0, window: $0.worstNumberWindow) }
             .filter { $0.window.tone == .bad || $0.window.tone == .warning }
         if let hit = alerts.min(by: { lhs, rhs in
@@ -94,14 +89,11 @@ enum MenuBarQuotaModel {
         }) {
             return .alert(cell: hit.cell, window: hit.window)
         }
-        if let minutes = cells.compactMap(\.staleMinutes).max() {
-            return .stale(minutes: minutes)
-        }
         return .quiet
     }
 
     /// 聚合样式的组件级最险数字（数字窗口口径）。
-    /// 过期家仍计入：查询失败不等于额度归零，菜单栏应继续显示上次剩余%。
+    /// 缓存家仍计入：查询失败不等于额度归零，菜单栏应继续显示上次剩余%。
     static func aggregateWorstNumber(cells: [Cell]) -> (cell: Cell, window: Window)? {
         cells
             .map { (cell: $0, window: $0.worstNumberWindow) }
@@ -139,7 +131,7 @@ enum MenuBarQuotaModel {
         return (name, glyph, number)
     }
 
-    /// 文字样式的超宽降级（spec §2）：CJK 短名 + 双窗数字 + 名称开启 → 数字降最险单窗。
+    /// 文字样式的超宽降级（spec §2）：CJK 名称 + 双窗数字 + 名称开启 → 数字降最险单窗。
     /// both 与 all（三窗家）同属多窗口径，都触发降级。
     static func numbersDegradeToWorst(style: MenuBarStyleId, cell: Cell, showName: Bool) -> Bool {
         guard style == .digits, showName, !cell.isSingleWindow,
@@ -147,12 +139,12 @@ enum MenuBarQuotaModel {
         return cell.badge.unicodeScalars.contains { $0.value >= 0x4E00 && $0.value <= 0x9FFF }
     }
 
-    /// 单字符标去重：依序取短名第一个未被占用的字符，全占用回落首字符。
+    /// 单字符标去重：依序取名称第一个未被占用的非空白字符，全占用回落首字符。
     /// [CC, CX, 智谱, OMP] → [C, X, 智, O]（与设计稿 MONO_CH 一致）。
     static func monograms(for badges: [String]) -> [String] {
         var used = Set<String>()
         return badges.map { badge in
-            let chars = badge.map(String.init)
+            let chars = badge.filter { !$0.isWhitespace }.map(String.init)
             let pick = chars.first { !used.contains($0) } ?? chars.first ?? "?"
             used.insert(pick)
             return pick
@@ -204,21 +196,18 @@ enum MenuBarQuotaModel {
             let providerOverride = override(snapshot.providerId)
             guard providerOverride?.showInMenuBar ?? true else { return nil }
             let model = QuotaDisplayModel(snapshot: snapshot, now: now)
-            let windows = model.rings.map {
+            let windows = model.menuBarWindows.map {
                 Window(label: $0.label, remainingPercent: $0.percent, tone: $0.tone)
             }
             guard let longWindow = windows.last else { return nil }
-            let shortName = snapshot.displayName.split(separator: " ").first.map(String.init)
-                ?? snapshot.displayName
             return Cell(
                 providerId: snapshot.providerId,
-                badge: shortName,
+                badge: snapshot.displayName,
                 mono: "",
                 shortWindow: windows.count > 1 ? windows.first : nil,
                 longWindow: longWindow,
                 allWindows: windows,
-                staleMinutes: model.staleMinutes,
-                // 默认 all：三窗家（OpenCode Go）菜单栏平级全显；双窗家 all 与 both 同构。
+                // 默认 all：三窗家（OpenCode Go / Command Code）菜单栏平级全显；双窗家 all 与 both 同构。
                 glyphChoice: providerOverride?.menuBarGlyphWindow ?? .all,
                 numberChoice: providerOverride?.menuBarNumberWindow ?? .all,
                 glyphWindowLabels: providerOverride?.menuBarGlyphWindows,
@@ -234,7 +223,6 @@ enum MenuBarQuotaModel {
                 shortWindow: cell.shortWindow,
                 longWindow: cell.longWindow,
                 allWindows: cell.allWindows,
-                staleMinutes: cell.staleMinutes,
                 glyphChoice: cell.glyphChoice,
                 numberChoice: cell.numberChoice,
                 glyphWindowLabels: cell.glyphWindowLabels,

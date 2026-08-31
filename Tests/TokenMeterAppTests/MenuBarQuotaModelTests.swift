@@ -86,7 +86,6 @@ final class MenuBarQuotaModelTests: XCTestCase {
         short: (Double, UsageMetricTone)? = nil,
         long: (Double, UsageMetricTone),
         all: [(Double, UsageMetricTone)]? = nil,
-        staleMinutes: Int? = nil,
         glyphChoice: MenuBarWindowChoice = .all,
         numberChoice: MenuBarWindowChoice = .all
     ) -> MenuBarQuotaModel.Cell {
@@ -108,7 +107,6 @@ final class MenuBarQuotaModelTests: XCTestCase {
             shortWindow: short.map { MenuBarQuotaModel.Window(label: "5h", remainingPercent: $0.0, tone: $0.1) },
             longWindow: MenuBarQuotaModel.Window(label: "7d", remainingPercent: long.0, tone: long.1),
             allWindows: allWindows,
-            staleMinutes: staleMinutes,
             glyphChoice: glyphChoice,
             numberChoice: numberChoice,
             glyphWindowLabels: nil,
@@ -148,12 +146,49 @@ final class MenuBarQuotaModelTests: XCTestCase {
 
         XCTAssertEqual(projection.cells.count, 1)
         XCTAssertEqual(projection.cells[0].providerId, "claude-code")
-        // 短名 = displayName 首词:菜单栏里「Cl/Co」认不出是谁(用户裁定)。
-        XCTAssertEqual(projection.cells[0].badge, "Claude")
+        XCTAssertEqual(projection.cells[0].badge, "Claude Code")
         XCTAssertEqual(projection.cells[0].shortWindow?.label, "5h")
         XCTAssertEqual(projection.cells[0].shortWindow?.remainingPercent, 64.0)
         XCTAssertEqual(projection.cells[0].longWindow.label, "7d")
         XCTAssertEqual(projection.cells[0].longWindow.remainingPercent, 95.0)
+    }
+
+    func testProjectionPreservesWhitespaceSeparatedCustomDisplayName() {
+        let customName = "智谱 HTTP"
+        let projection = MenuBarQuotaModel.projection(
+            snapshots: [
+                snapshot("zhipu-http", customName, groups: [
+                    UsageGroup(id: "zhipu-http", title: customName, subtitle: nil, items: [
+                        metric(id: "zhipu-http-7d", used: 20, windowMinutes: 10_080)
+                    ])
+                ])
+            ],
+            settings: nil,
+            todaySummary: .empty
+        )
+
+        XCTAssertEqual(projection.cells.first?.badge, customName)
+    }
+
+    func testProjectionKeepsMonthlyWindowForMenuBarSelection() {
+        let commandCode = snapshot("command-code", "Command Code", groups: [
+            UsageGroup(id: "command-code", title: "Command Code", subtitle: nil, items: [
+                metric(id: "command-code-5h", used: 25, windowMinutes: 300),
+                metric(id: "command-code-7d", used: 20, windowMinutes: 10_080),
+                metric(id: "command-code-30d", used: 10, windowMinutes: 43_200)
+            ])
+        ])
+
+        let projection = MenuBarQuotaModel.projection(
+            snapshots: [commandCode],
+            settings: nil,
+            todaySummary: .empty
+        )
+
+        let cell = projection.cells[0]
+        XCTAssertEqual(cell.allWindows.map(\.label), ["5h", "7d", "30d"])
+        XCTAssertEqual(cell.numberWindows(order: .shortFirst).map(\.roundedPercent), [75, 80, 90])
+        XCTAssertEqual(cell.longWindow.label, "30d")
     }
 
     /// Codex 已取消 5h:主组只剩 7d 一个窗口,唯一窗恒放 longWindow。
@@ -275,15 +310,15 @@ final class MenuBarQuotaModelTests: XCTestCase {
         )
         // 全占用回落首字符
         XCTAssertEqual(MenuBarQuotaModel.monograms(for: ["A", "A"]), ["A", "A"])
+        XCTAssertEqual(MenuBarQuotaModel.monograms(for: ["A", "A B"]), ["A", "B"])
     }
 
-    // MARK: - 哨兵三态
+    // MARK: - 哨兵状态
 
-    func testSentinelQuietAlertAndStale() {
+    func testSentinelQuietAndAlert() {
         let green = cell("claude-code", short: (96, .ok), long: (55, .ok))
         let warn = cell("codex", badge: "CX", mono: "X", short: (34, .warning), long: (18, .warning))
         let bad = cell("zhipu", badge: "智谱", mono: "智", short: (8, .bad), long: (55, .ok))
-        let stale12 = cell("omp", badge: "OMP", mono: "O", short: nil, long: (71, .ok), staleMinutes: 12)
 
         XCTAssertEqual(MenuBarQuotaModel.sentinelState(cells: [green]), .quiet)
 
@@ -293,14 +328,9 @@ final class MenuBarQuotaModelTests: XCTestCase {
         } else {
             XCTFail("expected alert")
         }
-
-        XCTAssertEqual(
-            MenuBarQuotaModel.sentinelState(cells: [green, stale12]),
-            .stale(minutes: 12)
-        )
     }
 
-    // MARK: - 超宽降级与 stale
+    // MARK: - 超宽降级与旧值保留
 
     func testDigitsCJKDualDegradesToWorst() {
         let zhipu = cell("zhipu", badge: "智谱", mono: "智", short: (8, .bad), long: (55, .ok))
@@ -311,27 +341,24 @@ final class MenuBarQuotaModelTests: XCTestCase {
         XCTAssertFalse(MenuBarQuotaModel.numbersDegradeToWorst(style: .rings, cell: zhipu, showName: true))
     }
 
-    func testStaleCellCarriesMinutes() {
+    func testOldSnapshotStillCarriesLastKnownPercent() {
         let projection = MenuBarQuotaModel.projection(
             snapshots: [twoWindowSnapshot(shortRemaining: 96, longRemaining: 55, fetchedAt: Date(timeIntervalSinceNow: -720))],
             settings: nil,
             todaySummary: .empty
         )
-        XCTAssertEqual(projection.cells[0].staleMinutes, 12)
-        XCTAssertTrue(projection.cells[0].isStale)
         XCTAssertEqual(projection.cells[0].longWindow.remainingPercent, 55)
     }
 
-    func testAggregateWorstNumberIncludesStaleLastKnownPercent() {
-        // 查询失败后 fetchedAt 停在上次成功。超过 10 分钟会标 stale，但不能从聚合数字里消失。
+    func testAggregateWorstNumberIncludesLastKnownPercent() {
         let fresh = cell("claude-code", short: (96, .ok), long: (55, .ok))
-        let staleGrok = cell("grok", badge: "Grok", mono: "G", short: nil, long: (12, .ok), staleMinutes: 12)
-        let worst = MenuBarQuotaModel.aggregateWorstNumber(cells: [fresh, staleGrok])
+        let cachedGrok = cell("grok", badge: "Grok", mono: "G", short: nil, long: (12, .ok))
+        let worst = MenuBarQuotaModel.aggregateWorstNumber(cells: [fresh, cachedGrok])
         XCTAssertEqual(worst?.cell.providerId, "grok")
         XCTAssertEqual(worst?.window.remainingPercent, 12)
     }
 
-    func testStaleSnapshotStillProjectsMenuBarCellWithLastPercent() {
+    func testOldSnapshotStillProjectsMenuBarCellWithLastPercent() {
         let snapshot = twoWindowSnapshot(
             "grok", "Grok Build",
             shortRemaining: 12, longRemaining: 12,
@@ -344,7 +371,40 @@ final class MenuBarQuotaModelTests: XCTestCase {
         )
         XCTAssertEqual(projection.cells.count, 1)
         XCTAssertEqual(projection.cells[0].longWindow.remainingPercent, 12)
-        XCTAssertTrue(projection.cells[0].isStale)
+    }
+
+    func testFailedRefreshLeavesMenuBarCellsUnchanged() {
+        let lastSuccess = twoWindowSnapshot(
+            "grok", "Grok Build",
+            shortRemaining: 82, longRemaining: 41,
+            fetchedAt: Date(timeIntervalSince1970: 100)
+        )
+        let failedRefresh = ProviderUsageSnapshot(
+            providerId: "grok",
+            displayName: "Grok Build",
+            status: .error,
+            fetchedAt: Date(timeIntervalSince1970: 4_000),
+            summary: nil,
+            message: "额度接口暂时不可用",
+            groups: []
+        )
+        let merged = ProviderSnapshotCache.merge(previous: [lastSuccess], refreshed: [failedRefresh])
+
+        let beforeFailure = MenuBarQuotaModel.projection(
+            snapshots: [lastSuccess],
+            settings: nil,
+            todaySummary: .empty,
+            now: Date(timeIntervalSince1970: 200)
+        )
+        let afterFailure = MenuBarQuotaModel.projection(
+            snapshots: merged,
+            settings: nil,
+            todaySummary: .empty,
+            now: Date(timeIntervalSince1970: 4_000)
+        )
+
+        XCTAssertEqual(afterFailure.cells, beforeFailure.cells)
+        XCTAssertEqual(QuotaDisplayModel(snapshot: merged[0], now: Date(timeIntervalSince1970: 4_000)).staleMinutes, 65)
     }
 
     // MARK: - 按家隐藏与尾巴

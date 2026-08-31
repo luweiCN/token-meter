@@ -3,6 +3,7 @@ import Foundation
 public enum ProviderType: String, Codable, Equatable {
     case claudeCode
     case codex
+    case commandCode
     case manual
     case opencodeGo
     case opencodeSQLite

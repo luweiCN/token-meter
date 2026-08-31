@@ -7,36 +7,55 @@ enum GrokAuth {
         bearerToken(authURL: authURL, now: now) != nil
     }
 
+    /// Grok CLI 能用 refresh_token 在无 UI、无既有 Grok 进程时续期 access token。
+    /// TokenMeter 只判断是否值得启动 CLI，不读取或自行发送 refresh token。
+    static func canAuthenticateWithCLI(authURL: URL, now: Date) -> Bool {
+        let entries = preferredEntries(authURL: authURL)
+        return usableEntry(in: entries, now: now) != nil
+            || entries.contains { nonEmptyString($0["refresh_token"]) != nil }
+    }
+
     static func bearerToken(authURL: URL, now: Date) -> String? {
         usableEntry(authURL: authURL, now: now).flatMap { entry in
-            (entry["key"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            nonEmptyString(entry["key"])
         }
     }
 
     static func userId(authURL: URL, now: Date) -> String? {
         usableEntry(authURL: authURL, now: now).flatMap { entry in
-            (entry["user_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            nonEmptyString(entry["user_id"])
         }
     }
 
     private static func usableEntry(authURL: URL, now: Date) -> [String: Any]? {
-        guard let data = try? Data(contentsOf: authURL),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              !object.isEmpty else { return nil }
+        usableEntry(in: preferredEntries(authURL: authURL), now: now)
+    }
+
+    private static func usableEntry(in entries: [[String: Any]], now: Date) -> [String: Any]? {
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let plain = ISO8601DateFormatter()
-        let preferred = object.keys.sorted { lhs, rhs in
-            lhs.contains("auth.x.ai") && !rhs.contains("auth.x.ai")
-        }
-        for key in preferred {
-            guard let entry = object[key] as? [String: Any] else { continue }
+        for entry in entries {
             guard let raw = entry["expires_at"] as? String else { return entry }
             let expiry = fractional.date(from: raw) ?? plain.date(from: raw)
             if expiry == nil { return entry }
             if let expiry, expiry > now { return entry }
         }
         return nil
+    }
+
+    private static func preferredEntries(authURL: URL) -> [[String: Any]] {
+        guard let data = try? Data(contentsOf: authURL),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              !object.isEmpty else { return [] }
+        let preferred = object.keys.sorted { lhs, rhs in
+            lhs.contains("auth.x.ai") && !rhs.contains("auth.x.ai")
+        }
+        return preferred.compactMap { object[$0] as? [String: Any] }
+    }
+
+    private static func nonEmptyString(_ value: Any?) -> String? {
+        (value as? String).flatMap { $0.isEmpty ? nil : $0 }
     }
 }
 
@@ -107,7 +126,7 @@ public struct GrokUsageProvider: UsageProvider {
         }
 
         let authURL = grokHome.appendingPathComponent("auth.json")
-        guard GrokAuth.isUsable(authURL: authURL, now: now()) else {
+        guard GrokAuth.canAuthenticateWithCLI(authURL: authURL, now: now()) else {
             return loginErrorSnapshot()
         }
 

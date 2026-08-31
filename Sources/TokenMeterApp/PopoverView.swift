@@ -1250,6 +1250,8 @@ struct QuotaDisplayModel {
     let summarySegments: [SummarySegment]
     let alertMessage: String?
     let alertTime: String?
+    /// 菜单栏可选的主额度时间窗口；与弹窗环位分开，包含 30d 等长周期。
+    let menuBarWindows: [Ring]
     let rings: [Ring]
     let bars: [Bar]
     let resetCredits: ResetCreditSummary?
@@ -1292,22 +1294,6 @@ struct QuotaDisplayModel {
         //   资格线因此必须是绝对阈值而非相对排名：只剩两只候选时「前二」仍会把月窗收进来。
         // - 无窗口时长的额度（智谱 MCP 这类按次计）永远是条，不进环。
         let percentMetrics = labeledMetrics.filter { $0.metric.usedPercent != nil }
-        let ringMetrics = Array(
-            percentMetrics
-                .filter { entry in
-                    guard entry.isPrimary, let window = entry.metric.windowDurationMinutes else { return false }
-                    return window <= Self.ringWindowCeilingMinutes
-                }
-                .enumerated()
-                .sorted { lhs, rhs in
-                    let lhsWindow = lhs.element.metric.windowDurationMinutes ?? Int.max
-                    let rhsWindow = rhs.element.metric.windowDurationMinutes ?? Int.max
-                    return lhsWindow == rhsWindow ? lhs.offset < rhs.offset : lhsWindow < rhsWindow
-                }
-                .map(\.element)
-                .prefix(2)
-        )
-        let ringIds = Set(ringMetrics.map(\.metric.id))
         // 状态异常/用尽直接红；其余交给时间进度感知的 pace 逻辑。
         func metricTone(_ metric: UsageMetric) -> UsageMetricTone {
             if warnStatuses.contains(metric.status) || (metric.usedPercent ?? 0) >= 99.5 {
@@ -1315,6 +1301,35 @@ struct QuotaDisplayModel {
             }
             return UsageMetricToneResolver.tone(for: metric)
         }
+
+        let primaryWindowMetrics = percentMetrics
+            .filter { entry in
+                entry.isPrimary
+                    && entry.metric.kind == .quota
+                    && entry.metric.windowDurationMinutes != nil
+            }
+            .enumerated()
+            .sorted { lhs, rhs in
+                let lhsWindow = lhs.element.metric.windowDurationMinutes ?? Int.max
+                let rhsWindow = rhs.element.metric.windowDurationMinutes ?? Int.max
+                return lhsWindow == rhsWindow ? lhs.offset < rhs.offset : lhsWindow < rhsWindow
+            }
+            .map(\.element)
+        menuBarWindows = primaryWindowMetrics.map { entry in
+            Ring(
+                label: entry.label,
+                percent: Self.remainingPercent(entry.metric),
+                resetText: entry.metric.resetText,
+                tone: metricTone(entry.metric)
+            )
+        }
+
+        let ringMetrics = Array(
+            primaryWindowMetrics
+                .filter { ($0.metric.windowDurationMinutes ?? Int.max) <= Self.ringWindowCeilingMinutes }
+                .prefix(2)
+        )
+        let ringIds = Set(ringMetrics.map(\.metric.id))
         rings = ringMetrics.map { entry in
             Ring(
                 label: entry.label,

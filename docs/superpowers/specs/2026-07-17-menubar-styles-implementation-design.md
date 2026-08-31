@@ -32,12 +32,13 @@
 
 ## 2. 通用渲染语义（全样式共享）
 
-- **数据源**：`displayProviderSnapshots` → `QuotaDisplayModel.rings`（label + 剩余% + pace tone），本次沿用 tone 语义（**不改**警戒算法；稿内 ≥40/15/40 阈值是演示口径）。
+- **数据源**：`displayProviderSnapshots` → `QuotaDisplayModel.menuBarWindows`（主额度组的全部时间窗口，含 30d；label + 剩余% + pace tone）。弹窗仍由 `rings` / `bars` 控制布局，菜单栏不能复用其“两只环、最长 7d”限制。本次沿用 tone 语义（**不改**警戒算法；稿内 ≥40/15/40 阈值是演示口径）。
 - **窗口 pick**：short/long/both 按家配置各自作用于图形与数字；both 的呈现顺序由 `menubar.windowOrder` 决定（图形双元素顺序 + 双数字先后一致翻转）。
 - **worst（最险窗）**：数字窗口集合中剩余%最小者；聚合样式的家级状态 = 该家最险窗。
-- **stale**：`staleMinutes != nil`（快照超 10 分钟）→ 整 cell 灰（g-off 语义），数字显示 `—`，图形保形降透明；sentinel 灰态显示 `Xm` 分钟数。
+- **刷新失败 / 旧快照**：菜单栏继续原样显示最后一次有效额度，不改变颜色、透明度或文案；失败消息与「多少分钟前更新」只在弹窗中展示。
 - **数字**：剩余%取整、无 % 号、等宽、tabular；双数字 `A·B` 分隔点弱化。**双数字各自跟随所属窗口 tone 染色**（沿用 S0 用户裁定的打磨，覆盖设计稿 JS 的「统一最险色」简化；数字色=窗口 tone，与图形画不画该窗无关）。单数字=最险窗值、染最险窗色。
-- **超宽降级**（digits 等文字样式）：数字窗口 both 且名称开启且短名含 CJK → 数字降为最险单窗（稿 S3 规则）。
+- **名称**：所有文字型样式直接使用供应商的完整 `displayName`；空格是名称内容，投影层不得取首词或另造短名。只有 monogram/tagnum 的单字符标从名称派生，并跳过空白字符。
+- **超宽降级**（digits 等文字样式）：数字窗口 both 且名称开启且名称含 CJK → 数字降为最险单窗（稿 S3 规则）。
 - **警戒色**：现有 toneColor 映射（systemGreen/Yellow/Red/tertiaryLabel）不变。
 - **今日尾巴**：组件级最右 cell；tok=`UsageFormatter.compactTokens`、cost=`$` + 今日花费（`MenuBarTodaySummary` costUsdMicros 汇总）、off=隐藏。次级视觉（opacity ~0.75），保留 numericText 滚动。
 - **全空**（无可见 cell 且尾巴关/无数据）：显示现有 15×15 品牌小标（MenuBarBrandMark）。
@@ -63,17 +64,17 @@
 |---|---|---|---|
 | grid | 2×2（4家）/单行（≤3家）5.5pt 点阵，固定序=menuRank | 开=品牌 logo 前缀 | 开=全家最险单数字 |
 | strip | 13pt 高分段条每家 6pt 段、1pt 缝 | 同上 | 同上 |
-| monogram | 单字符×N 警戒色染字、stale=删除线（第二编码） | 锁死开（字符即名称） | 开=追加全家最险数字 |
-| sentinel | 全正常=灰 logo；有 warn/bad=最险家（logo染色+短名+数字，各随元素开关）；全绿有 stale=灰 logo+`Xm` | 可关（关=logo+数字） | 可关 |
+| monogram | 单字符×N 警戒色染字 | 锁死开（字符即名称） | 开=追加全家最险数字 |
+| sentinel | 全正常=灰 logo；有 warn/bad=最险家（logo染色+完整显示名+数字，各随元素开关） | 可关（关=logo+数字） | 可关 |
 
-- monogram/tagnum 单字符规则：依 menuRank 序取短名第 1 字符，与已占用重复则依次后移（CC→C、CX→X、智谱→智、OMP→O，与稿一致）。
+- monogram/tagnum 单字符规则：依 menuRank 序取完整显示名的第 1 个非空白字符，与已占用重复则依次后移（CC→C、CX→X、智谱→智、OMP→O，与稿一致）。
 
 **数字支（S12-S13）**：全家一个 cell、每家一个 unit、按家窗口全语义支持；glyph+pct 锁死（无图形、数字为本体），名称可关（裸数字位序）。
 
 | id | unit 形态 |
 |---|---|
 | tagnum | 单字符 10pt 半透明前标 + 数字（baseline 排） |
-| deck2 | 上行 7.5pt 短名 / 下行 10.5pt 数字（纵向两层，双窗数字仍单行 `A·B`） |
+| deck2 | 上行 7.5pt 完整显示名 / 下行 10.5pt 数字（纵向两层，双窗数字仍单行 `A·B`） |
 
 **混合系（S14-S15）**：每家一 cell；glyph+pct 锁死开，名称可关。
 
@@ -111,7 +112,7 @@
 
 ## 6. 测试
 
-- Swift：投影单测（样式×开关×窗口×stale 组合的 RenderModel 断言；聚合最险/哨兵升级链/超宽降级/窗口顺序翻转）；StatusBar 更新链路现有测试扩展。
+- Swift：投影单测（样式×开关×窗口组合的 RenderModel 断言；聚合最险/哨兵升级链/超宽降级/窗口顺序翻转）；失败刷新前后菜单栏投影必须相等，弹窗仍展示失败与旧值时间。
 - Electron：settingsRepository 新字段读写/校验、ensure 列幂等；settingsStore patch；MenubarAppearance 组件交互（锁定/联动禁用/切换副作用）。
 - 收尾三套全跑（swift test / vitest / python 对账）。
 

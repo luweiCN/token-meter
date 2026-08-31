@@ -9,6 +9,7 @@ final class ProviderConfigLoaderTests: XCTestCase {
             "codex",
             "claude-code",
             "opencode-go",
+            "command-code",
             "zhipu",
             "grok"
         ])
@@ -16,6 +17,11 @@ final class ProviderConfigLoaderTests: XCTestCase {
         let openCodeGo = try XCTUnwrap(config.providers.first { $0.id == "opencode-go" })
         XCTAssertEqual(openCodeGo.type, .opencodeGo)
         XCTAssertNil(openCodeGo.quotaCache)
+
+        let commandCode = try XCTUnwrap(config.providers.first { $0.id == "command-code" })
+        XCTAssertEqual(commandCode.type, .commandCode)
+        XCTAssertEqual(commandCode.credential?.environmentVariable, "COMMAND_CODE_API_KEY")
+        XCTAssertEqual(commandCode.endpoint, "https://api.commandcode.ai")
 
         let zhipu = try XCTUnwrap(config.providers.first { $0.id == "zhipu" })
         XCTAssertEqual(zhipu.endpoint, "https://bigmodel.cn/api/monitor/usage/quota/limit")

@@ -84,6 +84,10 @@ export function registerIpcHandlers() {
   // 应用内 API Key 存 macOS 钥匙串，读写都在 Swift 侧——Electron 只转发、不落明文。
   ipcMain.handle('credentials:set', async (_event, providerId: string, token: string) => {
     const response = await notifySwift('credentials.set', { providerId: String(providerId), token: String(token ?? '') });
+    if (response.ok) {
+      // 钥匙串写入已经完成；刷新另起请求，保存按钮无需等待所有 provider 的网络轮询。
+      void notifySwift('quota.refresh').catch(() => {});
+    }
     return response.result?.hasToken === 'true';
   });
   ipcMain.handle('credentials:state', async (_event, providerId: string) => {

@@ -2375,8 +2375,8 @@ th.sort.desc::after{content:"↓";opacity:1;color:var(--accent)}
 .mbcell .pct{font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums;font-weight:500}
 .mbcell .pct i{font-style:normal;opacity:.45;margin:0 1px}
 /* 警戒三色与弹窗 MBTheme 同源（深 #44ffb1/#ffe073/#e52e2e，浅 #0f9d6e/#9a7500/#c92a2a）；文字纯白/纯黑 */
-.mbar.mbdark  .g-ok{color:#44ffb1}.mbar.mbdark  .g-warn{color:#ffe073}.mbar.mbdark  .g-bad{color:#e52e2e}.mbar.mbdark  .g-off{color:rgba(255,255,255,.38)}
-.mbar.mblight .g-ok{color:#0f9d6e}.mbar.mblight .g-warn{color:#9a7500}.mbar.mblight .g-bad{color:#c92a2a}.mbar.mblight .g-off{color:rgba(0,0,0,.32)}
+.mbar.mbdark  .g-ok{color:#44ffb1}.mbar.mbdark  .g-warn{color:#ffe073}.mbar.mbdark  .g-bad{color:#e52e2e}
+.mbar.mblight .g-ok{color:#0f9d6e}.mbar.mblight .g-warn{color:#9a7500}.mbar.mblight .g-bad{color:#c92a2a}
 .mbar.mbdark .mbcell .nm{color:#fff}
 .mbar.mblight .mbcell .nm{color:#000}
 /* 峰/谷标识（高峰黄演示）：点 / 着色字 / 胶囊底 */
@@ -2413,7 +2413,6 @@ th.sort.desc::after{content:"↓";opacity:1;color:var(--accent)}
 .mb-grid4 i{width:5.5px;height:5.5px;border-radius:50%;background:currentColor;display:block}
 .mb-monogram{display:inline-flex;gap:4px;align-items:center}
 .mb-monogram b{font-size:11px;font-weight:700}
-.mb-monogram b.mb-stale{text-decoration:line-through;text-decoration-thickness:1.2px}
 .mb-strip{display:inline-flex;height:13px;border-radius:3px;overflow:hidden;gap:1px}
 .mb-strip i{width:6px;height:100%;display:block;background:currentColor}
 .mb-logo{width:13px;height:13px;display:inline-flex;opacity:.85}

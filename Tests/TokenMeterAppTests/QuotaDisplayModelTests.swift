@@ -48,6 +48,7 @@ final class QuotaDisplayModelTests: XCTestCase {
 
         XCTAssertEqual(model.rings.map(\.label), ["5h", "7d"])
         XCTAssertEqual(model.rings.map(\.percent), [64.0, 95.0])
+        XCTAssertEqual(model.menuBarWindows.map(\.label), ["5h", "7d"])
         XCTAssertEqual(model.bars.map(\.label), ["Sonnet 7d", "Fable 7d"])
         XCTAssertEqual(model.bars.map(\.percent), [56.0, 91.0])
     }
@@ -101,6 +102,7 @@ final class QuotaDisplayModelTests: XCTestCase {
         let model = QuotaDisplayModel(snapshot: snapshot)
 
         XCTAssertEqual(model.rings.map(\.label), ["5h", "7d"])
+        XCTAssertEqual(model.menuBarWindows.map(\.label), ["5h", "7d"])
         XCTAssertEqual(model.bars.map(\.label), ["MCP"])
         XCTAssertEqual(model.bars.map(\.percent), [97.0])
         XCTAssertEqual(model.bars.first?.note, "152/4000 次")
@@ -136,6 +138,8 @@ final class QuotaDisplayModelTests: XCTestCase {
         XCTAssertEqual(model.bars.map(\.label), ["30d"])
         XCTAssertEqual(model.bars.map(\.percent), [96.0])
         XCTAssertEqual(model.bars.first?.note, "26d12h")
+        XCTAssertEqual(model.menuBarWindows.map(\.label), ["5h", "7d", "30d"])
+        XCTAssertEqual(model.menuBarWindows.map(\.percent), [99.0, 91.0, 96.0])
     }
 
     /// 环位缺失时【绝不递补】（用户裁定的硬语义）：OpenCode 缺 5h（解析失败/改版丢行）

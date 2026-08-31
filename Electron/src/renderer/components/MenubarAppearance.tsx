@@ -72,6 +72,7 @@ const MENUBAR_PROVIDERS: Array<{ id: string; name: string; demoId: string; short
   { id: 'codex', name: 'Codex', demoId: 'codex', short: 'CX' },
   { id: 'zhipu', name: '智谱 GLM', demoId: 'zhipu', short: '智谱' },
   { id: 'opencode-go', name: 'OpenCode Go', demoId: 'opencodeGo', short: 'Go', windows: ['5h', '7d', '30d'] },
+  { id: 'command-code', name: 'Command Code', demoId: 'commandCode', short: 'Command', windows: ['5h', '7d', '30d'] },
   { id: 'grok', name: 'Grok Build', demoId: 'grok', short: 'Grok', windows: ['7d'] }
 ];
 

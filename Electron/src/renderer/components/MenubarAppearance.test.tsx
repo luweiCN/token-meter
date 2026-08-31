@@ -116,6 +116,24 @@ describe('MenubarAppearance', () => {
     expect(labels).toEqual(['7d']);
   });
 
+  it('includes Command Code with 5h, 7d, and 30d windows', async () => {
+    const spy = vi
+      .spyOn(settingsStore, 'applyPatch')
+      .mockResolvedValue({ requestedVersion: 4, status: 'pending' });
+    await mount();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Command Code 菜单栏显示' }));
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ providerMenubarVisible: { 'command-code': false } })
+    );
+
+    const row = screen.getByRole('button', { name: 'Command Code 菜单栏显示' }).closest('tr');
+    expect(row).not.toBeNull();
+    const labels = Array.from(row?.querySelectorAll('.seg.mini')[0]?.querySelectorAll('button') ?? [])
+      .map((button) => button.textContent);
+    expect(labels).toEqual(['5h', '7d', '30d']);
+  });
+
   it('window order segment patches menubarWindowOrder', async () => {
     const spy = vi
       .spyOn(settingsStore, 'applyPatch')
