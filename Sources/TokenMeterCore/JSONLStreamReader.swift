@@ -47,7 +47,8 @@ public enum JSONLStreamReader {
     ///
     /// Only Codex passes markers: its 3+ GB sessions are dominated by `function_call` /
     /// `function_call_output` lines that carry none of `token_count`, `session_meta`, or
-    /// `turn_context`, so prefiltering on raw bytes skips the vast majority of lines cheaply.
+    /// `turn_context`, or `thread_settings_applied`, so prefiltering on raw bytes skips the vast
+    /// majority of lines cheaply without dropping model, fork, or service-tier state.
     /// Claude and omp always pass `nil` — their `sessionId`, `cwd`, and `version` fields are
     /// spread across many different line types, so byte-filtering by a fixed marker set would
     /// silently drop metadata those parsers need.

@@ -176,6 +176,32 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(try database.query("SELECT model_name FROM usage_events")[0].string("model_name"), "gpt-5.6-sol")
     }
 
+    func testCodexMarkerFilterKeepsFastTierSettings() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("rollout.jsonl")
+        try writeJSONL(
+            """
+            {"type":"session_meta","payload":{"id":"codex-fast-tier","cwd":"/repo"}}
+            {"type":"turn_context","payload":{"model":"gpt-5.6-sol"}}
+            {"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"service_tier":"priority"}}}
+            {"type":"event_msg","timestamp":"2026-07-08T01:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000000,"output_tokens":0}}}}
+
+            """,
+            to: file
+        )
+        let database = try migratedDatabase(rootKind: .codexJSONL, rootPath: directory.path)
+
+        try await LocalAgentScanner(database: database).scanRoot(id: 1)
+
+        let event = try XCTUnwrap(database.query(
+            "SELECT model_name, model_canonical, cost_source FROM usage_events"
+        ).first)
+        XCTAssertEqual(event.string("model_name"), "gpt-5.6-sol-fast")
+        XCTAssertEqual(event.string("model_canonical"), "gpt-5.6-sol-fast")
+        XCTAssertEqual(event.string("cost_source"), "computed")
+    }
+
     func testResumeIsCorrectWhenALineHasLeadingWhitespace() async throws {
         // 一行若以空格开头，从其第二字节起的残片仍是合法 JSON。
         // 用 max(source_offset)+1 续读会重复消费它，并因 eventSeq 递增而

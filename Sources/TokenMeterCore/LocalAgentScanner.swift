@@ -967,13 +967,13 @@ public final class LocalAgentScanner {
     }
 
     /// 只有 Codex 传 marker。它 3+ GB 的 session 绝大多数是 function_call / function_call_output
-    /// 行，一条都不含 token_count / session_meta / turn_context，按原始字节预筛能几乎白跳过它们。
+    /// 行，一条都不含下列解析边界，按原始字节预筛能几乎白跳过它们。
     /// Claude 与 omp 把 sessionId / cwd / version 散落在多种行类型里，固定 marker 过滤会漏掉这些
     /// 元数据，所以返回 nil（不过滤）。
     private func markers(for kind: SourceKind) -> [String]? {
         switch kind {
         case .codexJSONL:
-            return ["token_count", "session_meta", "turn_context", "task_started"]
+            return ["token_count", "session_meta", "turn_context", "task_started", "thread_settings_applied"]
         case .claudeJSONL, .ompJSONL, .opencodeSQLite, .reasonixStats, .dshJSONL, .grokJSONL:
             return nil
         }

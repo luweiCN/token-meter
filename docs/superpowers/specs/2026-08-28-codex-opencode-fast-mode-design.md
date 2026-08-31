@@ -1,7 +1,7 @@
 # Codex / OpenCode Fast 模式 设计文档
 
 **日期**：2026-08-28
-**状态**：已与用户确认，待写实现计划
+**状态**：已实现
 **目标**：把 Fast 当成单独的模型身份（`{base}-fast`），用 OpenAI API Fast/Priority 牌价计费。OpenCode 已写入的 `-fast` 目录 ID 能对上价；原生 Codex 从 `service_tier` 合成同一身份。ChatGPT credits 倍率不进入美元列。
 
 ---
@@ -88,6 +88,8 @@ func billedModelName(base: String?) -> String? {
 
 `turn_context` 与 `token_count.info` 没有该字段，不猜测。旧 jsonl 全程没有 `thread_settings_applied` → `serviceTier` 保持 nil → 全部 Standard。
 
+Codex JSONL 的原始字节预筛必须包含 `thread_settings_applied`。解析器支持该事件并不够：若预筛只保留 `token_count`、`session_meta`、`turn_context`、`task_started`，档位行会在 JSON 解析前被静默丢弃，Fast 事件仍会按 Standard 入库。
+
 ### 3.3 续读
 
 `ParserState` 增加可选字段 `codexServiceTier: String?`（缺 key 的旧 state 解码为 nil，行为与今天相同）。`finish` 写出、`init(resuming:)` 读回。增量续读时，文件后半段的 Fast 不会因为没重放到 settings 事件而掉回 Standard。
@@ -135,7 +137,7 @@ TokenMeter 的 `RateCard` 有两档缓存写入。价表只有一列 cache write
 
 ## 6. 数据重建
 
-`TokenMeterDatabaseSchema.derivedVersion` 从 12 升到 13。注释写明：Codex Fast 从 `service_tier` 合成身份；OpenCode `*-fast` 按 Fast API 价重算。派生表重建后全量重扫。
+`TokenMeterDatabaseSchema.derivedVersion` 当前为 14。13 首次引入 Fast 身份与价格；14 将 `thread_settings_applied` 纳入 Codex 预筛并再次全量重扫，修正此前被误算成 Standard 的 Codex Fast 事件。
 
 必须 bump：Codex 的 `dedupeKey` 含模型名，身份一变旧键对不上；OpenCode Fast 事件已经按 unknown 落过库，不重算费用不会自己变。
 
@@ -147,6 +149,7 @@ TokenMeter 的 `RateCard` 有两档缓存写入。价表只有一列 cache write
 |---|---|
 | `ModelNameNormalizerTests` | `gpt-5.6-sol-fast` 保持 `gpt-5.6-sol-fast`；`grok-4-fast` 保持；`-xhigh` 仍剥 |
 | `CodexUsageEventParserTests` | `service_tier: fast` / `priority` → `gpt-5.5-fast`；`default` / 缺省 → `gpt-5.5`；中途切换只影响后续事件；两种外壳都能读；`ParserState` 续读带上档位 |
+| `LocalAgentScannerTests` | 原始 JSONL 经生产 marker 预筛后仍保留 `thread_settings_applied`，最终以 `*-fast` 和 computed Fast 价格入库 |
 | `CostCalculatorTests` | `gpt-5.6-sol-fast` 用 Fast 价；$8/M input；`gpt-5.6-sol` Standard 不变；`grok-4-fast` 仍走自己的快照价 |
 | `OpenCodeUsageEventAdapterTests` | `modelID: gpt-5.6-luna-fast` 且 `cost: 0` 时，writer/calculator 路径能 computed（可用 parser + CostCalculator 夹具，不必为这一条改适配器） |
 | `scripts/test_transform_pricing.py` | Swift `effortSuffixes` 与 Python `EFFORT_SUFFIXES` 仍是 `("-xhigh", "-high")`；`canonical("gpt-5.6-sol-fast")` 不去掉 `-fast` |
@@ -173,9 +176,10 @@ Codex 测试夹具在现有 `session_meta` + `turn_context` 上加一行 `thread
 | 文件 | 职责 |
 |---|---|
 | `Sources/TokenMeterCore/CodexUsageEventParser.swift` | 读 `service_tier`，写出 `{base}-fast` |
+| `Sources/TokenMeterCore/LocalAgentScanner.swift` | Codex marker 保留 `thread_settings_applied` |
 | `Sources/TokenMeterCore/UsageEventModels.swift` | `ParserState.codexServiceTier` |
 | `Sources/TokenMeterCore/ModelNameNormalizer.swift` | 注释：为什么 `-fast` 不在 effort 表 |
-| `Sources/TokenMeterCore/TokenMeterDatabaseSchema.swift` | `derivedVersion = 13` |
+| `Sources/TokenMeterCore/TokenMeterDatabaseSchema.swift` | `derivedVersion = 14`，升级后重扫历史 Fast 事件 |
 | `scripts/pricing-overrides.json` | Fast 价卡 |
 | `Sources/TokenMeterCore/Resources/litellm-pricing.json` | 由 `update-pricing.sh` 重生，不手改 |
 | 上表测试文件 | 锁行为 |
