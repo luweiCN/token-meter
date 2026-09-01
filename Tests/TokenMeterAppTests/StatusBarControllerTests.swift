@@ -62,7 +62,11 @@ final class StatusBarControllerTests: XCTestCase {
             settings: store.settingsSnapshot,
             todaySummary: store.todaySummary,
             peakTiers: store.tieredPricingEntries.map {
-                MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(providerId: $0.providerId, tier: $0.tier)
+                MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(
+                    brandName: $0.brandName,
+                    modelName: $0.modelName,
+                    tier: $0.tier
+                )
             },
             displayCurrency: store.displayCurrency,
             usdToCny: store.exchangeRate.usdToCny

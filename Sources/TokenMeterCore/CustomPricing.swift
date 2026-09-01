@@ -35,10 +35,9 @@ public struct CustomPricingEntry: Equatable, Codable {
 /// 用户自定义模型定价：`~/.token-meter/custom-pricing.json`（手写、无 UI）。
 ///
 /// 条目价格覆盖随包快照（同名覆盖、新键补充）；全 0 单价即免费模型——成本按 $0
-/// 计为 computed，不再显示「价格未知」。`ignoreReported: true` 用于上报价口径不对的
-/// 场景（例如 OpenCode 固定按空闲档给 DeepSeek 计价、不随高峰翻倍）：该模型忽略
-/// 上报成本、强制本地峰谷计价。上报原值由 usage_events.reported_cost_usd_micros
-/// 留底，移除开关后自动还原。
+/// 计为 computed，不再显示「价格未知」。带峰谷价的模型无论是否有供应商上报价，
+/// 都按本地时刻表计价；`ignoreReported: true` 仍可用于没有峰谷价、但上报价口径不对
+/// 的固定价模型。上报原值由 usage_events.reported_cost_usd_micros 留底。
 ///
 /// 键会先过 `ModelNameNormalizer.canonical`（与 usage_events.model_canonical 同一
 /// 归一化），所以写 "omniroute/cx/gpt-5.5" 与写 "gpt-5.5" 等效。

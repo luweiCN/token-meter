@@ -16,6 +16,8 @@
 | `menubar.showNumber` | int | 0/1 | 1 |
 | `menubar.usage` | string | off / tok / cost | tok |
 | `menubar.windowOrder` | string | longFirst / shortFirst | **longFirst**（保持现状 S0 视觉：7d 在前；用户裁定做成设置项） |
+| `menubar.showPeakBadge` | int | 0/1 | 1 |
+| `menubar.peakBadgeStyle` | string | dotWord / dot / word / pill | dotWord |
 
 ### 按家（provider_config_overrides 表）
 
@@ -42,6 +44,7 @@
 - **警戒色**：现有 toneColor 映射（systemGreen/Yellow/Red/tertiaryLabel）不变。
 - **今日尾巴**：组件级最右 cell；tok=`UsageFormatter.compactTokens`、cost=`$` + 今日花费（`MenuBarTodaySummary` costUsdMicros 汇总）、off=隐藏。次级视觉（opacity ~0.75），保留 numericText 滚动。
 - **全空**（无可见 cell 且尾巴关/无数据）：显示现有 15×15 品牌小标（MenuBarBrandMark）。
+- **峰/谷标识**：由随包峰谷定价模型的时刻表驱动，按当前时刻聚合为一个「峰」或「谷」标识；不按额度供应商快照过滤，因此 OpenCode Go、Command Code、直接 DeepSeek 或其他来源共享同一状态。仅 `menubar.showPeakBadge` 关闭时隐藏。
 
 ## 3. 样式规则表（glyph/数字/锁定/切换副作用，源自稿 JS）
 

@@ -72,6 +72,19 @@ final class CostCalculatorTests: XCTestCase {
                         peak: tier(0.44),
                         offPeak: tier(0.22)
                     )
+                ),
+                "deepseek-v4-pro": ModelPricing(
+                    inputPerMTok: 0.14,
+                    outputPerMTok: 1.0,
+                    cacheReadPerMTok: 0.1,
+                    cacheWrite5mPerMTok: 0,
+                    cacheWrite1hPerMTok: 0,
+                    tiered: PeakOffPeakPricing(
+                        effectiveAfter: Self.utcDate(2026, 8, 16, 16),
+                        peakHoursUTC: [1, 2, 3, 6, 7, 8, 9],
+                        peak: tier(0.44),
+                        offPeak: tier(0.22)
+                    )
                 )
             ]
         )
@@ -314,6 +327,25 @@ final class CostCalculatorTests: XCTestCase {
         let result = makeCalculator().cost(for: event(model: "claude-opus-4-8", input: 1_000_000, reported: 0))
         XCTAssertEqual(result.micros, 0)
         XCTAssertEqual(result.source, .reported)
+    }
+
+    func testTieredModelsUseLocalScheduleRegardlessOfProviderReportedCost() {
+        let cases: [(model: String, observedAt: Date, expectedMicros: Int64)] = [
+            ("opencode-go/deepseek-v4-flash", Self.utcDate(2026, 8, 17, 1, 30), 440_000),
+            ("command-code/deepseek-v4-pro", Self.utcDate(2026, 8, 17, 12, 0), 220_000),
+            ("deepseek-v4-pro", Self.utcDate(2026, 8, 17, 1, 30), 440_000)
+        ]
+
+        for testCase in cases {
+            let result = tieredCalculator().cost(for: event(
+                model: testCase.model,
+                input: 1_000_000,
+                reported: 99_000_000,
+                observedAt: testCase.observedAt
+            ))
+            XCTAssertEqual(result.micros, testCase.expectedMicros, testCase.model)
+            XCTAssertEqual(result.source, .computed, testCase.model)
+        }
     }
 
     func testTieredUsesBasePriceBeforeEffectiveTime() {

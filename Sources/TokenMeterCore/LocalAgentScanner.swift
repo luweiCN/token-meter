@@ -80,7 +80,8 @@ public final class LocalAgentScanner {
     }
 
     /// custom-pricing.json 变化后：重建计价器、把受影响模型的存量事件按新价
-    /// 全量重投影（reported 行不动）、重建 rollup。指纹未变时是纯 stat，零成本。
+    /// 全量重投影；固定价模型的普通 reported 行不动，峰谷模型按本地时刻表重算，重建 rollup。
+    /// 指纹未变时是纯 stat，零成本。
     ///
     /// 解析失败（fingerprint=nil ≠ 任何有效指纹）时退回纯内置价并保留旧键集——
     /// 每轮都会重试解析，用户修好 JSON 立即自愈。
@@ -125,15 +126,15 @@ public final class LocalAgentScanner {
     /// 一个模型的事件按当前计价器重算，然后 rollup 重建。覆盖移除后同样走这里，
     /// 自然回退到内置价或 unknown——语义是「以当前生效价格全量重投影」。
     ///
-    /// `forceIgnoringReported`（custom-pricing 的 ignoreReported）时连 reported 行也算：
-    /// 原 cost_source='reported' 的行先留底 reported_cost_usd_micros 再改写；开关移除后
-    /// 重投影据此还原原值——覆盖开关完全可逆。
+    /// `forceIgnoringReported`（固定价模型的 custom-pricing.ignoreReported）时连 reported
+    /// 行也算：原 cost_source='reported' 的行先留底 reported_cost_usd_micros 再改写。
+    /// 带峰谷价的模型即使没有该开关也会按本地时刻表计算，留底上报价不能在重投影时被恢复。
     private func reprojectPricing(
         canonicalModel: String,
         calculator: CostCalculator,
         forceIgnoringReported: Bool
     ) throws {
-        // 非 forced 只动非 reported 行；forced 动全部行。有留底待还原的行也要捞回来
+        // 非 forced 只动非 reported 行；forced 动全部行。有留底待重算的行也要捞回来
         // （它此刻可能已是 computed 或 unknown）。
         let rows = try database.query(
             """
@@ -151,19 +152,12 @@ public final class LocalAgentScanner {
         do {
             for row in rows {
                 let backup = row.int("reported_cost_usd_micros")
-
-                // 开关已移除：把留底的原始上报价还原回去。
-                if !forceIgnoringReported, let backup {
-                    try database.execute(
-                        """
-                        UPDATE usage_events
-                        SET cost_usd_micros = ?, cost_source = 'reported', reported_cost_usd_micros = NULL
-                        WHERE id = ?
-                        """,
-                        [.int(backup), .int(row.int("id") ?? 0)]
-                    )
-                    continue
-                }
+                // 首次把 reported 行转成本地价时，当前 cost 就是原始上报价；之后优先使用
+                // 已留底的最早值。带峰谷价的模型会忽略这个值，但固定价模型在移除开关后
+                // 仍会返回 reported，下面据此恢复原始状态。
+                let reported = backup ?? (
+                    row.string("cost_source") == "reported" ? row.int("cost_usd_micros") : nil
+                )
 
                 let event = UsageEvent(
                     eventSeq: 0,
@@ -175,15 +169,31 @@ public final class LocalAgentScanner {
                     cacheReadTokens: row.int("tokens_cache_read") ?? 0,
                     cacheWrite5mTokens: row.int("tokens_cache_write_5m") ?? 0,
                     cacheWrite1hTokens: row.int("tokens_cache_write_1h") ?? 0,
+                    reportedCostUSDMicros: reported,
                     sourceOffset: 0
                 )
                 let (micros, source) = calculator.cost(for: event)
+
+                // 开关已移除且当前模型没有模型级本地计价：把留底的原始上报价还原回去。
+                // tiered 模型返回 computed，因此即使有 backup 也必须保留本地峰谷结果。
+                if !forceIgnoringReported, let backup, source == .reported {
+                    try database.execute(
+                        """
+                        UPDATE usage_events
+                        SET cost_usd_micros = ?, cost_source = 'reported', reported_cost_usd_micros = NULL
+                        WHERE id = ?
+                        """,
+                        [.int(backup), .int(row.int("id") ?? 0)]
+                    )
+                    continue
+                }
+
                 // 首次覆盖 reported 行时留底原值；已有留底则保留最早的（重复开关值不变）。
                 var nextBackup = backup
                 if source == .reported {
                     nextBackup = micros
-                } else if nextBackup == nil, row.string("cost_source") == "reported" {
-                    nextBackup = row.int("cost_usd_micros")
+                } else if nextBackup == nil {
+                    nextBackup = reported
                 }
                 try database.execute(
                     "UPDATE usage_events SET cost_usd_micros = ?, cost_source = ?, reported_cost_usd_micros = ? WHERE id = ?",

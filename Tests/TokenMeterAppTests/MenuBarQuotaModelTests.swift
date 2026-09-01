@@ -459,15 +459,19 @@ final class MenuBarQuotaModelTests: XCTestCase {
         XCTAssertEqual(projection.tail, .text("¥1327.93"))
     }
 
-    // MARK: - OpenCode Go 峰谷标识
+    // MARK: - 模型峰谷标识
 
-    func testPeakTierAttachedOnlyWhenOpenCodeGoVisible() {
+    func testPeakTierIsIndependentOfQuotaProviderVisibility() {
         let tier = peakTier()
-        let entry = MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(providerId: "opencode-go", tier: tier)
+        let entry = MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(
+            brandName: "DeepSeek",
+            modelName: "deepseek-v4-flash",
+            tier: tier
+        )
         let opencode = twoWindowSnapshot("opencode-go", "OpenCode Go", shortRemaining: 80, longRemaining: 60)
         let claude = twoWindowSnapshot("claude-code", "Claude Code", shortRemaining: 90, longRemaining: 70)
 
-        // OpenCode Go 可见 + 时刻表存在 → 透传给菜单栏渲染峰/谷标识
+        // 任意额度供应商有卡片 + 定价模型存在 → 透传给菜单栏渲染峰/谷标识
         var projection = MenuBarQuotaModel.projection(
             snapshots: [opencode, claude],
             settings: nil,
@@ -476,27 +480,51 @@ final class MenuBarQuotaModelTests: XCTestCase {
         )
         XCTAssertEqual(projection.peakTiers, [entry])
 
-        // 菜单栏没有 OpenCode Go → 时刻表被丢弃，标识不渲染
+        // OpenCode Go 被停用、只剩其他额度供应商 → 定价模型仍然生效
         projection = MenuBarQuotaModel.projection(
             snapshots: [claude],
             settings: nil,
             todaySummary: .empty,
             peakTiers: [entry]
         )
-        XCTAssertTrue(projection.peakTiers.isEmpty)
+        XCTAssertEqual(projection.peakTiers, [entry])
 
-        // OpenCode Go 可见但快照缺峰谷时刻表 → 空，退化为无标识
+        // 没有额度卡片也不影响全局模型定价标识（直接 DeepSeek 使用场景）
         projection = MenuBarQuotaModel.projection(
-            snapshots: [opencode],
+            snapshots: [],
             settings: nil,
             todaySummary: .empty,
-            peakTiers: []
+            peakTiers: [entry]
         )
-        XCTAssertTrue(projection.peakTiers.isEmpty)
+        XCTAssertEqual(projection.peakTiers, [entry])
     }
 
-    func testPeakTierSuppressedWhenOpenCodeHiddenByOverride() {
-        // showInMenuBar=false 时 OpenCode Go 不出 cell，标识同样不出现。
+    func testPeakTierCanBePassedWithCommandCodeQuotaProvider() {
+        let entry = MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(
+            brandName: "DeepSeek",
+            modelName: "deepseek-v4-flash",
+            tier: peakTier()
+        )
+        let commandCode = twoWindowSnapshot(
+            "command-code",
+            "Command Code",
+            shortRemaining: 80,
+            longRemaining: 60
+        )
+
+        // Command Code 额度卡与 DeepSeek 模型是两个独立概念，模型条目直接透传。
+        let projection = MenuBarQuotaModel.projection(
+            snapshots: [commandCode],
+            settings: nil,
+            todaySummary: .empty,
+            peakTiers: [entry]
+        )
+
+        XCTAssertEqual(projection.peakTiers, [entry])
+    }
+
+    func testPeakTierRemainsWhenQuotaProviderIsHiddenByOverride() {
+        // showInMenuBar=false 只隐藏额度 cell，不影响模型峰谷标识。
         let overrides = [
             ProviderConfigOverride(
                 providerId: "opencode-go", enabled: nil, displayName: nil, menuRank: nil,
@@ -508,15 +536,23 @@ final class MenuBarQuotaModelTests: XCTestCase {
             settings: settings(overrides: overrides),
             todaySummary: .empty,
             peakTiers: [
-                MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(providerId: "opencode-go", tier: peakTier())
+                MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(
+                    brandName: "DeepSeek",
+                    modelName: "deepseek-v4-flash",
+                    tier: peakTier()
+                )
             ]
         )
         XCTAssertTrue(projection.cells.isEmpty)
-        XCTAssertTrue(projection.peakTiers.isEmpty)
+        XCTAssertEqual(projection.peakTiers.count, 1)
     }
 
     func testPeakBadgeCanBeHiddenAndStyled() {
-        let entry = MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(providerId: "opencode-go", tier: peakTier())
+        let entry = MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(
+            brandName: "DeepSeek",
+            modelName: "deepseek-v4-flash",
+            tier: peakTier()
+        )
         let opencode = twoWindowSnapshot("opencode-go", "OpenCode Go", shortRemaining: 80, longRemaining: 60)
 
         // 默认显示 + 默认样式（点 + 字）

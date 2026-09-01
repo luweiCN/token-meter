@@ -334,10 +334,12 @@ CREATE TABLE model_pricing (
 `cost_source` 取值：
 
 - `reported` — 源文件自带成本（omp、OpenCode）。
-- `computed` — 由 pricing 表算出（Claude Code、Codex）。
+- `computed` — 由 pricing 表算出（Claude Code、Codex，以及带峰谷价的模型）。
 - `unknown` — 模型名在 pricing 表中无匹配，成本记 NULL 而非 0，UI 显式标注「定价未知」。
 
-代价是 pricing 更新后历史成本不会自动变。配「重算成本」操作：只 `UPDATE usage_events` 并重建 rollup，不重扫源文件。
+带峰谷价的模型是模型级定价例外：只要归一化模型名命中 `tiered`，无论事件来自哪个供应商、是否带源文件上报价，都按事件时间从本地峰/谷时刻表计算，并将原上报价留在 `reported_cost_usd_micros` 供审计。供应商不是模型定价的判定条件。
+
+一般 pricing 更新后历史成本不会自动变，配「重算成本」操作：只 `UPDATE usage_events` 并重建 rollup，不重扫源文件；本次模型级峰谷计价契约变更通过派生库版本升级触发一次从原始日志重建。
 
 Codex 的 `service_tier` 倍率（fast/priority）暂不实现——本机 `~/.codex/config.toml` 未设置该字段，无法验证。留作 adapter 内部的扩展点。
 

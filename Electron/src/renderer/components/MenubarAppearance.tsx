@@ -519,7 +519,7 @@ export function MenubarAppearance({ onBack }: { onBack: () => void }) {
         <div className="chead">
           <div>
             <h2>峰/谷标识</h2>
-            <div className="desc">有峰谷定价的服务商可见时显示 · 高峰黄色 / 空闲绿色</div>
+            <div className="desc">有峰谷定价的模型时显示，不依赖某一家额度接入 · 高峰黄色 / 空闲绿色</div>
           </div>
           <span className={savedTick ? 'savetick show' : 'savetick'}>已保存 ✓</span>
         </div>

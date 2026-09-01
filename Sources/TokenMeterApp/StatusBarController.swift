@@ -203,7 +203,7 @@ struct StatusBarContentView: View {
             } else if projection.cells.isEmpty {
                 MenuBarBrandMark()
             }
-            // 可见服务商的峰谷聚合标识，独占最右一块。
+            // 峰谷定价模型的聚合标识，独占最右一块。
             if !projection.peakTiers.isEmpty {
                 PeakPhaseBadge(tiers: projection.peakTiers, style: projection.peakBadgeStyle)
             }
@@ -418,7 +418,11 @@ final class StatusBarController: NSObject {
                     settings: self.store.settingsSnapshot,
                     todaySummary: self.store.todaySummary,
                     peakTiers: self.store.tieredPricingEntries.map {
-                        MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(providerId: $0.providerId, tier: $0.tier)
+                        MenuBarQuotaModel.MenuBarProjection.PeakTierEntry(
+                            brandName: $0.brandName,
+                            modelName: $0.modelName,
+                            tier: $0.tier
+                        )
                     },
                     displayCurrency: self.store.displayCurrency,
                     usdToCny: self.store.exchangeRate.usdToCny

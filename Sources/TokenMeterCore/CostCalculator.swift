@@ -8,8 +8,8 @@ public enum CostSource: String, Equatable {
 
 public struct CostCalculator {
     private let canonicalIndex: [String: ModelPricing]
-    /// 这些模型忽略日志上报成本（custom-pricing 的 ignoreReported），
-    /// 强制按本地价计——上报价可能没反映峰谷等实时政策。
+    /// 没有模型级 tiered 定价、但需要忽略日志上报成本的模型
+    ///（custom-pricing 的 ignoreReported）。tiered 模型由自身定价配置自动强制本地计价。
     private let ignoreReportedModels: Set<String>
 
     /// 定价键侧的前缀白名单（与 scripts/transform_pricing.py 的 PROVIDER_PREFIXES
@@ -68,15 +68,23 @@ public struct CostCalculator {
     }
 
     public func cost(for event: UsageEvent) -> (micros: Int64?, source: CostSource) {
-        if let reported = event.reportedCostUSDMicros,
-           !ignoreReportedModels.contains(ModelNameNormalizer.canonical(event.modelName)) {
+        let canonicalModel = ModelNameNormalizer.canonical(event.modelName)
+        let pricing = canonicalIndex[canonicalModel]
+
+        // 峰谷价属于模型而不是供应商。只要本地定价表把模型标成 tiered，
+        // 就必须按事件时间选本地档位；不能先采信供应商上报的固定金额，
+        // 否则 OpenCode Go、Command Code、直连 API 等来源会得到不同口径。
+        // 未标成 tiered 的模型仍保持原语义：有上报价时优先采信上报价。
+        if pricing?.tiered == nil,
+           let reported = event.reportedCostUSDMicros,
+           !ignoreReportedModels.contains(canonicalModel) {
             return (reported, .reported)
         }
 
         // 不做家族兜底。同家族价格能差 100 倍（gpt-5 $0.05 vs gpt-5.5 $5.00），
         // 借来的价格会被标成 computed，用户无从分辨那是不是真的。
         // 匹配不到就诚实地说不知道，让人去跑 scripts/update-pricing.sh。
-        guard let pricing = canonicalIndex[ModelNameNormalizer.canonical(event.modelName)] else {
+        guard let pricing else {
             return (nil, .unknown)
         }
 

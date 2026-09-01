@@ -158,7 +158,8 @@ enum MenuBarQuotaModel {
         }
 
         struct PeakTierEntry: Equatable {
-            let providerId: String
+            let brandName: String
+            let modelName: String
             let tier: PeakOffPeakPricing
         }
 
@@ -169,7 +170,7 @@ enum MenuBarQuotaModel {
         let windowOrder: MenuBarWindowOrder
         let cells: [Cell]
         let tail: Tail
-        /// 菜单栏可见服务商的峰谷时刻表（多厂商泛化）。空 = 不显示峰/谷标识。
+        /// 随包定价模型的峰谷时刻表（与额度供应商无关）。空 = 不显示峰/谷标识。
         /// 只带时刻表不带档位：峰/谷由视图层按当前时刻自判（TimelineView），
         /// 整点切换不必重建整个投影。
         let peakTiers: [PeakTierEntry]
@@ -251,12 +252,8 @@ enum MenuBarQuotaModel {
                 : .hidden
         }
 
-        // 峰/谷标识只挂在真正显示在菜单栏的服务商上；被用户隐藏时一起收走，
-        // 设置页「显示峰/谷标识」关闭时整体不显示。
-        let visibleProviderIds = Set(cells.map(\.providerId))
-        let visiblePeakTiers = appearance.showPeakBadge
-            ? peakTiers.filter { visibleProviderIds.contains($0.providerId) }
-            : []
+        // 峰/谷标识由定价模型驱动，不与任一额度供应商绑定；设置页关闭时整体不显示。
+        let visiblePeakTiers = appearance.showPeakBadge ? peakTiers : []
 
         return MenuBarProjection(
             style: appearance.style,

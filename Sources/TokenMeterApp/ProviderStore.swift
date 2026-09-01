@@ -2,16 +2,15 @@ import Combine
 import Foundation
 import TokenMeterCore
 
-/// 带峰谷价的模型、定价品牌与上报它的服务商。峰谷是【模型品牌】的定价策略
-/// （今天是 DeepSeek），服务商只是计费通道——展示层按品牌归行，不按服务商。
-/// 之后再有厂商采用分时定价，在 ProviderStore.tieredModelBrands 里补一条即可。
+/// 带峰谷价的模型与定价品牌。峰谷是【模型品牌】的定价策略，供应商只是计费
+/// 通道；同一个模型无论通过 OpenCode Go、Command Code 还是直接 API 使用，
+/// 都共享同一份时刻表。之后再有厂商采用分时定价，在这里补模型与品牌即可。
 struct TieredPricingEntry: Equatable, Identifiable {
-    let providerId: String
     let brandName: String
     let modelName: String
     let tier: PeakOffPeakPricing
 
-    var id: String { "\(providerId)/\(modelName)" }
+    var id: String { "\(brandName)/\(modelName)" }
 }
 
 /// 弹窗「峰谷时段」区块的一行：同一定价品牌下所有带峰谷价的模型归并成一行。
@@ -54,14 +53,14 @@ final class ProviderStore: ObservableObject {
     private let settingsStore: SettingsStore?
     private let scanner: LocalAgentScanner?
     private let liveSessions: LiveSessionStore?
-    /// 所有带峰谷价的模型（含品牌与服务商归属）。随包快照读取；加载失败时为空，
+    /// 所有带峰谷价的模型（与供应商无关）。随包快照读取；加载失败时为空，
     /// 菜单栏标识与弹窗「峰谷时段」区块随之隐藏，不影响额度显示。
     let tieredPricingEntries: [TieredPricingEntry]
-    /// 峰谷价模型 → (上报服务商, 定价品牌)。上游快照只按模型计价，模型本身
-    /// 不标品牌/服务商，这里补归属；未来有别的厂商上分时价时加映射即可。
-    static let tieredModelBrands: [String: (providerId: String, brandName: String)] = [
-        "deepseek-v4-flash": ("opencode-go", "DeepSeek"),
-        "deepseek-v4-pro": ("opencode-go", "DeepSeek"),
+    /// 峰谷价模型 → 定价品牌。上游快照只按模型计价，模型本身不标展示品牌，
+    /// 这里补品牌归属；不再绑定任何额度供应商。
+    static let tieredModelBrands: [String: String] = [
+        "deepseek-v4-flash": "DeepSeek",
+        "deepseek-v4-pro": "DeepSeek",
     ]
 
     convenience init() {
@@ -138,11 +137,10 @@ final class ProviderStore: ObservableObject {
 
     private static func loadTieredPricingEntries() -> [TieredPricingEntry] {
         guard let snapshot = try? PricingSnapshot.loadBundled() else { return [] }
-        let entries = tieredModelBrands.compactMap { modelName, owner -> TieredPricingEntry? in
+        let entries = tieredModelBrands.compactMap { modelName, brandName -> TieredPricingEntry? in
             snapshot.models[modelName]?.tiered.map {
                 TieredPricingEntry(
-                    providerId: owner.providerId,
-                    brandName: owner.brandName,
+                    brandName: brandName,
                     modelName: modelName,
                     tier: $0
                 )
@@ -151,13 +149,11 @@ final class ProviderStore: ObservableObject {
         return entries.sorted { $0.id < $1.id }
     }
 
-    /// 弹窗「峰谷时段」区块的展示行：只在对应服务商启用且出了额度卡时出现，
-    /// 同一品牌（DeepSeek 的 flash/pro）归并成一行。
+    /// 弹窗「峰谷时段」区块的展示行：按定价品牌归并模型，不依赖任何供应商
+    /// 额度接口是否启用或是否有额度快照。
     var peakPricingRows: [PeakPricingRow] {
-        let visibleProviderIds = Set(displayProviderSnapshots.map(\.providerId))
         var grouped: [String: (models: [String], tier: PeakOffPeakPricing)] = [:]
         for entry in tieredPricingEntries {
-            guard visibleProviderIds.contains(entry.providerId) else { continue }
             if var existing = grouped[entry.brandName] {
                 existing.models.append(entry.modelName)
             } else {

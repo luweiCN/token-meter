@@ -163,6 +163,34 @@ final class CustomPricingTests: XCTestCase {
         }
     }
 
+    func testTieredReportedCostRemainsLocalWhenCustomPricingChanges() async throws {
+        let fixture = try CustomPricingScanFixture.make(model: "deepseek-v4-flash", kind: .ompJSONL)
+        defer { fixture.cleanup() }
+
+        // 峰谷模型即使 OMP 带上报价，也从首扫开始按模型本地价计算，并保留原上报价。
+        try await fixture.scanner.scanRoot(id: 1)
+        var row = try fixture.eventRow()
+        XCTAssertEqual(row.source, "computed")
+        XCTAssertEqual(row.costMicros, 364)
+        XCTAssertEqual(row.reportedBackupMicros, 15_000)
+
+        // 覆盖模型基础价并触发重投影：峰谷模型仍不能恢复成供应商上报价。
+        try fixture.writePricing(model: "deepseek-v4-flash", input: 100, output: 200)
+        try await fixture.scanner.scanRoot(id: 1)
+        row = try fixture.eventRow()
+        XCTAssertEqual(row.source, "computed")
+        XCTAssertEqual(row.costMicros, 260_000)
+        XCTAssertEqual(row.reportedBackupMicros, 15_000)
+
+        // 移除覆盖后回到随包峰谷模型基础价，原上报价仍只是留底，不再作为计价结果。
+        try FileManager.default.removeItem(at: fixture.pricingURL)
+        try await fixture.scanner.scanRoot(id: 1)
+        row = try fixture.eventRow()
+        XCTAssertEqual(row.source, "computed")
+        XCTAssertEqual(row.costMicros, 364)
+        XCTAssertEqual(row.reportedBackupMicros, 15_000)
+    }
+
     // MARK: - 扫描器集成
 
 

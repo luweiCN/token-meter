@@ -247,7 +247,7 @@ public final class UsageEventWriter {
         let (costMicros, costSource) = costCalculator.cost(for: event)
 
         // 上报价没被采信（computed/unknown）但事件确实带着它时，把原值留在
-        // reported_cost_usd_micros：custom-pricing 的 ignoreReported 移除后据此还原。
+        // reported_cost_usd_micros：供模型级本地定价审计，也供 custom-pricing 移除后还原。
         let reportedBackup = costSource == .reported ? nil : event.reportedCostUSDMicros
 
         // ON CONFLICT(source_file_id, event_seq) DO UPDATE 提供的是**幂等重放**，不是防重复计数：

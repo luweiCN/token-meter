@@ -16,11 +16,12 @@ public enum TokenMeterDatabaseSchema {
     /// 10：Codex/OpenCode fork 回放改为跨 session 作用域去重，补 OpenCode v2/WAL 快照，
     ///     并重算 Codex 的迟到模型归属。
     /// 11：新增 DSH（DeepSeek Harness）数据源 + 定价补齐（muse-spark-1.2 等官价、meta 前缀剥离），重建以覆盖 unknown 为 computed
-    /// 12：usage_events 加 reported_cost_usd_micros（原始上报价留底）。custom-pricing.json 的
-    ///     ignoreReported 会把 reported 行改写成 computed，没有这一列，移除覆盖后原始值不可还原。
+    /// 12：usage_events 加 reported_cost_usd_micros（原始上报价留底）。本地模型级定价或
+    ///     custom-pricing 的 ignoreReported 把 reported 行改写成 computed 时，保留原值以便审计。
     /// 13：Codex Fast 从 service_tier 合成 {base}-fast；OpenCode *-fast 按 API Fast 价重算
     /// 14：Codex 预筛保留 thread_settings_applied；重扫修正曾被误算成 Standard 的 Fast 事件
-    public static let derivedVersion: Int64 = 14
+    /// 15：峰谷模型按模型级本地时刻表优先于任何供应商上报价，重扫修正既有 DeepSeek 成本
+    public static let derivedVersion: Int64 = 15
 
     /// 用户配置。永不删除。这三张表存的是无法从会话文件重建的东西：
     /// - settings：过滤器 / 菜单栏偏好 / 自动刷新间隔
@@ -208,8 +209,8 @@ public enum TokenMeterDatabaseSchema {
       ) VIRTUAL,
       cost_usd_micros INTEGER,
       cost_source TEXT NOT NULL CHECK (cost_source IN ('reported', 'computed', 'unknown')),
-      -- 原始上报价留底。cost_source != 'reported' 但本列非空 = 这行的上报价被
-      -- custom-pricing 的 ignoreReported 覆盖成了本地计价；移除覆盖后据此还原。
+      -- 原始上报价留底。cost_source != 'reported' 但本列非空 = 这行的上报价没有被
+      -- 采信，例如模型级峰谷定价或 custom-pricing 的 ignoreReported 使用了本地价。
       reported_cost_usd_micros INTEGER,
       dedupe_key TEXT,
       dedupe_scope_key TEXT,

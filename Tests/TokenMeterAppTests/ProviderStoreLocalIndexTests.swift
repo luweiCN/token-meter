@@ -18,13 +18,16 @@ final class ProviderStoreLocalIndexTests: XCTestCase {
         )
 
         XCTAssertEqual(store.tieredPricingEntries.count, 2)
-        XCTAssertTrue(store.tieredPricingEntries.allSatisfy { $0.providerId == "opencode-go" })
+        XCTAssertEqual(
+            Set(store.tieredPricingEntries.map(\.modelName)),
+            ["deepseek-v4-flash", "deepseek-v4-pro"]
+        )
         XCTAssertTrue(store.tieredPricingEntries.allSatisfy { $0.brandName == "DeepSeek" })
         XCTAssertTrue(store.tieredPricingEntries.allSatisfy { $0.tier.weekdaysOnly })
-        // 区块行只有服务商出了额度卡才生成；本机磁盘缓存里有没有 opencode-go
-        // 不确定，但任何生成的行都必须落在已知的品牌映射上（DeepSeek）。
-        XCTAssertTrue(store.peakPricingRows.allSatisfy { $0.brandName == "DeepSeek" })
-        XCTAssertTrue(store.peakPricingRows.allSatisfy { !$0.modelNames.isEmpty })
+        // 峰谷是模型定价状态，不依赖某一家额度接口是否有卡片或是否启用。
+        XCTAssertEqual(store.peakPricingRows.count, 1)
+        XCTAssertEqual(store.peakPricingRows[0].brandName, "DeepSeek")
+        XCTAssertFalse(store.peakPricingRows[0].modelNames.isEmpty)
     }
 
     /// 并发单飞：await scanner 让出 MainActor 时重入的第二个调用必须被挡回
