@@ -109,7 +109,7 @@ final class QuotaDisplayModelTests: XCTestCase {
     }
 
     /// OpenCode 主组 5h/7d/Monthly 三指标都有窗口时长，但一行最多两只环：
-    /// 5h/7d 进环，Monthly（30d）降为水平条、note 带重置倒计时。
+    /// 5h/7d 进环，Monthly（30d）降为水平条、标题后带重置倒计时。
     func testOpenCodeMonthlyBecomesBarNotRing() {
         let snapshot = ProviderUsageSnapshot(
             providerId: "opencode-go",
@@ -137,9 +137,59 @@ final class QuotaDisplayModelTests: XCTestCase {
         XCTAssertEqual(model.rings.map(\.percent), [99.0, 91.0])
         XCTAssertEqual(model.bars.map(\.label), ["30d"])
         XCTAssertEqual(model.bars.map(\.percent), [96.0])
-        XCTAssertEqual(model.bars.first?.note, "26d12h")
+        XCTAssertEqual(model.bars.first?.resetText, "26d12h")
+        XCTAssertNil(model.bars.first?.note)
         XCTAssertEqual(model.menuBarWindows.map(\.label), ["5h", "7d", "30d"])
         XCTAssertEqual(model.menuBarWindows.map(\.percent), [99.0, 91.0, 96.0])
+    }
+
+    func testBarKeepsResetCountdownWhenItAlsoHasDetail() {
+        let monthly = UsageMetric(
+            id: "command-code-monthly", label: "30d", kind: .quota,
+            usedPercent: 7, remainingPercent: 93, resetText: "21d6h", status: .ok,
+            detail: "套餐余额 $65.18 / $70.00", resetAt: Date(), windowDurationMinutes: 43_200
+        )
+        let snapshot = ProviderUsageSnapshot(
+            providerId: "command-code", displayName: "Command Code", status: .ok,
+            fetchedAt: Date(), summary: nil, message: nil,
+            groups: [UsageGroup(id: "command-code", title: "Command Code", subtitle: nil, items: [monthly])]
+        )
+
+        let bar = QuotaDisplayModel(snapshot: snapshot).bars.first
+
+        XCTAssertEqual(bar?.resetText, "21d6h")
+        XCTAssertEqual(bar?.note, "套餐余额 $65.18 / $70.00")
+    }
+
+    func testResetCardSummaryUsesSoonestUnexpiredCard() {
+        let now = Date(timeIntervalSince1970: 20 * 86_400)
+        let resetCredits = ResetCreditSummary(
+            availableCount: 2,
+            credits: [
+                ResetCredit(
+                    issuedAt: Date(timeIntervalSince1970: 0),
+                    expiresAt: Date(timeIntervalSince1970: 30 * 86_400)
+                ),
+                ResetCredit(
+                    issuedAt: Date(timeIntervalSince1970: 0),
+                    expiresAt: Date(timeIntervalSince1970: 25 * 86_400)
+                ),
+                ResetCredit(
+                    issuedAt: Date(timeIntervalSince1970: 0),
+                    expiresAt: Date(timeIntervalSince1970: 10 * 86_400)
+                )
+            ]
+        )
+        let snapshot = ProviderUsageSnapshot(
+            providerId: "codex", displayName: "Codex", status: .ok,
+            fetchedAt: now, summary: nil, message: nil, groups: [], resetCredits: resetCredits
+        )
+
+        let earliest = QuotaDisplayModel(snapshot: snapshot, now: now).earliestResetCredit
+
+        XCTAssertEqual(earliest?.credit.expiresAt, Date(timeIntervalSince1970: 25 * 86_400))
+        XCTAssertEqual(earliest?.remainingText, "5 天")
+        XCTAssertEqual(earliest?.tone, .warning)
     }
 
     /// 环位缺失时【绝不递补】（用户裁定的硬语义）：OpenCode 缺 5h（解析失败/改版丢行）

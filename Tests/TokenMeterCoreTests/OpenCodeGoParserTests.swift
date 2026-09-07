@@ -102,7 +102,7 @@ final class OpenCodeGoSnapshotBuilderTests: XCTestCase {
             windows: [
                 OpenCodeGoUsageWindowData(label: "5h", usagePercent: 20, resetsInSeconds: 3_600),
                 OpenCodeGoUsageWindowData(label: "Weekly", usagePercent: 35, resetsInSeconds: 86_400),
-                OpenCodeGoUsageWindowData(label: "Monthly", usagePercent: 60, resetsInSeconds: nil)
+                OpenCodeGoUsageWindowData(label: "Monthly", usagePercent: 60, resetsInSeconds: 9 * 86_400 + 19 * 3_600)
             ],
             providerId: "opencode-go",
             displayName: "OpenCode Go"
@@ -121,14 +121,15 @@ final class OpenCodeGoSnapshotBuilderTests: XCTestCase {
         XCTAssertEqual(primary.items[1].windowDurationMinutes, 7 * 24 * 60)
         XCTAssertEqual(primary.items[2].windowDurationMinutes, 30 * 24 * 60)
 
-        // 环下方的「还剩多久刷新」：dashboard 的 resetsInSeconds → resetAt/resetText
+        // 各窗口的重置倒计时：dashboard 的 resetsInSeconds → resetAt/resetText；
+        // Monthly 会继续进入 30d 水平条的标题区域。
         // （countdownText 对秒敏感，断言用精度 + 格式而非精确文本。）
         XCTAssertEqual(primary.items[0].resetAt?.timeIntervalSinceNow ?? 0, 3_600, accuracy: 5)
         XCTAssertEqual(primary.items[1].resetAt?.timeIntervalSinceNow ?? 0, 86_400, accuracy: 5)
+        XCTAssertEqual(primary.items[2].resetAt?.timeIntervalSinceNow ?? 0, 9 * 86_400 + 19 * 3_600, accuracy: 5)
         XCTAssertNotNil(primary.items[0].resetText)
         XCTAssertNotNil(primary.items[1].resetText)
-        XCTAssertNil(primary.items[2].resetAt)
-        XCTAssertNil(primary.items[2].resetText)
+        XCTAssertNotNil(primary.items[2].resetText)
     }
 
     func testHandlesMissingWindowsGracefully() {

@@ -1,0 +1,46 @@
+name: pricing-data
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pricing-data
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 生成 TokenMeter 价格快照
+        run: ./scripts/update-pricing.sh
+
+      - name: 验证转换规则与快照解码
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          swift test --filter PricingTests
+          swift test --filter CostCalculatorTests
+
+      - name: 生成校验和
+        run: |
+          cp Sources/TokenMeterCore/Resources/litellm-pricing.json litellm-pricing.json
+          shasum -a 256 litellm-pricing.json > litellm-pricing.json.sha256
+
+      - name: 发布稳定下载地址
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view pricing-data >/dev/null 2>&1; then
+            gh release create pricing-data --prerelease --target "$GITHUB_SHA" \
+              --title "TokenMeter Pricing Data" \
+              --notes "TokenMeter 自动校验的 LiteLLM 价格快照。"
+          fi
+          gh release upload pricing-data \
+            litellm-pricing.json litellm-pricing.json.sha256 --clobber

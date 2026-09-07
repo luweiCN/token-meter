@@ -8,11 +8,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarController: StatusBarController?
     private var refreshTimer: Timer?
     private var exchangeRateTimer: Timer?
+    private var pricingRefreshTimer: Timer?
+    private var startupTask: Task<Void, Never>?
     private var ipcServer: TokenMeterIPCServer?
-    private let usageNotificationCenter = UsageNotificationCenter()
+    private let usageNotificationCenter: UsageNotificationDelivering
     private var cancellables: Set<AnyCancellable> = []
+    private var isTerminating = false
+    /// 测试可替换，避免 AppDelegate 生命周期测试访问真实网络。
+    var refreshPricingSnapshot: () async -> PricingSnapshotUpdateOutcome = {
+        await PricingSnapshotUpdater.refreshIfDue()
+    }
+
+    override init() {
+        usageNotificationCenter = UsageNotificationCenter()
+        super.init()
+    }
+
+    init(usageNotificationCenter: UsageNotificationDelivering) {
+        self.usageNotificationCenter = usageNotificationCenter
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        isTerminating = false
         let store = ProviderStore(notificationCenter: usageNotificationCenter)
         store.seedDefaultScanRoots()
         self.store = store
@@ -21,11 +39,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         try? ipcServer.start()
         self.ipcServer = ipcServer
 
-        Task {
+        startupTask?.cancel()
+        startupTask = Task { [weak self] in
+            guard let self, !Task.isCancelled,
+                  let store = self.store,
+                  let ipcServer = self.ipcServer else { return }
             await store.refreshNotificationAuthorizationState()
+            guard !Task.isCancelled else { return }
             await store.refresh()
+            guard !Task.isCancelled else { return }
+            let pricingOutcome = await self.refreshPricingSnapshot()
+            guard !Task.isCancelled, !self.isTerminating else { return }
+            if pricingOutcome == .updated {
+                store.reloadPricingMetadata()
+            }
+            self.schedulePricingRefreshTimer(after: self.nextPricingRefreshDelay(for: pricingOutcome))
+            guard !Task.isCancelled else { return }
             await store.refreshLocalAgentIndex()
+            guard !Task.isCancelled else { return }
             await store.refreshExchangeRate()
+            guard !Task.isCancelled else { return }
             ipcServer.broadcastDataChanged()
         }
 
@@ -51,9 +84,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        isTerminating = true
+        startupTask?.cancel()
+        startupTask = nil
         ipcServer?.stop()
         refreshTimer?.invalidate()
         exchangeRateTimer?.invalidate()
+        pricingRefreshTimer?.invalidate()
         cancellables.removeAll()
     }
 
@@ -92,6 +129,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await self?.store?.refreshExchangeRate()
             }
         }
+    }
+
+    /// 成功后精确排到下一个 24h 检查点；失败则 6h 后重试。
+    /// 新快照落盘后立即跑一轮本地索引，扫描器只重算变价模型。
+    private func schedulePricingRefreshTimer(after delay: TimeInterval) {
+        guard !isTerminating else { return }
+        pricingRefreshTimer?.invalidate()
+        pricingRefreshTimer = Timer.scheduledTimer(withTimeInterval: max(60, delay), repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let outcome = await self.refreshPricingSnapshot()
+                guard !Task.isCancelled, !self.isTerminating else { return }
+                if outcome == .updated {
+                    self.store?.reloadPricingMetadata()
+                    await self.store?.refreshLocalAgentIndex()
+                    self.ipcServer?.broadcastDataChanged()
+                }
+                self.schedulePricingRefreshTimer(after: self.nextPricingRefreshDelay(for: outcome))
+            }
+        }
+    }
+
+    private func nextPricingRefreshDelay(for outcome: PricingSnapshotUpdateOutcome) -> TimeInterval {
+        outcome == .failed ? 6 * 3600 : PricingSnapshotUpdater.timeUntilNextCheck()
     }
 
     private func refreshInterval(for snapshot: SettingsSnapshot?) -> TimeInterval {

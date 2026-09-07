@@ -5,13 +5,16 @@ public final class LocalAgentScanner {
     private let database: SQLiteDatabase
     private let writer: UsageEventWriter
     private let rollupBuilder: RollupBuilder
-    /// 当前生效的计价器（随包快照 + 用户覆盖）。custom-pricing.json 变化时整体换新。
+    /// 当前生效的计价器（在线缓存/随包快照 + 用户覆盖）。价格输入变化时整体换新。
     private var costCalculator: CostCalculator
     private let customPricingURL: URL
+    private let cachedPricingURL: URL
+    /// 在线快照缓存的文件指纹；原子替换后下一轮扫描即可见。
+    private var cachedPricingFileFingerprint: String?
     /// 当前生效的 custom-pricing.json 指纹；与磁盘不一致时在下一轮扫描前重投影。
     private var customPricingFingerprint: String?
-    /// 上次生效的覆盖键（canonical）。文件删改后靠它与新键的并集圈定回算范围。
-    private var activeCustomPricingKeys: Set<String>
+    /// 每个进程首轮扫描都要与 model_pricing 对账，修复“快照已落盘但重投影前崩溃”。
+    private var pricingStateReconciled = false
     private let isoFormatter = ISO8601DateFormatter()
     private let scanLock = NSLock()
 
@@ -20,16 +23,21 @@ public final class LocalAgentScanner {
     /// 生产环境永远为 nil。
     var testHookAfterEventWrite: ((Int64) throws -> Void)?
 
-    public init(database: SQLiteDatabase, customPricingURL: URL = TokenMeterPaths.customPricingURL()) {
+    public init(
+        database: SQLiteDatabase,
+        customPricingURL: URL = TokenMeterPaths.customPricingURL(),
+        cachedPricingURL: URL = TokenMeterPaths.pricingSnapshotURL()
+    ) {
         self.database = database
         self.customPricingURL = customPricingURL
-        // 定价 = 随包快照 + 用户覆盖（custom-pricing.json）；快照缺失时退化为空表
+        self.cachedPricingURL = cachedPricingURL
+        // 定价 = 已校验的在线缓存（缺失时随包快照）+ 用户覆盖；全部缺失时退化为空表
         // （成本按 unknown 记，仍能正确落 usage_events）。
         let overrides = (try? CustomPricingOverrides.load(url: customPricingURL)) ?? .empty
-        let snapshot = (try? PricingSnapshot.loadBundled())
+        let snapshot = (try? PricingSnapshot.loadEffective(cachedURL: cachedPricingURL))
             ?? PricingSnapshot(snapshotVersion: "unavailable", source: "builtin", models: [:])
+        cachedPricingFileFingerprint = Self.fileFingerprint(at: cachedPricingURL)
         customPricingFingerprint = overrides.fingerprint
-        activeCustomPricingKeys = overrides.canonicalKeys
         let calculator = Self.makeCostCalculator(snapshot: snapshot, overrides: overrides)
         costCalculator = calculator
         self.writer = UsageEventWriter(database: database, costCalculator: calculator)
@@ -59,7 +67,7 @@ public final class LocalAgentScanner {
 
     public func scanRoot(id rootId: Int64) async throws {
         try withExclusiveScan {
-            try refreshCustomPricingIfNeeded()
+            try refreshPricingIfNeeded()
             try scan(rootId: rootId, reporter: nil)
         }
     }
@@ -72,45 +80,72 @@ public final class LocalAgentScanner {
     /// `testInterruptedFullRescanSelfHealsOnNextIncrementalScan` 钉住这一点。
     public func fullRescan(onProgress: @escaping (ScanProgressEvent) -> Void = { _ in }) throws {
         try withExclusiveScan {
-            // 全量重扫前先换到最新价：重投影跳过（旧事件马上会被清空重写，
-            // 重扫写入自然用新计价器）。
-            try refreshCustomPricingIfNeeded(reprojecting: false)
+            // 先把当前数据安全地收敛到最新价，再清空重扫。这样即使两步之间退出，
+            // model_pricing 也不会领先于 usage_events，下一次扫描仍能正确对账。
+            try refreshPricingIfNeeded()
             try rebuildDatabase(onProgress: onProgress)
         }
     }
 
-    /// custom-pricing.json 变化后：重建计价器、把受影响模型的存量事件按新价
-    /// 全量重投影；固定价模型的普通 reported 行不动，峰谷模型按本地时刻表重算，重建 rollup。
-    /// 指纹未变时是纯 stat，零成本。
-    ///
-    /// 解析失败（fingerprint=nil ≠ 任何有效指纹）时退回纯内置价并保留旧键集——
-    /// 每轮都会重试解析，用户修好 JSON 立即自愈。
-    private func refreshCustomPricingIfNeeded(reprojecting: Bool = true) throws {
+    /// 在线快照或 custom-pricing.json 变化后：重建计价器，将逐模型内容指纹与
+    /// model_pricing 对账，只重投影真正变价且在库中出现的模型，最后一次性重建 rollup。
+    /// 指纹未变且本进程已对账时只做两次 stat，不重解码大快照。
+    private func refreshPricingIfNeeded() throws {
         let overrides = (try? CustomPricingOverrides.load(url: customPricingURL)) ?? .empty
-        guard overrides.fingerprint != customPricingFingerprint else { return }
+        let nextCachedFingerprint = Self.fileFingerprint(at: cachedPricingURL)
+        guard !pricingStateReconciled
+            || overrides.fingerprint != customPricingFingerprint
+            || nextCachedFingerprint != cachedPricingFileFingerprint else { return }
 
-        let snapshot = (try? PricingSnapshot.loadBundled())
+        let snapshot = (try? PricingSnapshot.loadEffective(cachedURL: cachedPricingURL))
             ?? PricingSnapshot(snapshotVersion: "unavailable", source: "builtin", models: [:])
-        let calculator = Self.makeCostCalculator(snapshot: snapshot, overrides: overrides)
+        let (resolved, dropped) = overrides.resolvedModels(bundled: snapshot)
+        let merged = snapshot.merging(userOverrides: resolved)
+        let ignoredReported = overrides.ignoredReportedKeys.subtracting(dropped)
+        let calculator = CostCalculator(snapshot: merged, ignoreReportedModels: ignoredReported)
+        let canonicalModels = CostCalculator.canonicalModels(from: merged)
+        let effectiveOverrideKeys = overrides.canonicalKeys.subtracting(dropped)
+        var fingerprints: [String: String] = [:]
+        fingerprints.reserveCapacity(canonicalModels.count)
+        for (key, pricing) in canonicalModels {
+            fingerprints[key] = try Self.pricingFingerprint(
+                pricing,
+                ignoreReported: ignoredReported.contains(key),
+                isUserOverride: effectiveOverrideKeys.contains(key)
+            )
+        }
+        let persisted = try persistedPricingFingerprints()
+        let allKeys = Set(persisted.keys).union(fingerprints.keys)
+        let affected = Set(allKeys.filter { persisted[$0] != fingerprints[$0] })
+
         costCalculator = calculator
         writer.updateCostCalculator(calculator)
 
-        if reprojecting {
-            let affected = overrides.canonicalKeys.union(activeCustomPricingKeys)
-            for key in affected.sorted() {
-                try reprojectPricing(
-                    canonicalModel: key,
-                    calculator: calculator,
-                    forceIgnoringReported: overrides.ignoredReportedKeys.contains(key)
-                )
-            }
-            if !affected.isEmpty {
-                try rollupBuilder.rebuildAll()
-            }
+        let usedKeys = try usedPricingKeys()
+        let usedAffected = affected.intersection(usedKeys)
+        for key in usedAffected.sorted() {
+            try reprojectPricing(
+                canonicalModel: key,
+                calculator: calculator,
+                forceIgnoringReported: ignoredReported.contains(key) || canonicalModels[key]?.tiered != nil
+            )
+        }
+        if !usedAffected.isEmpty {
+            try rollupBuilder.rebuildAll()
         }
 
+        if !affected.isEmpty {
+            try persistPricingCatalog(
+                canonicalModels,
+                fingerprints: fingerprints,
+                snapshotVersion: snapshot.snapshotVersion,
+                snapshotSource: snapshot.source,
+                overrideKeys: effectiveOverrideKeys
+            )
+        }
+        cachedPricingFileFingerprint = nextCachedFingerprint
         customPricingFingerprint = overrides.fingerprint
-        activeCustomPricingKeys = overrides.canonicalKeys
+        pricingStateReconciled = true
     }
 
     /// 内置快照 + 用户条目 → 计价器。凑不齐完整价格的条目被丢弃（其 ignoreReported
@@ -121,6 +156,98 @@ public final class LocalAgentScanner {
             snapshot: snapshot.merging(userOverrides: resolved),
             ignoreReportedModels: overrides.ignoredReportedKeys.subtracting(dropped)
         )
+    }
+
+    private struct PricingFingerprintPayload: Encodable {
+        let pricing: ModelPricing
+        let ignoreReported: Bool
+        let isUserOverride: Bool
+    }
+
+    private static func pricingFingerprint(
+        _ pricing: ModelPricing,
+        ignoreReported: Bool,
+        isUserOverride: Bool
+    ) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(PricingFingerprintPayload(
+            pricing: pricing,
+            ignoreReported: ignoreReported,
+            isUserOverride: isUserOverride
+        ))
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func fileFingerprint(at url: URL) -> String? {
+        guard let metadata = try? FileManager.default.attributesOfItem(atPath: url.path) else {
+            return nil
+        }
+        let size = (metadata[.size] as? NSNumber)?.int64Value ?? 0
+        let modifiedAt = (metadata[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        return "\(size):\(Int64((modifiedAt * 1_000).rounded()))"
+    }
+
+    private func persistedPricingFingerprints() throws -> [String: String] {
+        Dictionary(uniqueKeysWithValues: try database.query(
+            "SELECT model_key, pricing_fingerprint FROM model_pricing"
+        ).compactMap { row in
+            guard let key = row.string("model_key"),
+                  let fingerprint = row.string("pricing_fingerprint") else { return nil }
+            return (key, fingerprint)
+        })
+    }
+
+    private func usedPricingKeys() throws -> Set<String> {
+        Set(try database.query(
+            "SELECT DISTINCT model_canonical FROM usage_events WHERE model_canonical IS NOT NULL"
+        ).compactMap { $0.string("model_canonical") })
+    }
+
+    private func persistPricingCatalog(
+        _ models: [String: ModelPricing],
+        fingerprints: [String: String],
+        snapshotVersion: String,
+        snapshotSource: String,
+        overrideKeys: Set<String>
+    ) throws {
+        let baseSource = snapshotSource == "litellm" ? "litellm" : "builtin"
+        try database.execute("BEGIN IMMEDIATE")
+        do {
+            try database.execute("DELETE FROM model_pricing")
+            for key in models.keys.sorted() {
+                guard let pricing = models[key], let fingerprint = fingerprints[key] else { continue }
+                try database.execute(
+                    """
+                    INSERT INTO model_pricing(
+                      model_key, input_per_mtok_micros, output_per_mtok_micros,
+                      cache_read_per_mtok_micros, cache_write_5m_per_mtok_micros,
+                      cache_write_1h_per_mtok_micros, source, snapshot_version, pricing_fingerprint
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        .text(key),
+                        .int(Self.priceMicros(pricing.inputPerMTok)),
+                        .int(Self.priceMicros(pricing.outputPerMTok)),
+                        .int(Self.priceMicros(pricing.cacheReadPerMTok)),
+                        .int(Self.priceMicros(pricing.cacheWrite5mPerMTok)),
+                        .int(Self.priceMicros(pricing.cacheWrite1hPerMTok)),
+                        .text(overrideKeys.contains(key) ? "user" : baseSource),
+                        .text(snapshotVersion),
+                        .text(fingerprint),
+                    ]
+                )
+            }
+            try database.execute("COMMIT")
+        } catch {
+            try? database.execute("ROLLBACK")
+            throw error
+        }
+    }
+
+    private static func priceMicros(_ pricePerMTok: Double) -> Int64 {
+        Int64((pricePerMTok * 1_000_000).rounded())
     }
 
     /// 一个模型的事件按当前计价器重算，然后 rollup 重建。覆盖移除后同样走这里，

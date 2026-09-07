@@ -35,7 +35,7 @@ final class ResetCreditDisplayTests: XCTestCase {
         let display = ResetCreditDisplay.item(index: 1, credit: credit, now: now)
 
         XCTAssertEqual(display.progress, 0.5, accuracy: 0.001)
-        XCTAssertEqual(display.remainingText, "剩 15 天")
+        XCTAssertEqual(display.remainingText, "15 天")
         XCTAssertEqual(display.tone, .ok)
     }
 
@@ -49,7 +49,7 @@ final class ResetCreditDisplayTests: XCTestCase {
         let display = ResetCreditDisplay.item(index: 1, credit: credit, now: now)
 
         XCTAssertEqual(display.progress, 0.2, accuracy: 0.001)
-        XCTAssertEqual(display.remainingText, "剩 6 天")
+        XCTAssertEqual(display.remainingText, "6 天")
     }
 
     func testMarksCreditExpiringWithinSevenDaysAsWarning() {
@@ -61,7 +61,7 @@ final class ResetCreditDisplayTests: XCTestCase {
 
         let display = ResetCreditDisplay.item(index: 1, credit: credit, now: now)
 
-        XCTAssertEqual(display.remainingText, "剩 7 天")
+        XCTAssertEqual(display.remainingText, "7 天")
         XCTAssertEqual(display.tone, .warning)
     }
 

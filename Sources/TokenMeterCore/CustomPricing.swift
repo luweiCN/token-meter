@@ -1,8 +1,8 @@
 import Foundation
 
 /// custom-pricing.json 的单个条目。所有字段都可省略：
-/// - 省略的价格字段逐项沿用内置快照价（含 tiered）——只想开 ignoreReported 时
-///   一个价格都不用抄；内置快照里也没有的模型则必须写全五价。
+/// - 省略的价格字段逐项沿用当前生效快照价（含 longContext/tiered）——只想开
+///   ignoreReported 时一个价格都不用抄；生效快照里也没有的模型则必须写全五价。
 /// - `ignoreReported: true` = 忽略日志上报成本（OpenCode/OMP 会带），强制按本地价计。
 public struct CustomPricingEntry: Equatable, Codable {
     public let inputPerMTok: Double?
@@ -10,6 +10,7 @@ public struct CustomPricingEntry: Equatable, Codable {
     public let cacheReadPerMTok: Double?
     public let cacheWrite5mPerMTok: Double?
     public let cacheWrite1hPerMTok: Double?
+    public let longContext: LongContextPricing?
     public let tiered: PeakOffPeakPricing?
     public let ignoreReported: Bool?
 
@@ -19,6 +20,7 @@ public struct CustomPricingEntry: Equatable, Codable {
         cacheReadPerMTok: Double? = nil,
         cacheWrite5mPerMTok: Double? = nil,
         cacheWrite1hPerMTok: Double? = nil,
+        longContext: LongContextPricing? = nil,
         tiered: PeakOffPeakPricing? = nil,
         ignoreReported: Bool? = nil
     ) {
@@ -27,6 +29,7 @@ public struct CustomPricingEntry: Equatable, Codable {
         self.cacheReadPerMTok = cacheReadPerMTok
         self.cacheWrite5mPerMTok = cacheWrite5mPerMTok
         self.cacheWrite1hPerMTok = cacheWrite1hPerMTok
+        self.longContext = longContext
         self.tiered = tiered
         self.ignoreReported = ignoreReported
     }
@@ -34,7 +37,7 @@ public struct CustomPricingEntry: Equatable, Codable {
 
 /// 用户自定义模型定价：`~/.token-meter/custom-pricing.json`（手写、无 UI）。
 ///
-/// 条目价格覆盖随包快照（同名覆盖、新键补充）；全 0 单价即免费模型——成本按 $0
+/// 条目价格覆盖当前生效快照（同名覆盖、新键补充）；全 0 单价即免费模型——成本按 $0
 /// 计为 computed，不再显示「价格未知」。带峰谷价的模型无论是否有供应商上报价，
 /// 都按本地时刻表计价；`ignoreReported: true` 仍可用于没有峰谷价、但上报价口径不对
 /// 的固定价模型。上报原值由 usage_events.reported_cost_usd_micros 留底。
@@ -97,15 +100,17 @@ public struct CustomPricingOverrides: Equatable {
         )
     }
 
-    /// 把条目与内置快照逐字段合并成完整价：条目缺的字段从内置价继承（键先用原名查、
+    /// 把条目与生效快照逐字段合并成完整价：条目缺的字段从快照继承（键先用原名查、
     /// 再用 canonical 查）。任何一项价格在两边都取不到 → 无法安全计价，整个条目的
     /// 价格部分（连同 ignoreReported）一起放弃，绝不用半份价格算账。
     public func resolvedModels(bundled: PricingSnapshot) -> (models: [String: ModelPricing], droppedKeys: Set<String>) {
         var resolved: [String: ModelPricing] = [:]
         var dropped = Set<String>()
-        for (key, entry) in models {
+        let bundledByCanonical = CostCalculator.canonicalModels(from: bundled)
+        for key in models.keys.sorted() {
+            guard let entry = models[key] else { continue }
             let normalized = ModelNameNormalizer.canonical(key)
-            let base = bundled.models[key] ?? bundled.models[normalized]
+            let base = bundled.models[key] ?? bundled.models[normalized] ?? bundledByCanonical[normalized]
             func inherit(_ value: Double?, _ fallback: Double?) -> Double? {
                 value ?? fallback
             }
@@ -114,18 +119,25 @@ public struct CustomPricingOverrides: Equatable {
                   let cacheRead = inherit(entry.cacheReadPerMTok, base?.cacheReadPerMTok),
                   let cacheWrite5m = inherit(entry.cacheWrite5mPerMTok, base?.cacheWrite5mPerMTok),
                   let cacheWrite1h = inherit(entry.cacheWrite1hPerMTok, base?.cacheWrite1hPerMTok) else {
-                dropped.insert(normalized)
+                if resolved[normalized] == nil {
+                    dropped.insert(normalized)
+                }
                 continue
             }
-            resolved[key] = ModelPricing(
+            // 覆盖直接以 canonical 键合并，保证 omniroute/cx/... 这类写法
+            // 不会在 CostCalculator 的字典序撞名裁决中输给随包裸键。
+            guard resolved[normalized] == nil else { continue }
+            resolved[normalized] = ModelPricing(
                 inputPerMTok: input,
                 outputPerMTok: output,
                 cacheReadPerMTok: cacheRead,
                 cacheWrite5mPerMTok: cacheWrite5m,
                 cacheWrite1hPerMTok: cacheWrite1h,
+                longContext: entry.longContext ?? base?.longContext,
                 tiered: entry.tiered ?? base?.tiered,
                 ignoreReported: entry.ignoreReported
             )
+            dropped.remove(normalized)
         }
         return (resolved, dropped)
     }

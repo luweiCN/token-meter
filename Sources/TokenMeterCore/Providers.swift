@@ -502,7 +502,7 @@ public enum OpenCodeGoSnapshotBuilder {
 
         func metric(_ window: OpenCodeGoUsageWindowData, id: String, label: String, minutes: Int) -> UsageMetric {
             // dashboard 的「重置于 X」是页面渲染时算好的倒计时；抓取时刻再加一
-            // 次瞬时偏差即可当作重置时刻（弹窗环下方与其他套餐同款显示倒计时）。
+            // 次瞬时偏差即可当作重置时刻，供各窗口展示倒计时。
             let resetAt = window.resetsInSeconds.map { Date().addingTimeInterval($0) }
             return UsageMetric(
                 id: id,

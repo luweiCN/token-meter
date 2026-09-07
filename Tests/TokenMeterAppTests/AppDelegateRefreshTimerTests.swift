@@ -24,7 +24,8 @@ final class AppDelegateRefreshTimerTests: XCTestCase {
             restoreEnvironmentValue(previousConfig, forKey: "TOKENMETER_CONFIG")
         }
 
-        let delegate = AppDelegate()
+        let delegate = AppDelegate(usageNotificationCenter: AppDelegateNotificationStub())
+        delegate.refreshPricingSnapshot = { .notDue }
         delegate.applicationDidFinishLaunching(
             Notification(name: NSApplication.didFinishLaunchingNotification, object: NSApplication.shared)
         )
@@ -92,4 +93,11 @@ final class AppDelegateRefreshTimerTests: XCTestCase {
             unsetenv(key)
         }
     }
+}
+
+private final class AppDelegateNotificationStub: UsageNotificationDelivering {
+    func authorizationState() async -> UsageNotificationAuthorizationState { .denied }
+    func requestAuthorization() async -> UsageNotificationAuthorizationState { .denied }
+    func deliver(_ events: [UsageNotificationEvent]) {}
+    func openNotificationSettings() {}
 }

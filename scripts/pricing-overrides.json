@@ -204,54 +204,6 @@
       "cacheWrite5mPerMTok": 0.0,
       "cacheWrite1hPerMTok": 0.0,
       "note": "与 grok-4.6 同价（Grok Build 会话 modelUsage 键为 grok-4.6-build）；官网未拆价"
-    },
-    "gpt-5.6-sol-fast": {
-      "inputPerMTok": 8.0,
-      "outputPerMTok": 40.0,
-      "cacheReadPerMTok": 0.8,
-      "cacheWrite5mPerMTok": 10.0,
-      "cacheWrite1hPerMTok": 10.0,
-      "note": "OpenAI API Fast 短上下文（openai.com/api-fast-mode，2026-08-28）：$8 / $0.80 cached / $10 writes / $40。非 ChatGPT credits。"
-    },
-    "gpt-5.6-terra-fast": {
-      "inputPerMTok": 4.0,
-      "outputPerMTok": 24.0,
-      "cacheReadPerMTok": 0.4,
-      "cacheWrite5mPerMTok": 5.0,
-      "cacheWrite1hPerMTok": 5.0,
-      "note": "OpenAI API Fast 短上下文（2026-08-28）。非 ChatGPT credits。"
-    },
-    "gpt-5.6-luna-fast": {
-      "inputPerMTok": 0.4,
-      "outputPerMTok": 2.4,
-      "cacheReadPerMTok": 0.04,
-      "cacheWrite5mPerMTok": 0.5,
-      "cacheWrite1hPerMTok": 0.5,
-      "note": "OpenAI API Fast 短上下文（2026-08-28）。非 ChatGPT credits。"
-    },
-    "gpt-5.5-fast": {
-      "inputPerMTok": 12.5,
-      "outputPerMTok": 75.0,
-      "cacheReadPerMTok": 1.25,
-      "cacheWrite5mPerMTok": 15.625,
-      "cacheWrite1hPerMTok": 25.0,
-      "note": "OpenAI API Fast 短上下文 input/output/cache read（2026-08-28）；writes 按 convert_model 缺省 input×1.25 / ×2。非 ChatGPT credits。"
-    },
-    "gpt-5.4-fast": {
-      "inputPerMTok": 5.0,
-      "outputPerMTok": 30.0,
-      "cacheReadPerMTok": 0.5,
-      "cacheWrite5mPerMTok": 6.25,
-      "cacheWrite1hPerMTok": 10.0,
-      "note": "OpenAI API Fast 短上下文；writes 派生。非 ChatGPT credits。"
-    },
-    "gpt-5.4-mini-fast": {
-      "inputPerMTok": 1.5,
-      "outputPerMTok": 9.0,
-      "cacheReadPerMTok": 0.15,
-      "cacheWrite5mPerMTok": 1.875,
-      "cacheWrite1hPerMTok": 3.0,
-      "note": "OpenAI API Fast 短上下文；writes 派生。非 ChatGPT credits。"
     }
   }
 }

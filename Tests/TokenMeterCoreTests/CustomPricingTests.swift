@@ -258,6 +258,27 @@ final class CustomPricingTests: XCTestCase {
         XCTAssertEqual(event.costMicros, 200_000, "存量事件必须按用户覆盖价重算")
         XCTAssertNotEqual(event.costMicros, bundledCost)
     }
+
+    func testScannerReprojectsExistingEventsWhenRemoteSnapshotChanges() async throws {
+        let fixture = try CustomPricingScanFixture.make()
+        defer { fixture.cleanup() }
+
+        try await fixture.scanner.scanRoot(id: 1)
+        XCTAssertEqual(try fixture.eventRow().source, "unknown")
+
+        try fixture.writeRemotePricing(model: "ox-alpha-free", input: 10, output: 20)
+        try await fixture.scanner.scanRoot(id: 1)
+        var event = try fixture.eventRow()
+        XCTAssertEqual(event.source, "computed")
+        XCTAssertEqual(event.costMicros, 20_000)
+
+        try fixture.writeRemotePricing(model: "ox-alpha-free", input: 100, output: 200)
+        try await fixture.scanner.scanRoot(id: 1)
+        event = try fixture.eventRow()
+        XCTAssertEqual(event.source, "computed")
+        XCTAssertEqual(event.costMicros, 200_000)
+        XCTAssertEqual(try fixture.appliedPricingCount(), 1)
+    }
 }
 
 // MARK: - Fixtures
@@ -266,6 +287,7 @@ final class CustomPricingTests: XCTestCase {
 private final class CustomPricingScanFixture {
     let root: URL
     let pricingURL: URL
+    let remotePricingURL: URL
     let database: SQLiteDatabase
     let scanner: LocalAgentScanner
     private let sessionKey: String
@@ -299,7 +321,12 @@ private final class CustomPricingScanFixture {
         )
         self.database = database
         pricingURL = root.appendingPathComponent("custom-pricing.json")
-        self.scanner = LocalAgentScanner(database: database, customPricingURL: pricingURL)
+        remotePricingURL = root.appendingPathComponent("remote-pricing.json")
+        self.scanner = LocalAgentScanner(
+            database: database,
+            customPricingURL: pricingURL,
+            cachedPricingURL: remotePricingURL
+        )
     }
 
     func cleanup() {
@@ -313,6 +340,26 @@ private final class CustomPricingScanFixture {
                       "cacheReadPerMTok": 0, "cacheWrite5mPerMTok": 0, "cacheWrite1hPerMTok": 0\(flag)}}
         """
         try Data(json.utf8).write(to: pricingURL)
+    }
+
+    func writeRemotePricing(model: String, input: Double, output: Double) throws {
+        let snapshot = PricingSnapshot(
+            snapshotVersion: "remote-\(input)-\(output)",
+            source: "litellm",
+            models: [
+                model: ModelPricing(
+                    inputPerMTok: input,
+                    outputPerMTok: output,
+                    cacheReadPerMTok: input * 0.1,
+                    cacheWrite5mPerMTok: input * 1.25,
+                    cacheWrite1hPerMTok: input * 2
+                )
+            ]
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(snapshot).write(to: remotePricingURL, options: .atomic)
     }
 
     /// 追加第二个独立会话文件，验证「新事件也走覆盖价」。
@@ -354,6 +401,10 @@ private final class CustomPricingScanFixture {
 
     func rollupCostMicros() throws -> Int64 {
         try XCTUnwrap(database.query("SELECT coalesce(sum(cost_usd_micros), 0) AS value FROM daily_rollup").first?.int("value"))
+    }
+
+    func appliedPricingCount() throws -> Int64 {
+        try XCTUnwrap(database.query("SELECT count(*) AS value FROM model_pricing").first?.int("value"))
     }
 }
 

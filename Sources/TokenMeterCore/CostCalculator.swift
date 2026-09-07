@@ -50,6 +50,13 @@ public struct CostCalculator {
     }
 
     public init(snapshot: PricingSnapshot, ignoreReportedModels: Set<String> = []) {
+        canonicalIndex = Self.canonicalModels(from: snapshot)
+        self.ignoreReportedModels = ignoreReportedModels
+    }
+
+    /// 快照原始键 → 用量侧 canonical 键。扫描器的价格变更对账与计价必须共用
+    /// 这一份撞名规则，否则会出现“对账说价格已生效，计价却命中另一个键”。
+    static func canonicalModels(from snapshot: PricingSnapshot) -> [String: ModelPricing] {
         var index: [String: ModelPricing] = [:]
         // LiteLLM 的 key 是原始名，归一化后会撞名：一个规范名常对应多个原始 key。
         // 实测快照有 54 组，主因是 provider 前缀（claude-opus-4-8 与
@@ -63,8 +70,7 @@ public struct CostCalculator {
                 index[canonical] = pricing
             }
         }
-        canonicalIndex = index
-        self.ignoreReportedModels = ignoreReportedModels
+        return index
     }
 
     public func cost(for event: UsageEvent) -> (micros: Int64?, source: CostSource) {
@@ -83,13 +89,15 @@ public struct CostCalculator {
 
         // 不做家族兜底。同家族价格能差 100 倍（gpt-5 $0.05 vs gpt-5.5 $5.00），
         // 借来的价格会被标成 computed，用户无从分辨那是不是真的。
-        // 匹配不到就诚实地说不知道，让人去跑 scripts/update-pricing.sh。
+        // 匹配不到就诚实地说不知道，等待经过校验的新快照或用户覆盖补齐。
         guard let pricing else {
             return (nil, .unknown)
         }
 
         // 峰谷价（如 DeepSeek）：生效时刻之后按事件发生时刻选高峰/空闲价；
-        // 生效时刻之前的存量事件仍按基础价计，重扫历史数据时不会把旧账算成新价。
+        // 生效时刻之前的存量事件仍按基础价计。长上下文价按单次完整输入
+        // （未缓存 + 缓存读 + 缓存写）切档。目前数据源中两类档位不重叠；
+        // 如果将来某模型同时出现，峰谷价优先，避免猜测二维价格矩阵。
         let rate: RateCard
         if let tiered = pricing.tiered {
             switch tiered.phase(at: event.observedAt) {
@@ -97,6 +105,9 @@ public struct CostCalculator {
             case .offPeak: rate = tiered.offPeak
             case .notYetEffective: rate = pricing.rate
             }
+        } else if let longContext = pricing.longContext,
+                  billableInputTokens(for: event) > longContext.thresholdTokens {
+            rate = longContext.rate
         } else {
             rate = pricing.rate
         }
@@ -113,5 +124,13 @@ public struct CostCalculator {
 
     private func perMillion(_ tokens: Int64, _ pricePerMTok: Double) -> Double {
         Double(tokens) / 1_000_000.0 * pricePerMTok
+    }
+
+    private func billableInputTokens(for event: UsageEvent) -> Int64 {
+        [event.inputTokens, event.cacheReadTokens, event.cacheWrite5mTokens, event.cacheWrite1hTokens]
+            .reduce(0) { total, value in
+                let (sum, overflow) = total.addingReportingOverflow(value)
+                return overflow ? .max : sum
+            }
     }
 }

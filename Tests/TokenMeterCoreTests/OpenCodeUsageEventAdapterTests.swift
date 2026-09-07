@@ -95,7 +95,7 @@ final class OpenCodeUsageEventAdapterTests: XCTestCase {
         XCTAssertNil(sessions[0].events[0].reportedCostUSDMicros)
     }
 
-    func testLunaFastWithZeroCostIsPricedFromBundledSnapshot() throws {
+    func testLunaFastWithZeroCostUsesLongContextBundledPrice() throws {
         let database = try makeDatabase()
         try insert(database, id: "m1", sessionId: "s1", createdMs: 1_000,
             data: #"{"id":"m1","sessionID":"s1","role":"assistant","modelID":"gpt-5.6-luna-fast","providerID":"openai","cost":0,"time":{"created":1000},"tokens":{"input":1000000,"output":0,"reasoning":0,"cache":{"read":0,"write":0}}}"#)
@@ -106,7 +106,7 @@ final class OpenCodeUsageEventAdapterTests: XCTestCase {
 
         let priced = try CostCalculator(snapshot: PricingSnapshot.loadBundled()).cost(for: event)
         XCTAssertEqual(priced.source, .computed)
-        XCTAssertEqual(priced.micros, 400_000)
+        XCTAssertEqual(priced.micros, 800_000, "1M 输入超过 272K，应使用 Fast 长上下文价")
     }
 
     func testPositiveCostIsReported() throws {

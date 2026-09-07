@@ -413,6 +413,14 @@ final class TokenMeterDatabaseMigratorTests: XCTestCase {
         XCTAssertTrue(columns.contains("cost_unknown_events"))
     }
 
+    func testModelPricingPersistsPerModelFingerprint() throws {
+        let database = try memoryDatabase()
+        try TokenMeterDatabaseMigrator.migrate(database)
+
+        let columns = try database.query("PRAGMA table_info(model_pricing)").compactMap { $0.string("name") }
+        XCTAssertTrue(columns.contains("pricing_fingerprint"))
+    }
+
     /// `configTableNames` 是一份【白名单】：重建时凡是不在其中的表一律删除。
     ///
     /// 这个方向是 fail-dangerous 的——将来谁加了一张配置表却忘了写进白名单，

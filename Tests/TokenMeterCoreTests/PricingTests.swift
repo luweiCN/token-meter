@@ -27,8 +27,7 @@ final class PricingTests: XCTestCase {
         let snapshot = try PricingSnapshot.loadBundled()
         XCTAssertFalse(snapshot.snapshotVersion.isEmpty)
         XCTAssertEqual(snapshot.source, "litellm")
-        // 353 个模型。掉到 300 以下说明过滤条件坏了。
-        XCTAssertGreaterThan(snapshot.models.count, 300)
+        try snapshot.validate(minimumModelCount: PricingSnapshotUpdater.minimumRemoteModelCount)
     }
 
     func testBundledSnapshotPricesTheModelsThisMachineActuallyUses() throws {
@@ -61,6 +60,27 @@ final class PricingTests: XCTestCase {
 
         let standard = try XCTUnwrap(snapshot.models["gpt-5.6-sol"])
         XCTAssertNotEqual(standard.inputPerMTok, solFast.inputPerMTok)
+    }
+
+    func testBundledSnapshotIncludesGPT6StandardFastAndLongContextRates() throws {
+        let snapshot = try PricingSnapshot.loadBundled()
+        let standard = try XCTUnwrap(snapshot.models["gpt-6-astra"])
+        XCTAssertEqual(standard.inputPerMTok, 10)
+        XCTAssertEqual(standard.outputPerMTok, 50)
+        XCTAssertEqual(standard.cacheReadPerMTok, 1)
+        XCTAssertEqual(standard.cacheWrite5mPerMTok, 12.5)
+        XCTAssertEqual(standard.longContext?.thresholdTokens, 272_000)
+        XCTAssertEqual(standard.longContext?.rate.inputPerMTok, 20)
+        XCTAssertEqual(standard.longContext?.rate.outputPerMTok, 75)
+
+        let fast = try XCTUnwrap(snapshot.models["gpt-6-astra-fast"])
+        XCTAssertEqual(fast.inputPerMTok, 20)
+        XCTAssertEqual(fast.outputPerMTok, 100)
+        XCTAssertEqual(fast.cacheReadPerMTok, 2)
+        XCTAssertEqual(fast.cacheWrite5mPerMTok, 25)
+        XCTAssertEqual(fast.longContext?.thresholdTokens, 272_000)
+        XCTAssertEqual(fast.longContext?.rate.inputPerMTok, 40)
+        XCTAssertEqual(fast.longContext?.rate.outputPerMTok, 150)
     }
 
     func testEveryBundledModelHasPositiveBasePrices() throws {

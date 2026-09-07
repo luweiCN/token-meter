@@ -1227,6 +1227,7 @@ struct QuotaDisplayModel {
         let label: String
         /// 剩余百分比（同 Ring）。
         let percent: Double?
+        let resetText: String?
         let note: String?
         let tone: UsageMetricTone
     }
@@ -1255,6 +1256,7 @@ struct QuotaDisplayModel {
     let rings: [Ring]
     let bars: [Bar]
     let resetCredits: ResetCreditSummary?
+    let earliestResetCredit: ResetCreditDisplayItem?
 
     init(snapshot: ProviderUsageSnapshot, now: Date = Date()) {
         name = snapshot.displayName
@@ -1342,7 +1344,8 @@ struct QuotaDisplayModel {
             Bar(
                 label: entry.label,
                 percent: Self.remainingPercent(entry.metric),
-                note: entry.metric.detail ?? entry.metric.resetText,
+                resetText: entry.metric.resetText,
+                note: entry.metric.detail,
                 tone: metricTone(entry.metric)
             )
         }
@@ -1363,6 +1366,9 @@ struct QuotaDisplayModel {
         }
 
         resetCredits = snapshot.resetCredits
+        earliestResetCredit = snapshot.resetCredits.flatMap {
+            ResetCreditDisplay.items(for: $0, now: now).first { $0.credit.expiresAt != nil }
+        }
     }
 
     /// 「智谱 GLM」→「智」；「Claude Code」→「Cl」（稿：badge 双字符/单汉字）。
@@ -1442,7 +1448,7 @@ private struct QuotaGroupView: View {
                         }
 
                         if let credits = model.resetCredits, !credits.credits.isEmpty {
-                            ResetCardsGroup(summary: credits)
+                            ResetCardsGroup(summary: credits, earliest: model.earliestResetCredit)
                         }
                     }
                     .padding(EdgeInsets(top: 10, leading: 12, bottom: 12, trailing: 12))
@@ -1757,6 +1763,12 @@ private struct BarRowCard: View {
                         .monospacedDigit()
                         .rollingNumber(value: Int(percent.rounded()))
                 }
+                if let reset = bar.resetText {
+                    Text(reset)
+                        .font(.system(size: 10))
+                        .foregroundStyle(theme.muted)
+                        .lineLimit(1)
+                }
                 Spacer(minLength: 8)
                 if let note = bar.note {
                     Text(note)
@@ -1798,6 +1810,7 @@ private struct BarRowCard: View {
 
 private struct ResetCardsGroup: View {
     let summary: ResetCreditSummary
+    let earliest: ResetCreditDisplayItem?
     @Environment(\.mbTheme) private var theme
     @State private var expanded = false
 
@@ -1816,6 +1829,14 @@ private struct ResetCardsGroup: View {
                         .foregroundStyle(theme.fg)
 
                     Spacer(minLength: 8)
+
+                    if let earliest {
+                        Text(earliest.remainingText)
+                            .font(.system(size: 10))
+                            .foregroundStyle(theme.muted)
+                            .lineLimit(1)
+                            .help("最快到期的重置卡")
+                    }
 
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))

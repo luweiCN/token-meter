@@ -13,10 +13,12 @@ import unittest
 from transform_pricing import (
     EFFORT_SUFFIXES,
     PROVIDER_PREFIXES,
+    add_fast_models,
     apply_overrides,
     canonical,
     convert_model,
     divergent_collisions,
+    fast_model_name,
     rate,
     should_keep,
 )
@@ -156,6 +158,92 @@ class ConvertModelTests(unittest.TestCase):
         self.assertEqual(out["cacheReadPerMTok"], 1.0)      # input * 0.1
         self.assertEqual(out["cacheWrite5mPerMTok"], 12.5)  # input * 1.25
         self.assertEqual(out["cacheWrite1hPerMTok"], 20.0)  # input * 2.0
+
+    def test_preserves_long_context_rates_and_strict_threshold(self):
+        out = convert_model({
+            "litellm_provider": "openai",
+            "input_cost_per_token": 1e-5,
+            "output_cost_per_token": 5e-5,
+            "cache_read_input_token_cost": 1e-6,
+            "cache_creation_input_token_cost": 1.25e-5,
+            "input_cost_per_token_above_272k_tokens": 2e-5,
+            "output_cost_per_token_above_272k_tokens": 7.5e-5,
+            "cache_read_input_token_cost_above_272k_tokens": 2e-6,
+            "cache_creation_input_token_cost_above_272k_tokens": 2.5e-5,
+        })
+
+        self.assertEqual(out["longContext"]["thresholdTokens"], 272_000)
+        self.assertEqual(out["longContext"]["rate"], {
+            "inputPerMTok": 20.0,
+            "outputPerMTok": 75.0,
+            "cacheReadPerMTok": 2.0,
+            "cacheWrite5mPerMTok": 25.0,
+            "cacheWrite1hPerMTok": 25.0,
+        })
+
+    def test_rejects_multiple_long_context_thresholds(self):
+        with self.assertRaises(ValueError):
+            convert_model({
+                "input_cost_per_token": 1e-5,
+                "output_cost_per_token": 5e-5,
+                "input_cost_per_token_above_200k_tokens": 2e-5,
+                "output_cost_per_token_above_200k_tokens": 7.5e-5,
+                "input_cost_per_token_above_272k_tokens": 2e-5,
+                "output_cost_per_token_above_272k_tokens": 7.5e-5,
+            })
+
+
+class FastModelTests(unittest.TestCase):
+    def test_priority_rates_generate_fast_model_and_long_context(self):
+        spec = {
+            "mode": "chat",
+            "litellm_provider": "openai",
+            "input_cost_per_token": 1e-5,
+            "output_cost_per_token": 5e-5,
+            "input_cost_per_token_priority": 2e-5,
+            "output_cost_per_token_priority": 1e-4,
+            "cache_read_input_token_cost_priority": 2e-6,
+            "cache_creation_input_token_cost_priority": 2.5e-5,
+            "input_cost_per_token_above_272k_tokens_priority": 4e-5,
+            "output_cost_per_token_above_272k_tokens_priority": 1.5e-4,
+            "cache_read_input_token_cost_above_272k_tokens_priority": 4e-6,
+            "cache_creation_input_token_cost_above_272k_tokens_priority": 5e-5,
+        }
+
+        models = add_fast_models({}, {"gpt-6-astra": spec})
+
+        fast = models["gpt-6-astra-fast"]
+        self.assertEqual(fast["inputPerMTok"], 20.0)
+        self.assertEqual(fast["outputPerMTok"], 100.0)
+        self.assertEqual(fast["cacheReadPerMTok"], 2.0)
+        self.assertEqual(fast["cacheWrite5mPerMTok"], 25.0)
+        self.assertEqual(fast["cacheWrite1hPerMTok"], 25.0)
+        self.assertEqual(fast["longContext"]["thresholdTokens"], 272_000)
+        self.assertEqual(fast["longContext"]["rate"]["outputPerMTok"], 150.0)
+
+    def test_dated_snapshot_puts_fast_before_date(self):
+        self.assertEqual(fast_model_name("gpt-6-astra-20260907"), "gpt-6-astra-fast-20260907")
+
+    def test_does_not_generate_fast_without_complete_priority_price(self):
+        spec = {
+            "mode": "chat",
+            "input_cost_per_token": 1e-5,
+            "output_cost_per_token": 5e-5,
+            "input_cost_per_token_priority": 2e-5,
+        }
+        self.assertEqual(add_fast_models({}, {"gpt-6-astra": spec}), {})
+
+    def test_does_not_treat_other_providers_priority_tier_as_openai_fast(self):
+        spec = {
+            "mode": "chat",
+            "litellm_provider": "gemini",
+            "input_cost_per_token": 1e-5,
+            "output_cost_per_token": 5e-5,
+            "input_cost_per_token_priority": 2e-5,
+            "output_cost_per_token_priority": 1e-4,
+        }
+
+        self.assertEqual(add_fast_models({}, {"gemini/gemini-x": spec}), {})
 
 
 class CanonicalTests(unittest.TestCase):

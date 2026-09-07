@@ -121,6 +121,30 @@ final class CostCalculatorTests: XCTestCase {
         return CostCalculator(snapshot: snapshot)
     }
 
+    private func longContextCalculator() -> CostCalculator {
+        let longRate = RateCard(
+            inputPerMTok: 10,
+            outputPerMTok: 20,
+            cacheReadPerMTok: 30,
+            cacheWrite5mPerMTok: 40,
+            cacheWrite1hPerMTok: 50
+        )
+        return CostCalculator(snapshot: PricingSnapshot(
+            snapshotVersion: "test",
+            source: "litellm",
+            models: [
+                "gpt-6-astra": ModelPricing(
+                    inputPerMTok: 1,
+                    outputPerMTok: 2,
+                    cacheReadPerMTok: 3,
+                    cacheWrite5mPerMTok: 4,
+                    cacheWrite1hPerMTok: 5,
+                    longContext: LongContextPricing(thresholdTokens: 272_000, rate: longRate)
+                )
+            ]
+        ))
+    }
+
     func testReportedCostWins() {
         let result = makeCalculator().cost(for: event(model: "claude-opus-4-8", input: 1_000_000, reported: 42))
         XCTAssertEqual(result.micros, 42)
@@ -181,6 +205,29 @@ final class CostCalculatorTests: XCTestCase {
             model: "claude-opus-4-8", cacheRead: 1_000_000, write5m: 1_000_000, write1h: 1_000_000
         ))
         XCTAssertEqual(result.micros, 33_500_000)
+    }
+
+    func testLongContextUsesCompleteInputAndSwitchesOnlyAboveThreshold() {
+        let calculator = longContextCalculator()
+
+        let atThreshold = calculator.cost(for: event(
+            model: "gpt-6-astra", input: 100_000, output: 1_000_000, cacheRead: 172_000
+        ))
+        XCTAssertEqual(atThreshold.micros, 2_616_000, "272K 整仍用基础价")
+
+        let aboveThreshold = calculator.cost(for: event(
+            model: "gpt-6-astra", input: 100_000, output: 1_000_000, cacheRead: 173_000
+        ))
+        XCTAssertEqual(aboveThreshold.micros, 26_190_000, "缓存命中也属于单次输入长度")
+    }
+
+    func testLongContextThresholdIncludesCacheWrites() {
+        let result = longContextCalculator().cost(for: event(
+            model: "gpt-6-astra", input: 100_000, cacheRead: 100_000,
+            write5m: 72_001, write1h: 0
+        ))
+
+        XCTAssertEqual(result.micros, 6_880_040)
     }
 
     func testResolvesViaNormalizedName() {

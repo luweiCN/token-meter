@@ -54,18 +54,107 @@ def rate(published: float | None, fallback: float) -> float:
     return round(published * M if published is not None else fallback, 6)
 
 
-def convert_model(spec: dict) -> dict:
-    input_m = spec["input_cost_per_token"] * M
-    output_m = spec["output_cost_per_token"] * M
+def source_key(field: str, suffix: str) -> str:
+    return f"{field}{suffix}"
+
+
+def convert_rate_card(spec: dict, suffix: str = "") -> dict:
+    input_m = spec[source_key("input_cost_per_token", suffix)] * M
+    output_m = spec[source_key("output_cost_per_token", suffix)] * M
+    cache_write = spec.get(source_key("cache_creation_input_token_cost", suffix))
+    cache_write_m = rate(cache_write, input_m * 1.25)
+    cache_write_1h = spec.get(source_key("cache_creation_input_token_cost_above_1hr", suffix))
+    # OpenAI 只发布一档 cache write；有明示价时 5m/1h 都用它。
+    # Anthropic 等厂商有独立 1h 价；缺失时保留原有 input*2 派生规则。
+    one_hour_fallback = (
+        cache_write_m
+        if spec.get("litellm_provider") == "openai" and cache_write is not None
+        else input_m * 2.0
+    )
     return {
         "inputPerMTok": round(input_m, 6),
         "outputPerMTok": round(output_m, 6),
-        "cacheReadPerMTok": rate(spec.get("cache_read_input_token_cost"), input_m * 0.1),
-        "cacheWrite5mPerMTok": rate(spec.get("cache_creation_input_token_cost"), input_m * 1.25),
+        "cacheReadPerMTok": rate(spec.get(source_key("cache_read_input_token_cost", suffix)), input_m * 0.1),
+        "cacheWrite5mPerMTok": cache_write_m,
         # LiteLLM 给了真实的 1h 缓存写入价就用它。别硬编码 input*2：
         # claude-3-opus 的实际比值是 0.40，claude-3-haiku 是 24.00。
-        "cacheWrite1hPerMTok": rate(spec.get("cache_creation_input_token_cost_above_1hr"), input_m * 2.0),
+        "cacheWrite1hPerMTok": rate(cache_write_1h, one_hour_fallback),
     }
+
+
+def long_context_key(field: str, threshold_k: int, suffix: str) -> str:
+    return f"{field}_above_{threshold_k}k_tokens{suffix}"
+
+
+def convert_long_context(spec: dict, suffix: str = "") -> dict | None:
+    pattern = re.compile(rf"^input_cost_per_token_above_(\d+)k_tokens{re.escape(suffix)}$")
+    thresholds = sorted({int(match.group(1)) for key in spec for match in [pattern.match(key)] if match})
+    if not thresholds:
+        return None
+    if len(thresholds) != 1:
+        raise ValueError(f"一个模型出现多个长上下文阈值: {thresholds}")
+
+    threshold_k = thresholds[0]
+    input_key = long_context_key("input_cost_per_token", threshold_k, suffix)
+    output_key = long_context_key("output_cost_per_token", threshold_k, suffix)
+    if not spec.get(input_key) or not spec.get(output_key):
+        return None
+
+    input_m = spec[input_key] * M
+    output_m = spec[output_key] * M
+    cache_write_key = long_context_key("cache_creation_input_token_cost", threshold_k, suffix)
+    cache_write = spec.get(cache_write_key)
+    cache_write_m = rate(cache_write, input_m * 1.25)
+    cache_write_1h = spec.get(long_context_key("cache_creation_input_token_cost_above_1hr", threshold_k, suffix))
+    one_hour_fallback = (
+        cache_write_m
+        if spec.get("litellm_provider") == "openai" and cache_write is not None
+        else input_m * 2.0
+    )
+    return {
+        "thresholdTokens": threshold_k * 1_000,
+        "rate": {
+            "inputPerMTok": round(input_m, 6),
+            "outputPerMTok": round(output_m, 6),
+            "cacheReadPerMTok": rate(
+                spec.get(long_context_key("cache_read_input_token_cost", threshold_k, suffix)),
+                input_m * 0.1,
+            ),
+            "cacheWrite5mPerMTok": cache_write_m,
+            "cacheWrite1hPerMTok": rate(cache_write_1h, one_hour_fallback),
+        },
+    }
+
+
+def convert_model(spec: dict, suffix: str = "") -> dict:
+    result = convert_rate_card(spec, suffix)
+    long_context = convert_long_context(spec, suffix)
+    if long_context is not None:
+        result["longContext"] = long_context
+    return result
+
+
+def fast_model_name(name: str) -> str:
+    dated = re.search(r"-[0-9]{8}$", name)
+    if dated:
+        return f"{name[:dated.start()]}-fast{dated.group()}"
+    return f"{name}-fast"
+
+
+def add_fast_models(models: dict, raw: dict) -> dict:
+    """LiteLLM 的 Priority 就是 OpenAI Fast；为用量侧 `{base}-fast` 合成同名价格键。"""
+    for name, spec in raw.items():
+        if (
+            spec.get("litellm_provider") != "openai"
+            or not should_keep(name, spec)
+            or canonical(name).endswith("-fast")
+        ):
+            continue
+        if not spec.get("input_cost_per_token_priority") or not spec.get("output_cost_per_token_priority"):
+            continue
+        name = fast_model_name(name)
+        models.setdefault(name, convert_model(spec, suffix="_priority"))
+    return models
 
 
 def canonical(name: str) -> str:
@@ -181,7 +270,11 @@ def divergent_collisions(models: dict) -> list:
 
 def main() -> None:
     raw = json.load(sys.stdin)
-    models = {name: convert_model(spec) for name, spec in raw.items() if should_keep(name, spec)}
+    try:
+        models = {name: convert_model(spec) for name, spec in raw.items() if should_keep(name, spec)}
+        add_fast_models(models, raw)
+    except ValueError as error:
+        sys.exit(f"error: {error}")
 
     # argv[1]: 手动登记价文件（scripts/pricing-overrides.json），在撞名审计前合并
     if len(sys.argv) > 1:

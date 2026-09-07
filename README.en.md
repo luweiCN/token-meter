@@ -74,7 +74,7 @@ Heavy coding-agent users ask the same three questions every day: **How many toke
     └─ Reads the same SQLite, event-driven refresh
 ```
 
-- **Cost**: LiteLLM pricing table bundled at build time (offline snapshot); costs computed locally, never queried online
+- **Cost**: a daily GitHub Action generates and validates the LiteLLM pricing snapshot; the app downloads and atomically caches it every 24 hours, falls back to its previous or bundled snapshot on failure, and still computes costs locally
 - **One source of truth**: menu bar "today", popover, and every main-window page all derive from the same message-level event table (`usage_events`)
 
 ## Install

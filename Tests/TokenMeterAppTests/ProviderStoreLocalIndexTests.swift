@@ -5,7 +5,7 @@ import XCTest
 
 @MainActor
 final class ProviderStoreLocalIndexTests: XCTestCase {
-    func testTieredPricingEntriesLoadFromBundledSnapshot() {
+    func testTieredPricingEntriesLoadFromEffectiveSnapshot() {
         let homeDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: homeDirectory, withIntermediateDirectories: true)

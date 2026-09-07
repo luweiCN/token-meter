@@ -53,9 +53,9 @@ final class ProviderStore: ObservableObject {
     private let settingsStore: SettingsStore?
     private let scanner: LocalAgentScanner?
     private let liveSessions: LiveSessionStore?
-    /// 所有带峰谷价的模型（与供应商无关）。随包快照读取；加载失败时为空，
+    /// 所有带峰谷价的模型（与供应商无关）。读取当前生效的缓存/随包快照；加载失败时为空，
     /// 菜单栏标识与弹窗「峰谷时段」区块随之隐藏，不影响额度显示。
-    let tieredPricingEntries: [TieredPricingEntry]
+    @Published private(set) var tieredPricingEntries: [TieredPricingEntry]
     /// 峰谷价模型 → 定价品牌。上游快照只按模型计价，模型本身不标展示品牌，
     /// 这里补品牌归属；不再绑定任何额度供应商。
     static let tieredModelBrands: [String: String] = [
@@ -135,8 +135,12 @@ final class ProviderStore: ObservableObject {
         exchangeRate = await ExchangeRateProvider.refreshIfNeeded()
     }
 
+    func reloadPricingMetadata() {
+        tieredPricingEntries = ProviderStore.loadTieredPricingEntries()
+    }
+
     private static func loadTieredPricingEntries() -> [TieredPricingEntry] {
-        guard let snapshot = try? PricingSnapshot.loadBundled() else { return [] }
+        guard let snapshot = try? PricingSnapshot.loadEffective() else { return [] }
         let entries = tieredModelBrands.compactMap { modelName, brandName -> TieredPricingEntry? in
             snapshot.models[modelName]?.tiered.map {
                 TieredPricingEntry(

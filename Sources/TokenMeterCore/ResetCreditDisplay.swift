@@ -95,7 +95,7 @@ public enum ResetCreditDisplay {
         }
 
         let days = Int(ceil(remainingSeconds / 86_400))
-        return "剩 \(days) 天"
+        return "\(days) 天"
     }
 
     private static func tone(remainingSeconds: TimeInterval?) -> ResetCreditDisplayTone {

@@ -24,6 +24,19 @@ public struct RateCard: Equatable, Codable {
     }
 }
 
+/// 单次请求输入超过阈值后生效的长上下文价格。阈值按完整输入计算，
+/// 包括未缓存输入、缓存命中和缓存写入；不包括输出 token。
+public struct LongContextPricing: Equatable, Codable {
+    /// 严格大于该值时切换。例如 272_000 表示 272K 仍用基础价，272K + 1 用长上下文价。
+    public let thresholdTokens: Int64
+    public let rate: RateCard
+
+    public init(thresholdTokens: Int64, rate: RateCard) {
+        self.thresholdTokens = thresholdTokens
+        self.rate = rate
+    }
+}
+
 /// 北京日历日（年/月/日）。峰谷价的法定节假日豁免用它表示，不含时区信息，
 /// 「是不是节假日」只按北京这一天的日期比较。
 public struct CalendarDay: Equatable, Hashable, Codable {
@@ -212,6 +225,8 @@ public struct ModelPricing: Equatable, Codable {
     public let cacheReadPerMTok: Double
     public let cacheWrite5mPerMTok: Double
     public let cacheWrite1hPerMTok: Double
+    /// 可选长上下文价格。nil 表示不按单次输入长度切档。
+    public let longContext: LongContextPricing?
     /// 可选峰谷价。nil 表示该模型只有一套固定价。
     public let tiered: PeakOffPeakPricing?
     /// 用户覆盖专用（custom-pricing.json）：true = 该模型忽略日志上报成本，
@@ -225,6 +240,7 @@ public struct ModelPricing: Equatable, Codable {
         cacheReadPerMTok: Double,
         cacheWrite5mPerMTok: Double,
         cacheWrite1hPerMTok: Double,
+        longContext: LongContextPricing? = nil,
         tiered: PeakOffPeakPricing? = nil,
         ignoreReported: Bool? = nil
     ) {
@@ -233,6 +249,7 @@ public struct ModelPricing: Equatable, Codable {
         self.cacheReadPerMTok = cacheReadPerMTok
         self.cacheWrite5mPerMTok = cacheWrite5mPerMTok
         self.cacheWrite1hPerMTok = cacheWrite1hPerMTok
+        self.longContext = longContext
         self.tiered = tiered
         self.ignoreReported = ignoreReported
     }
@@ -265,9 +282,55 @@ public struct PricingSnapshot: Equatable, Codable {
         guard let url = Bundle.module.url(forResource: "litellm-pricing", withExtension: "json") else {
             throw PricingError.bundledSnapshotMissing
         }
+        return try load(from: url)
+    }
+
+    /// 运行时优先使用已校验的在线快照缓存；缓存缺失、损坏或价格非法时回落到随包快照。
+    public static func loadEffective(cachedURL: URL = TokenMeterPaths.pricingSnapshotURL()) throws -> PricingSnapshot {
+        if let cached = try? load(from: cachedURL),
+           (try? cached.validate()) != nil {
+            return cached
+        }
+        return try loadBundled()
+    }
+
+    public static func load(from url: URL) throws -> PricingSnapshot {
+        try decode(Data(contentsOf: url))
+    }
+
+    public static func decode(_ data: Data) throws -> PricingSnapshot {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(PricingSnapshot.self, from: Data(contentsOf: url))
+        return try decoder.decode(PricingSnapshot.self, from: data)
+    }
+
+    /// 远程快照在入缓存前的语义校验。免费模型不从 LiteLLM 快照进入，
+    /// 因此基础 input/output 必须为正；缓存价允许为 0。
+    public func validate(minimumModelCount: Int = 1) throws {
+        guard !snapshotVersion.isEmpty, !source.isEmpty, models.count >= minimumModelCount else {
+            throw PricingError.invalidSnapshot("metadata")
+        }
+        for (key, pricing) in models {
+            guard !key.isEmpty, Self.isValid(rate: pricing.rate) else {
+                throw PricingError.invalidSnapshot(key)
+            }
+            if let longContext = pricing.longContext,
+               (longContext.thresholdTokens <= 0 || !Self.isValid(rate: longContext.rate)) {
+                throw PricingError.invalidSnapshot("\(key).longContext")
+            }
+            if let tiered = pricing.tiered,
+               (!Self.isValid(rate: tiered.peak) || !Self.isValid(rate: tiered.offPeak)) {
+                throw PricingError.invalidSnapshot("\(key).tiered")
+            }
+        }
+    }
+
+    private static func isValid(rate: RateCard) -> Bool {
+        rate.inputPerMTok.isFinite && rate.inputPerMTok > 0
+            && rate.outputPerMTok.isFinite && rate.outputPerMTok > 0
+            && rate.cacheReadPerMTok.isFinite && rate.cacheReadPerMTok >= 0
+            && rate.cacheWrite5mPerMTok.isFinite && rate.cacheWrite5mPerMTok >= 0
+            && rate.cacheWrite1hPerMTok.isFinite && rate.cacheWrite1hPerMTok >= 0
     }
 
     /// 内置价打底、用户覆盖叠加（同名覆盖、新名补充）。返回新实例，不改自身。
@@ -282,4 +345,5 @@ public struct PricingSnapshot: Equatable, Codable {
 
 public enum PricingError: Error, Equatable {
     case bundledSnapshotMissing
+    case invalidSnapshot(String)
 }
