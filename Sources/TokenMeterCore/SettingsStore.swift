@@ -84,7 +84,8 @@ public final class SettingsStore {
             quotaUsedThresholdPercent: Int(try settingInt("notifications.quotaUsedThresholdPercent") ?? 0),
             menuBarAppearance: menuBarAppearance(),
             displayCurrency: (try? settingString("display.currency"))
-                .flatMap(DisplayCurrency.init(rawValue:)) ?? .cny
+                .flatMap(DisplayCurrency.init(rawValue:)) ?? .cny,
+            codexResetAutoRedeemEnabled: (try? settingInt("codex.resetCredits.autoRedeemEnabled")) == 1
         )
     }
 

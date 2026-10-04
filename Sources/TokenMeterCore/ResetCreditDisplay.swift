@@ -90,12 +90,19 @@ public enum ResetCreditDisplay {
             return "--"
         }
 
-        if remainingSeconds < 86_400 {
-            return "今天到期"
+        if remainingSeconds <= 0 {
+            return "已到期"
         }
-
-        let days = Int(ceil(remainingSeconds / 86_400))
-        return "\(days) 天"
+        if remainingSeconds > 86_400 {
+            return "\(Int(remainingSeconds / 86_400)) 天"
+        }
+        if remainingSeconds >= 3_600 {
+            return "\(Int(remainingSeconds / 3_600)) 小时"
+        }
+        if remainingSeconds >= 60 {
+            return "\(Int(remainingSeconds / 60)) 分钟"
+        }
+        return "不足 1 分钟"
     }
 
     private static func tone(remainingSeconds: TimeInterval?) -> ResetCreditDisplayTone {
@@ -103,7 +110,7 @@ public enum ResetCreditDisplay {
             return .warning
         }
 
-        if remainingSeconds < 86_400 {
+        if remainingSeconds <= 86_400 {
             return .bad
         }
         if remainingSeconds <= 7 * 86_400 {

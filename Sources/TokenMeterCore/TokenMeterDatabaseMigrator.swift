@@ -1,8 +1,8 @@
 import Foundation
 
 public enum TokenMeterDatabaseMigrator {
-    /// 永不删除的配置表。其余出现在库里的一切都被当作派生数据看待。
-    static let configTableNames: Set<String> = ["settings", "provider_config_overrides", "scan_roots"]
+    /// 配置与不可重建的消费记录必须保留，不能卷入统计数据重建。
+    static let configTableNames: Set<String> = ["settings", "provider_config_overrides", "scan_roots", "codex_reset_redemptions"]
 
     /// 数据库是纯派生物，所以没有版本化迁移链，只有「重建」：
     /// 1. 幂等地建好配置表（CREATE TABLE IF NOT EXISTS，每次启动跑都安全）。

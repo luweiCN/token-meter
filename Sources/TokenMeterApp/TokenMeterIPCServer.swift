@@ -180,6 +180,8 @@ final class TokenMeterIPCServer {
         switch request.method {
         case "ping":
             return IPCResponse(id: request.id, ok: true, result: ["status": "ok"], error: nil)
+        case "codex.resetCredits.status":
+            return IPCResponse(id: request.id, ok: true, result: ["message": store.codexResetAutomationMessage], error: nil)
         case "settingsChanged":
             guard let versionText = request.params?["version"], let version = Int(versionText), version > 0 else {
                 return IPCResponse(id: request.id, ok: false, result: nil, error: "invalid settings version")

@@ -3,6 +3,20 @@ import Foundation
 @testable import TokenMeterCore
 
 final class SettingsStoreTests: XCTestCase {
+    func testResetAutoRedeemDefaultsOffAndRequiresExplicitOne() throws {
+        let database = try SQLiteDatabase(path: ":memory:")
+        try TokenMeterDatabaseMigrator.migrate(database)
+        let store = SettingsStore(database: database)
+        XCTAssertFalse(try store.snapshot().codexResetAutoRedeemEnabled)
+        for (json, expected) in [("1", true), ("0", false), ("2", false), ("true", false), ("bad", false)] {
+            try database.execute(
+                "INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by) VALUES ('codex.resetCredits.autoRedeemEnabled', ?, 'int', 1, 'electron')",
+                [.text(json)]
+            )
+            XCTAssertEqual(try store.snapshot().codexResetAutoRedeemEnabled, expected)
+        }
+    }
+
     func testImportsTokenMeterConfigIntoSQLiteSettings() throws {
         let database = try SQLiteDatabase(path: ":memory:")
         try TokenMeterDatabaseMigrator.migrate(database)

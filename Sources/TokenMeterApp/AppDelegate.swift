@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var store: ProviderStore?
     private var statusBarController: StatusBarController?
     private var refreshTimer: Timer?
+    private var codexResetTimer: Timer?
     private var exchangeRateTimer: Timer?
     private var pricingRefreshTimer: Timer?
     private var startupTask: Task<Void, Never>?
@@ -65,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         scheduleRefreshTimer(interval: refreshInterval(for: store.settingsSnapshot))
         scheduleExchangeRateTimer()
         bindSettingsTimer(to: store)
+        bindCodexResetAutomation(to: store)
         bindHooksInstaller(to: store)
         // 静默更新检查（24h 节流）：有新版发系统通知；手动入口在右键菜单。
         UpdateChecker.autoCheckIfDue()
@@ -89,9 +91,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startupTask = nil
         ipcServer?.stop()
         refreshTimer?.invalidate()
+        codexResetTimer?.invalidate()
+        store?.stopCodexResetAutomation()
         exchangeRateTimer?.invalidate()
         pricingRefreshTimer?.invalidate()
         cancellables.removeAll()
+    }
+
+    private func bindCodexResetAutomation(to store: ProviderStore) {
+        store.$settingsSnapshot.combineLatest(store.$isScanPaused)
+            .sink { [weak self, weak store] _, _ in
+                // @Published 在赋值前发事件；下一次主线程调度读取最终设置。
+                Task { @MainActor [weak self, weak store] in
+                    guard let self, let store, !self.isTerminating else { return }
+                    self.codexResetTimer?.invalidate()
+                    self.codexResetTimer = nil
+                    guard store.shouldAutomaticallyRedeemCodexCredits else {
+                        store.stopCodexResetAutomation()
+                        return
+                    }
+                    store.checkCodexResetAutomation()
+                    let timer = Timer(timeInterval: 60, repeats: true) { [weak store] _ in
+                        Task { @MainActor in store?.checkCodexResetAutomation() }
+                    }
+                    RunLoop.main.add(timer, forMode: .common)
+                    self.codexResetTimer = timer
+                }
+            }
+            .store(in: &cancellables)
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+            .sink { [weak store] _ in
+                Task { @MainActor in store?.checkCodexResetAutomation() }
+            }
+            .store(in: &cancellables)
     }
 
     private func bindSettingsTimer(to store: ProviderStore) {

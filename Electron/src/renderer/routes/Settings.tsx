@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 
 import type { AgentBinaryStatus, FailedFileSummary, IndexStatusResult, ScanProgress, ScanRootSummary } from '../api.js';
@@ -262,7 +263,12 @@ export function Settings() {
                 onToggle={() => {
                   apply(settingsStore.applyPatch({ providerEnabled: { [provider.id]: !enabled } }), 'quota');
                 }}
-              />
+              >
+                {provider.id === 'codex' ? (
+                  <CodexResetSettings providerEnabled={enabled}
+                    onChange={(value) => apply(settingsStore.applyPatch({ codexResetAutoRedeemEnabled: value }), 'quota')} />
+                ) : null}
+              </QuotaProviderRow>
             );
           })}
         </div>
@@ -476,12 +482,14 @@ export function Settings() {
 /// 供应商一行（B 区）：显示名（别名）与启停存 provider_config_overrides；
 /// keyed 供应商多一行应用内 Key（存 macOS 钥匙串、优先于环境变量，明文不经渲染进程）。
 function QuotaProviderRow({
+  children,
   provider,
   savedName,
   enabled,
   onSave,
   onToggle
 }: {
+  children?: ReactNode;
   provider: { id: string; name: string; pill: string; how: string; src: string; keyed?: boolean; login?: boolean };
   savedName: string;
   enabled: boolean;
@@ -582,6 +590,7 @@ function QuotaProviderRow({
           <span>{provider.how}</span>
           <span className="qsrc num">{provider.src}</span>
         </div>
+        {children}
         {provider.keyed ? (
           <div className="qcred qkeyrow">
             <Input
@@ -680,6 +689,31 @@ function SourceRow({
         <div className="prog"><i style={{ width: `${percent}%` }} /></div>
       </div>
       {errorText ? <div className="err">{errorText}</div> : null}
+    </div>
+  );
+}
+
+function CodexResetSettings({ providerEnabled, onChange }: {
+  providerEnabled: boolean;
+  onChange: (enabled: boolean) => void;
+}) {
+  const settings = useSettings();
+  const enabled = settings.codexResetAutoRedeemEnabled;
+  useEffect(() => {
+    if (!enabled || !providerEnabled) return;
+    const timer = window.setInterval(() => { void settingsStore.load().catch(() => {}); }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [enabled, providerEnabled]);
+  return (
+    <div className="qreset">
+      <div className="setrow">
+        <button type="button" className={enabled ? 'sw on' : 'sw'}
+          aria-pressed={enabled} aria-label="重置卡到期前自动使用"
+          aria-describedby="codex-reset-description" onClick={() => onChange(!enabled)} />
+        <span>重置卡到期前自动使用</span>
+      </div>
+      <p id="codex-reset-description">到期前 1 小时内尝试使用。需要 TokenMeter 运行且联网，是否可重置由 Codex 判断。</p>
+      {enabled ? <p role="status">{!providerEnabled ? 'Codex 已停用，自动使用已暂停' : settings.codexResetAutoRedeemStatus ?? '等待检查重置卡'}</p> : null}
     </div>
   );
 }

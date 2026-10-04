@@ -25,10 +25,19 @@ export function registerIpcHandlers() {
   const projects = new ProjectsRepository(db);
   const indexStatus = new IndexStatusRepository(db);
   const models = new ModelsRepository(db);
-  ipcMain.handle('settings:get', async () => ({
-    ...settings.get(),
-    exchangeRateUsdToCny: readUsdToCnyRate()
-  }));
+  ipcMain.handle('settings:get', async () => {
+    const snapshot = settings.get();
+    const status = snapshot.codexResetAutoRedeemEnabled
+      ? await notifySwift('codex.resetCredits.status').catch(() => null)
+      : null;
+    return {
+      ...snapshot,
+      codexResetAutoRedeemStatus: snapshot.codexResetAutoRedeemEnabled
+        ? status?.result?.message ?? '菜单栏应用未运行，暂时无法自动使用'
+        : '自动使用已关闭',
+      exchangeRateUsdToCny: readUsdToCnyRate()
+    };
+  });
   ipcMain.handle('settings:update', async (_event, patch, expectedVersion) => {
     try {
       const result = settings.update(patch, expectedVersion);

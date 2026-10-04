@@ -14,6 +14,7 @@ BUNDLE_ID="com.luwei.tokenmeter"
 
 cd "$ROOT_DIR"
 swift build -c release
+SWIFT_BIN_DIR="$(swift build -c release --show-bin-path)"
 npm install --prefix "$ROOT_DIR/Electron"
 # CI 的 npm（allow-scripts 机制）会拦 electron 的 postinstall，二进制 dist
 # 不落地（本地因早有缓存从未暴露，CI 实测炸在拷 electron.icns）。缺了就补跑。
@@ -24,7 +25,7 @@ npm run build --prefix "$ROOT_DIR/Electron"
 
 rm -rf "$BUILD_APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
-cp "$ROOT_DIR/.build/release/TokenMeterApp" "$MACOS_DIR/TokenMeterApp"
+cp "$SWIFT_BIN_DIR/TokenMeterApp" "$MACOS_DIR/TokenMeterApp"
 cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 # hooks 上报脚本：Claude/Codex 的 hook 条目直接引用 bundle 内路径（Muxy 同款做法），
 # OMP 的 TS 扩展由注入器从这里拷到 ~/.omp/agent/extensions/。
@@ -48,7 +49,7 @@ node "$RESOURCES_DIR/Electron/node_modules/electron/cli.js" --version >/dev/null
 # 就是先签、后加——这两个 SPM 资源包因此留在签名之外，是既有的、可用的状态。
 codesign --remove-signature "$BUILD_APP_DIR" 2>/dev/null || true
 codesign --force --deep --sign - --identifier "$BUNDLE_ID" "$BUILD_APP_DIR" >/dev/null
-cp -R "$ROOT_DIR/.build/release/TokenMeter_TokenMeterApp.bundle" "$BUILD_APP_DIR/TokenMeter_TokenMeterApp.bundle"
-cp -R "$ROOT_DIR/.build/release/TokenMeter_TokenMeterCore.bundle" "$BUILD_APP_DIR/TokenMeter_TokenMeterCore.bundle"
+cp -R "$SWIFT_BIN_DIR/TokenMeter_TokenMeterApp.bundle" "$BUILD_APP_DIR/TokenMeter_TokenMeterApp.bundle"
+cp -R "$SWIFT_BIN_DIR/TokenMeter_TokenMeterCore.bundle" "$BUILD_APP_DIR/TokenMeter_TokenMeterCore.bundle"
 
 echo "$BUILD_APP_DIR"

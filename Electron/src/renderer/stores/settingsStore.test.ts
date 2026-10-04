@@ -40,6 +40,7 @@ const codexSnapshot: SettingsSnapshot = {
   menuBarPrimaryProviderId: 'codex',
   autoRefreshSeconds: 300,
   quotaUsedThresholdPercent: 0,
+  codexResetAutoRedeemEnabled: false,
   displayCurrency: 'cny',
   exchangeRateUsdToCny: 6.76,
   menubarAppearance: {

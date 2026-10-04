@@ -93,6 +93,18 @@ public enum TokenMeterDatabaseSchema {
       UNIQUE(stable_source_key)
     );
 
+    CREATE TABLE IF NOT EXISTS codex_reset_redemptions (
+      account_hash TEXT NOT NULL,
+      credit_hash TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) > 0),
+      state TEXT NOT NULL CHECK (state IN ('pending', 'succeeded', 'nothingToReset', 'noCredit')),
+      quota_hash TEXT NOT NULL,
+      owner TEXT NOT NULL,
+      lease_until REAL NOT NULL,
+      updated_at REAL NOT NULL,
+      PRIMARY KEY (account_hash, credit_hash)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_settings_updated ON settings(updated_at DESC);
     """
 

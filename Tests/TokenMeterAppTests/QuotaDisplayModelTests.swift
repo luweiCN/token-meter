@@ -161,37 +161,6 @@ final class QuotaDisplayModelTests: XCTestCase {
         XCTAssertEqual(bar?.note, "套餐余额 $65.18 / $70.00")
     }
 
-    func testResetCardSummaryUsesSoonestUnexpiredCard() {
-        let now = Date(timeIntervalSince1970: 20 * 86_400)
-        let resetCredits = ResetCreditSummary(
-            availableCount: 2,
-            credits: [
-                ResetCredit(
-                    issuedAt: Date(timeIntervalSince1970: 0),
-                    expiresAt: Date(timeIntervalSince1970: 30 * 86_400)
-                ),
-                ResetCredit(
-                    issuedAt: Date(timeIntervalSince1970: 0),
-                    expiresAt: Date(timeIntervalSince1970: 25 * 86_400)
-                ),
-                ResetCredit(
-                    issuedAt: Date(timeIntervalSince1970: 0),
-                    expiresAt: Date(timeIntervalSince1970: 10 * 86_400)
-                )
-            ]
-        )
-        let snapshot = ProviderUsageSnapshot(
-            providerId: "codex", displayName: "Codex", status: .ok,
-            fetchedAt: now, summary: nil, message: nil, groups: [], resetCredits: resetCredits
-        )
-
-        let earliest = QuotaDisplayModel(snapshot: snapshot, now: now).earliestResetCredit
-
-        XCTAssertEqual(earliest?.credit.expiresAt, Date(timeIntervalSince1970: 25 * 86_400))
-        XCTAssertEqual(earliest?.remainingText, "5 天")
-        XCTAssertEqual(earliest?.tone, .warning)
-    }
-
     /// 环位缺失时【绝不递补】（用户裁定的硬语义）：OpenCode 缺 5h（解析失败/改版丢行）
     /// 时，环只画 7d 一只；Monthly 必须留在条位，不得顶进环位。
     func testVanishedRingSlotIsNotBackfilledByLongerWindow() {

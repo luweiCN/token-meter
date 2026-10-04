@@ -68,6 +68,8 @@ export interface SettingsSnapshot {
   providerOverrides: ProviderConfigOverride[];
   /// 额度用量告警阈值（usedPercent 达到即通知）。0 = 关闭，有效值 50~100。
   quotaUsedThresholdPercent: number;
+  codexResetAutoRedeemEnabled: boolean;
+  codexResetAutoRedeemStatus?: string;
   menubarAppearance: MenubarAppearance;
   /// 金额显示币种（美元存储，人民币只在显示层换算）。
   displayCurrency: 'usd' | 'cny';
@@ -83,6 +85,7 @@ export interface SettingsPatch {
   providerDisplayNames?: Record<string, string>;
   /// 0 = 关闭告警，50~100 = 用量达该百分比时通知。
   quotaUsedThresholdPercent?: number;
+  codexResetAutoRedeemEnabled?: boolean;
   /// providerId → 启停(设置页额度供应商行开关;主进程 settingsRepository 同名字段)。
   providerEnabled?: Record<string, boolean>;
   menubarStyle?: MenubarStyleId;

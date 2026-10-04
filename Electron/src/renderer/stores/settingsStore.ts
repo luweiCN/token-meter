@@ -11,6 +11,7 @@ const initialSnapshot: SettingsSnapshot = {
   enabledAgentKinds: [],
   providerOverrides: [],
   quotaUsedThresholdPercent: 0,
+  codexResetAutoRedeemEnabled: false,
   menubarAppearance: MENUBAR_APPEARANCE_DEFAULT,
   // 加载完成前的占位：与 format.ts 的默认美元口径一致，加载后按设置切人民币。
   displayCurrency: 'usd',

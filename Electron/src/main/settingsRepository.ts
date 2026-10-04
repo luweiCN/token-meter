@@ -45,6 +45,7 @@ export interface SettingsSnapshot {
   providerOverrides: ProviderConfigOverride[];
   /// 额度用量告警阈值（usedPercent 达到即通知）。0 = 关闭，有效值 50~100。
   quotaUsedThresholdPercent: number;
+  codexResetAutoRedeemEnabled: boolean;
   menubarAppearance: MenubarAppearance;
   /// 金额显示币种（美元存储，人民币只在显示层换算）。
   displayCurrency: DisplayCurrency;
@@ -60,6 +61,7 @@ export interface SettingsPatch {
   providerEnabled?: Record<string, boolean>;
   /// 0 = 关闭告警，50~100 = 用量达该百分比时通知（Swift 侧刷新额度时检测）。
   quotaUsedThresholdPercent?: number;
+  codexResetAutoRedeemEnabled?: boolean;
   menubarStyle?: MenubarStyleId;
   menubarShowName?: boolean;
   menubarShowGlyph?: boolean;
@@ -154,6 +156,7 @@ export class SettingsRepository {
       enabledAgentKinds: this.settingStringArray('filters.enabledAgentKinds'),
       providerOverrides: this.providerOverrides(),
       quotaUsedThresholdPercent: this.settingInt('notifications.quotaUsedThresholdPercent') ?? 0,
+      codexResetAutoRedeemEnabled: this.resetAutoRedeemEnabled(),
       menubarAppearance: {
         style: this.enumSetting('menubar.style', MENUBAR_STYLE_IDS, 'rings'),
         showName: (this.settingInt('menubar.showName') ?? 1) !== 0,
@@ -166,6 +169,14 @@ export class SettingsRepository {
       },
       displayCurrency: this.enumSetting('display.currency', DISPLAY_CURRENCIES, 'cny')
     };
+  }
+
+  private resetAutoRedeemEnabled(): boolean {
+    try {
+      return this.settingInt('codex.resetCredits.autoRedeemEnabled') === 1;
+    } catch {
+      return false;
+    }
   }
 
   /// 枚举 kv：缺失/坏类型/非法值一律回默认（与 Swift 端同策略，向后兼容）。
@@ -203,6 +214,9 @@ export class SettingsRepository {
       }
       if (validatedPatch.enabledAgentKinds !== undefined) {
         this.setSetting('filters.enabledAgentKinds', JSON.stringify(validatedPatch.enabledAgentKinds), 'json', nextVersion);
+      }
+      if (validatedPatch.codexResetAutoRedeemEnabled !== undefined) {
+        this.setSetting('codex.resetCredits.autoRedeemEnabled', validatedPatch.codexResetAutoRedeemEnabled ? '1' : '0', 'int', nextVersion);
       }
       if (validatedPatch.quotaUsedThresholdPercent !== undefined) {
         this.setSetting('notifications.quotaUsedThresholdPercent', String(validatedPatch.quotaUsedThresholdPercent), 'int', nextVersion);
@@ -432,6 +446,13 @@ function validateSettingsPatch(patch: unknown): SettingsPatch {
 
   const candidate = patch as Record<string, unknown>;
   const validated: SettingsPatch = {};
+  if ('codexResetAutoRedeemEnabled' in candidate) {
+    if (typeof candidate.codexResetAutoRedeemEnabled !== 'boolean') {
+      throw new Error('codexResetAutoRedeemEnabled must be a boolean');
+    }
+    validated.codexResetAutoRedeemEnabled = candidate.codexResetAutoRedeemEnabled;
+  }
+
   if ('menuBarPrimaryProviderId' in candidate) {
     if (typeof candidate.menuBarPrimaryProviderId !== 'string') {
       throw new Error('menuBarPrimaryProviderId must be a string');
@@ -598,6 +619,7 @@ function validateEnabledAgentKinds(values: string[]) {
 
 function hasPatchChanges(patch: SettingsPatch) {
   return (
+    patch.codexResetAutoRedeemEnabled !== undefined ||
     patch.menuBarPrimaryProviderId !== undefined ||
     patch.autoRefreshSeconds !== undefined ||
     patch.enabledAgentKinds !== undefined ||

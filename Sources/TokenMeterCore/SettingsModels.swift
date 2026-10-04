@@ -178,6 +178,7 @@ public struct SettingsSnapshot: Codable, Equatable {
     public let menuBarAppearance: MenuBarAppearanceSettings
     /// 金额显示币种。Electron 设置页写入，Swift 只读；默认人民币（用户裁定）。
     public let displayCurrency: DisplayCurrency
+    public let codexResetAutoRedeemEnabled: Bool
 
     public init(
         version: Int,
@@ -187,7 +188,8 @@ public struct SettingsSnapshot: Codable, Equatable {
         providerOverrides: [ProviderConfigOverride],
         quotaUsedThresholdPercent: Int = 0,
         menuBarAppearance: MenuBarAppearanceSettings = .default,
-        displayCurrency: DisplayCurrency = .cny
+        displayCurrency: DisplayCurrency = .cny,
+        codexResetAutoRedeemEnabled: Bool = false
     ) {
         self.version = version
         self.menuBarPrimaryProviderId = menuBarPrimaryProviderId
@@ -197,6 +199,7 @@ public struct SettingsSnapshot: Codable, Equatable {
         self.quotaUsedThresholdPercent = quotaUsedThresholdPercent
         self.menuBarAppearance = menuBarAppearance
         self.displayCurrency = displayCurrency
+        self.codexResetAutoRedeemEnabled = codexResetAutoRedeemEnabled
     }
 
     // 旧数据没有 displayCurrency：解码补默认人民币，不炸老快照/测试载荷。
@@ -209,6 +212,7 @@ public struct SettingsSnapshot: Codable, Equatable {
         case quotaUsedThresholdPercent
         case menuBarAppearance
         case displayCurrency
+        case codexResetAutoRedeemEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -221,6 +225,7 @@ public struct SettingsSnapshot: Codable, Equatable {
         quotaUsedThresholdPercent = try container.decodeIfPresent(Int.self, forKey: .quotaUsedThresholdPercent) ?? 0
         menuBarAppearance = try container.decodeIfPresent(MenuBarAppearanceSettings.self, forKey: .menuBarAppearance) ?? .default
         displayCurrency = try container.decodeIfPresent(DisplayCurrency.self, forKey: .displayCurrency) ?? .cny
+        codexResetAutoRedeemEnabled = try container.decodeIfPresent(Bool.self, forKey: .codexResetAutoRedeemEnabled) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -233,6 +238,7 @@ public struct SettingsSnapshot: Codable, Equatable {
         try container.encode(quotaUsedThresholdPercent, forKey: .quotaUsedThresholdPercent)
         try container.encode(menuBarAppearance, forKey: .menuBarAppearance)
         try container.encode(displayCurrency, forKey: .displayCurrency)
+        try container.encode(codexResetAutoRedeemEnabled, forKey: .codexResetAutoRedeemEnabled)
     }
 }
 

@@ -119,17 +119,8 @@ public struct CodexUsageProvider: UsageProvider {
 
     public func fetchProviderUsage() async -> ProviderUsageSnapshot {
         do {
-            let data = try await Task.detached {
-                try runProcess(
-                    executable: "/usr/bin/env",
-                    arguments: ["node", "-e", Self.nodeScript],
-                    environmentOverrides: ["PATH": Self.executableSearchPath()],
-                    timeout: 10
-                )
-            }.value
-            let snapshot = try CodexUsageParser.parse(data: data, providerId: id, displayName: displayName)
-            let resetCredits = try? await CodexResetCreditsClient.default.fetch()
-            return snapshot.withResetCredits(resetCredits)
+            let account = try await CodexAccountClient().read()
+            return try account.snapshot(providerId: id, displayName: displayName)
         } catch {
             if !Self.codexExecutableExists() {
                 return providerErrorSnapshot(
@@ -179,43 +170,7 @@ public struct CodexUsageProvider: UsageProvider {
         }
     }
 
-    private static let nodeScript = """
-    const { spawn } = require("child_process");
-    const proc = spawn("codex", ["app-server", "--stdio"], { stdio: ["pipe", "pipe", "ignore"] });
-    let buffer = "";
-    let done = false;
-    const timer = setTimeout(() => finish(1), 9000);
-    function send(message) { proc.stdin.write(`${JSON.stringify(message)}\\n`); }
-    function finish(code, output) {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      if (output) process.stdout.write(JSON.stringify(output));
-      proc.kill("SIGTERM");
-      process.exit(code);
-    }
-    function handle(message) {
-      if (message.id !== 1) return;
-      if (!message.result) return finish(1);
-      finish(0, message.result);
-    }
-    proc.stdout.on("data", (chunk) => {
-      buffer += chunk.toString("utf8");
-      for (;;) {
-        const index = buffer.indexOf("\\n");
-        if (index < 0) break;
-        const line = buffer.slice(0, index).trim();
-        buffer = buffer.slice(index + 1);
-        if (!line) continue;
-        try { handle(JSON.parse(line)); } catch { finish(1); }
-      }
-    });
-    proc.on("error", () => finish(1));
-    proc.on("exit", () => finish(1));
-    send({ method: "initialize", id: 0, params: { clientInfo: { name: "token_meter", title: "TokenMeter", version: "0.1.0" }, capabilities: { experimentalApi: true } } });
-    send({ method: "initialized", params: {} });
-    setTimeout(() => send({ method: "account/rateLimits/read", id: 1, params: null }), 300);
-    """
+
 }
 
 public struct ClaudeCodeUsageProvider: UsageProvider {
@@ -899,87 +854,6 @@ public enum CodexUsageParser {
             resetAt: resetAt,
             windowDurationMinutes: windowDurationMinutes
         )
-    }
-}
-
-public enum CodexResetCreditsParser {
-    public enum ParseError: LocalizedError {
-        case missingCredits
-
-        public var errorDescription: String? {
-            "Codex 重置卡响应中没有 credits 数据"
-        }
-    }
-
-    public static func parse(data: Data) throws -> ResetCreditSummary {
-        let object = try JSONSerialization.jsonObject(with: data)
-        guard let dictionary = object as? [String: Any],
-              let credits = dictionary["credits"] as? [[String: Any]] else {
-            throw ParseError.missingCredits
-        }
-
-        return ResetCreditSummary(
-            availableCount: credits.count,
-            credits: credits.map { credit in
-                ResetCredit(
-                    issuedAt: codexResetCreditDate(credit["granted_at"])
-                        ?? codexResetCreditDate(credit["created_at"])
-                        ?? codexResetCreditDate(credit["issued_at"]),
-                    expiresAt: codexResetCreditDate(credit["expires_at"])
-                )
-            }
-        )
-    }
-}
-
-public struct CodexResetCreditsClient {
-    public let authURL: URL
-    public let endpoint: URL
-    public let urlSession: URLSession
-
-    public static let `default` = CodexResetCreditsClient(
-        authURL: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/auth.json"),
-        endpoint: URL(string: "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits")!
-    )
-
-    public init(authURL: URL, endpoint: URL, urlSession: URLSession = .shared) {
-        self.authURL = authURL
-        self.endpoint = endpoint
-        self.urlSession = urlSession
-    }
-
-    public func fetch() async throws -> ResetCreditSummary {
-        let token = try readAccessToken()
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("TokenMeter/0.1", forHTTPHeaderField: "User-Agent")
-
-        let (data, response) = try await urlSession.data(for: request)
-        if let httpResponse = response as? HTTPURLResponse,
-           httpResponse.statusCode == 401 {
-            throw CodexResetCreditsError.unauthorized
-        }
-        if let httpResponse = response as? HTTPURLResponse,
-           !(200..<300).contains(httpResponse.statusCode) {
-            throw CodexResetCreditsError.httpStatus(httpResponse.statusCode)
-        }
-
-        return try CodexResetCreditsParser.parse(data: data)
-    }
-
-    private func readAccessToken() throws -> String {
-        let data = try Data(contentsOf: authURL)
-        let object = try JSONSerialization.jsonObject(with: data)
-        guard let dictionary = object as? [String: Any],
-              let tokens = dictionary["tokens"] as? [String: Any],
-              let accessToken = tokens["access_token"] as? String,
-              !accessToken.isEmpty else {
-            throw CodexResetCreditsError.missingAccessToken
-        }
-
-        return accessToken
     }
 }
 
@@ -1794,23 +1668,6 @@ private enum ProcessError: LocalizedError {
     }
 }
 
-private enum CodexResetCreditsError: LocalizedError {
-    case missingAccessToken
-    case unauthorized
-    case httpStatus(Int)
-
-    var errorDescription: String? {
-        switch self {
-        case .missingAccessToken:
-            return "Codex auth.json 中没有 access_token"
-        case .unauthorized:
-            return "Codex 凭证失效或 Authorization header 无效"
-        case let .httpStatus(status):
-            return "Codex 重置卡接口返回 \(status)"
-        }
-    }
-}
-
 private func clampPercent(_ value: Double) -> Double {
     max(0, min(100, value))
 }
@@ -1860,21 +1717,6 @@ private func date(fromIsoString value: String?) -> Date? {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
-}
-
-private func codexResetCreditDate(_ value: Any?) -> Date? {
-    if let string = value as? String {
-        if let number = Double(string) {
-            return number > 10_000_000_000 ? date(fromEpochMilliseconds: number) : date(fromEpochSeconds: number)
-        }
-        return date(fromIsoString: string)
-    }
-
-    if let number = TokenMeterCoreNumber.number(from: value) {
-        return number > 10_000_000_000 ? date(fromEpochMilliseconds: number) : date(fromEpochSeconds: number)
-    }
-
-    return nil
 }
 
 private func countdownText(until date: Date) -> String {

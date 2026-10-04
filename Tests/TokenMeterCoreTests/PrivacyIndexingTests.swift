@@ -6,9 +6,12 @@ final class PrivacyIndexingTests: XCTestCase {
         let directory = try privacyTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("privacy.jsonl")
-        try Data((#"{"type":"session_meta","payload":{"id":"privacy-scanned-session","cwd":"/repo/privacy","model":"gpt-5.5"}}"# + "\n" +
-                  #"{"type":"event_msg","payload":{"type":"message","content":"SECRET_PROMPT","tool_output":"SECRET_TOOL_OUTPUT","reasoning":"SECRET_REASONING","api_key":"sk-should-not-persist"}}"# + "\n" +
-                  #"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"output_tokens":2}}}}"# + "\n").utf8).write(to: file)
+        let records: [String] = [
+            #"{"type":"session_meta","payload":{"id":"privacy-scanned-session","cwd":"/repo/privacy","model":"gpt-5.5"}}"#,
+            #"{"type":"event_msg","payload":{"type":"message","content":"SECRET_PROMPT","tool_output":"SECRET_TOOL_OUTPUT","reasoning":"SECRET_REASONING","api_key":"sk-should-not-persist"}}"#,
+            #"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"output_tokens":2}}}}"#
+        ]
+        try Data((records.joined(separator: "\n") + "\n").utf8).write(to: file)
         let database = try privacyMigratedDatabase(rootPath: directory.path)
 
         try await LocalAgentScanner(database: database).scanRoot(id: 1)

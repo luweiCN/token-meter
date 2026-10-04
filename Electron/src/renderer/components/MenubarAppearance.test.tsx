@@ -18,6 +18,7 @@ function snapshotWith(partial?: Partial<SettingsSnapshot['menubarAppearance']>):
       { providerId: 'zhipu', enabled: true }
     ],
     quotaUsedThresholdPercent: 0,
+    codexResetAutoRedeemEnabled: false,
     displayCurrency: 'cny',
     exchangeRateUsdToCny: 6.76,
     menubarAppearance: {

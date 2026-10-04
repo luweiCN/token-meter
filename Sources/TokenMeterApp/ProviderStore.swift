@@ -46,6 +46,9 @@ final class ProviderStore: ObservableObject {
 
     let config: TokenMeterConfig
     private let providers: [UsageProvider]
+    private let codexAccountClient = CodexAccountClient()
+    private var codexResetAutomation: CodexResetAutomation?
+    private var codexResetTask: Task<Void, Never>?
     private var refreshGate = RefreshGate(minimumInterval: 300)
     private let snapshotCacheURL: URL
     private weak var notificationCenter: UsageNotificationDelivering?
@@ -115,6 +118,13 @@ final class ProviderStore: ObservableObject {
             } catch {
                 self.localIndexStatusText = "本地会话索引不可用"
             }
+        }
+        if let databaseURL, settingsSnapshot != nil,
+           let journalDatabase = try? SQLiteDatabase(path: databaseURL.path) {
+            codexResetAutomation = CodexResetAutomation(
+                client: codexAccountClient,
+                store: CodexResetRedemptionStore(database: journalDatabase)
+            )
         }
         // 额度 API 刷新与本地扫描解耦：扫描便宜、跟 autoRefreshSeconds（可到 60s）；
         // 额度接口敏感（Claude oauth/usage 实测高频会持续 429），至少 5 分钟一次。
@@ -208,7 +218,7 @@ final class ProviderStore: ObservableObject {
             return
         }
 
-        guard !isRefreshing else {
+        guard !isRefreshing, codexResetTask == nil else {
             return
         }
 
@@ -267,7 +277,46 @@ final class ProviderStore: ObservableObject {
             throw ProviderStoreError.settingsVersionBehind(expected: expectedVersion, actual: snapshot.version)
         }
         settingsSnapshot = snapshot
+        if !shouldAutomaticallyRedeemCodexCredits { stopCodexResetAutomation() }
         refreshGate = RefreshGate(minimumInterval: max(300, TimeInterval(snapshot.autoRefreshSeconds)))
+    }
+
+    var shouldAutomaticallyRedeemCodexCredits: Bool {
+        settingsSnapshot?.codexResetAutoRedeemEnabled == true
+            && isProviderEnabled("codex") && !isScanPaused
+            && providers.contains { $0.id == "codex" }
+    }
+
+    var codexResetAutomationMessage: String {
+        guard settingsSnapshot?.codexResetAutoRedeemEnabled == true else { return "自动使用已关闭" }
+        guard isProviderEnabled("codex"), !isScanPaused else { return "已暂停自动使用" }
+        return codexResetAutomation?.status.message ?? "自动使用暂不可用"
+    }
+
+    func stopCodexResetAutomation() { codexResetTask?.cancel() }
+
+    func checkCodexResetAutomation() {
+        guard shouldAutomaticallyRedeemCodexCredits else { stopCodexResetAutomation(); return }
+        guard codexResetTask == nil, !isRefreshing, let codexResetAutomation else { return }
+        codexResetTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.codexResetTask = nil }
+            let consumed = await codexResetAutomation.check { self.shouldAutomaticallyRedeemCodexCredits }
+            guard consumed else { return }
+            // 成功已持久化。显示刷新失败只保留旧显示，绝不再次消费。
+            guard let account = try? await self.codexAccountClient.read(),
+                  let snapshot = try? account.snapshot(
+                    providerId: "codex", displayName: self.config.providers.first { $0.id == "codex" }?.displayName ?? "Codex"
+                  ) else { return }
+            let refreshed = ProviderSnapshotCache.merge(previous: self.providerSnapshots, refreshed: [snapshot]).first ?? snapshot
+            if let index = self.providerSnapshots.firstIndex(where: { $0.providerId == "codex" }) {
+                self.providerSnapshots[index] = refreshed
+            } else {
+                self.providerSnapshots.append(refreshed)
+            }
+            self.snapshots = self.providerSnapshots.map(\.legacySnapshot)
+            try? ProviderSnapshotDiskCache.write(self.providerSnapshots, to: self.snapshotCacheURL)
+        }
     }
 
     /// hooks 上报入口（IPC agent.sessionEvent）：写 live_sessions 表，

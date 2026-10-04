@@ -1256,7 +1256,6 @@ struct QuotaDisplayModel {
     let rings: [Ring]
     let bars: [Bar]
     let resetCredits: ResetCreditSummary?
-    let earliestResetCredit: ResetCreditDisplayItem?
 
     init(snapshot: ProviderUsageSnapshot, now: Date = Date()) {
         name = snapshot.displayName
@@ -1366,9 +1365,6 @@ struct QuotaDisplayModel {
         }
 
         resetCredits = snapshot.resetCredits
-        earliestResetCredit = snapshot.resetCredits.flatMap {
-            ResetCreditDisplay.items(for: $0, now: now).first { $0.credit.expiresAt != nil }
-        }
     }
 
     /// 「智谱 GLM」→「智」；「Claude Code」→「Cl」（稿：badge 双字符/单汉字）。
@@ -1447,8 +1443,8 @@ private struct QuotaGroupView: View {
                             BarRowCard(bar: model.bars[i])
                         }
 
-                        if let credits = model.resetCredits, !credits.credits.isEmpty {
-                            ResetCardsGroup(summary: credits, earliest: model.earliestResetCredit)
+                        if let credits = model.resetCredits, credits.availableCount > 0 {
+                            ResetCardsGroup(summary: credits)
                         }
                     }
                     .padding(EdgeInsets(top: 10, leading: 12, bottom: 12, trailing: 12))
@@ -1810,12 +1806,20 @@ private struct BarRowCard: View {
 
 private struct ResetCardsGroup: View {
     let summary: ResetCreditSummary
-    let earliest: ResetCreditDisplayItem?
     @Environment(\.mbTheme) private var theme
     @State private var expanded = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            content(now: context.date)
+        }
+    }
+
+    private func content(now: Date) -> some View {
+        let earliest = ResetCreditDisplay.items(for: summary, now: now)
+            .first { $0.credit.expiresAt != nil }
+
+        return VStack(spacing: 0) {
             Button {
                 expanded.toggle()
             } label: {
@@ -1849,12 +1853,14 @@ private struct ResetCardsGroup: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-        .focusable(false)
+            .focusable(false)
 
             if expanded {
                 VStack(spacing: 8) {
                     ForEach(summary.credits.indices, id: \.self) { i in
-                        ResetCardRow(index: i + 1, credit: summary.credits[i])
+                        ResetCardRow(item: ResetCreditDisplay.item(
+                            index: i + 1, credit: summary.credits[i], now: now
+                        ))
                     }
                 }
                 .padding(EdgeInsets(top: 0, leading: 10, bottom: 10, trailing: 10))
@@ -1868,21 +1874,15 @@ private struct ResetCardsGroup: View {
 }
 
 private struct ResetCardRow: View {
-    let index: Int
-    let credit: ResetCredit
+    let item: ResetCreditDisplayItem
     @Environment(\.mbTheme) private var theme
 
-    /// 剩余寿命占比（发放→过期）。缺日期就不画进度。
-    private var lifeInfo: (daysLeft: Int, fraction: Double)? {
-        guard let expiresAt = credit.expiresAt else { return nil }
-        let now = Date()
-        let secondsLeft = expiresAt.timeIntervalSince(now)
-        let daysLeft = max(0, Int(ceil(secondsLeft / 86_400)))
-        guard let issuedAt = credit.issuedAt, expiresAt > issuedAt else {
-            return (daysLeft, secondsLeft > 0 ? 1 : 0)
+    private var lifetimeColor: Color {
+        switch item.tone {
+        case .ok: return theme.accent
+        case .warning: return theme.warn
+        case .bad: return theme.danger
         }
-        let total = expiresAt.timeIntervalSince(issuedAt)
-        return (daysLeft, min(1, max(0, secondsLeft / total)))
     }
 
     private func shortDate(_ date: Date?) -> String {
@@ -1893,33 +1893,32 @@ private struct ResetCardRow: View {
     }
 
     var body: some View {
-        let info = lifeInfo
-        let isWarn = (info?.daysLeft ?? .max) <= 3
-
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("#\(index)")
+                Text("#\(item.index)")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(theme.muted)
-                Text("\(shortDate(credit.issuedAt)) 发放 · \(shortDate(credit.expiresAt)) 过期")
+                Text("\(shortDate(item.credit.issuedAt)) 发放")
                     .font(.system(size: 11))
                     .foregroundStyle(theme.fg2)
                 Spacer(minLength: 8)
-                if let info {
-                    Text("剩 \(info.daysLeft) 天")
+                if item.credit.expiresAt != nil {
+                    Text(item.remainingText)
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(isWarn ? theme.warn : theme.fg)
+                        .foregroundStyle(item.tone == .ok ? theme.fg : lifetimeColor)
                         .monospacedDigit()
                 }
             }
 
-            if let info {
+            if let issuedAt = item.credit.issuedAt,
+               let expiresAt = item.credit.expiresAt,
+               expiresAt > issuedAt {
                 GeometryReader { proxy in
                     ZStack(alignment: .leading) {
                         Capsule().fill(theme.surface2)
                         Capsule()
-                            .fill(isWarn ? theme.warn : theme.accent)
-                            .frame(width: proxy.size.width * CGFloat(info.fraction))
+                            .fill(lifetimeColor)
+                            .frame(width: proxy.size.width * CGFloat(item.progress))
                     }
                 }
                 .frame(height: 4)

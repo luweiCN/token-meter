@@ -64,6 +64,20 @@ describe('SettingsRepository', () => {
     return { db, repo: new SettingsRepository(db) };
   }
 
+  it('keeps reset auto-use off until explicitly enabled and rejects non-boolean patches', () => {
+    const { db, repo } = openRepo();
+    expect(repo.get().codexResetAutoRedeemEnabled).toBe(false);
+    repo.update({ codexResetAutoRedeemEnabled: true }, 3);
+    expect(repo.get().codexResetAutoRedeemEnabled).toBe(true);
+    repo.update({ codexResetAutoRedeemEnabled: false }, 4);
+    expect(repo.get().codexResetAutoRedeemEnabled).toBe(false);
+    for (const invalid of ['true', 1, null]) {
+      expect(() => repo.update({ codexResetAutoRedeemEnabled: invalid }, 5)).toThrow(/must be a boolean/);
+    }
+    db.prepare("UPDATE settings SET value_json = 'true' WHERE key = 'codex.resetCredits.autoRedeemEnabled'").run();
+    expect(repo.get().codexResetAutoRedeemEnabled).toBe(false);
+  });
+
   it('saves provider display names into overrides and bumps the settings version', () => {
     const { repo } = openRepo();
 
@@ -87,6 +101,7 @@ describe('SettingsRepository', () => {
       menuBarPrimaryProviderId: 'codex',
       autoRefreshSeconds: 300,
       quotaUsedThresholdPercent: 0,
+      codexResetAutoRedeemEnabled: false,
       menubarAppearance: {
         style: 'rings',
         showName: true,

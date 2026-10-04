@@ -137,6 +137,7 @@ const settingsSnapshot: SettingsSnapshot = {
   menuBarPrimaryProviderId: 'codex',
   autoRefreshSeconds: 300,
   quotaUsedThresholdPercent: 0,
+  codexResetAutoRedeemEnabled: false,
   displayCurrency: 'cny',
   exchangeRateUsdToCny: 6.76,
   menubarAppearance: {
@@ -638,6 +639,27 @@ describe('AppShell renderer routes', () => {
     });
     expect(api.index.status.mock.calls.length).toBeGreaterThan(1);   // 成功后重拉目录列表
     expectNoEnglishScaffold();
+  });
+
+  it('shows Codex reset auto-use disabled and only writes the setting after a click', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(screen.getByRole('button', { name: '设置' }));
+    const toggle = await screen.findByRole('button', { name: '重置卡到期前自动使用' });
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(api.settings.update).not.toHaveBeenCalled();
+    await user.click(toggle);
+    await waitFor(() => expect(api.settings.update).toHaveBeenCalledWith({ codexResetAutoRedeemEnabled: true }, 12));
+  });
+
+  it('explains that reset auto-use is paused while the Codex provider is disabled', async () => {
+    api.settings.get.mockResolvedValue({ ...settingsSnapshot, codexResetAutoRedeemEnabled: true,
+      providerOverrides: [{ providerId: 'codex', enabled: false }] });
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(screen.getByRole('button', { name: '设置' }));
+    expect(await screen.findByText('Codex 已停用，自动使用已暂停')).toBeTruthy();
+    expect(api.settings.update).not.toHaveBeenCalled();
   });
 
   it('switches the appearance preference to follow-system', async () => {

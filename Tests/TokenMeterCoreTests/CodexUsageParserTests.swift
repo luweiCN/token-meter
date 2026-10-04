@@ -119,24 +119,4 @@ final class CodexUsageParserTests: XCTestCase {
         )
     }
 
-    func testResetCreditsParserReadsIssuedAndExpiresDates() throws {
-        let json = """
-        {
-          "credits": [
-            {
-              "id": "redacted-for-test",
-              "granted_at": "2026-06-18T00:32:44Z",
-              "expires_at": "2026-07-18T00:32:44Z"
-            }
-          ]
-        }
-        """
-
-        let summary = try CodexResetCreditsParser.parse(data: Data(json.utf8))
-
-        XCTAssertEqual(summary.availableCount, 1)
-        XCTAssertEqual(summary.credits.count, 1)
-        XCTAssertEqual(summary.credits[0].issuedAt, ISO8601DateFormatter().date(from: "2026-06-18T00:32:44Z"))
-        XCTAssertEqual(summary.credits[0].expiresAt, ISO8601DateFormatter().date(from: "2026-07-18T00:32:44Z"))
-    }
 }

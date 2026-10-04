@@ -10,6 +10,8 @@ English | [简体中文](README.md)
 
 Heavy coding-agent users ask the same three questions every day: **How many tokens did I burn today? How much of this week's quota is left? Which model is eating my money?** TokenMeter keeps the answers one glance away — quota rings in the menu bar, a full dashboard one click below.
 
+Codex reset cards show the remaining days, hours, or minutes. An opt-in setting can use a selected card within one hour of expiry, with duplicate-redemption protection. It is off by default and requires the menu bar app to be running and online. See the [reset-card contract](docs/codex-reset-credit-automation.md).
+
 ## Features
 
 ### Menu bar
