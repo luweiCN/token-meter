@@ -413,6 +413,22 @@ final class TokenMeterDatabaseMigratorTests: XCTestCase {
         XCTAssertTrue(columns.contains("cost_unknown_events"))
     }
 
+    func testModelPricingPreservesUnknownCacheRatesAsNull() throws {
+        let database = try memoryDatabase()
+        try TokenMeterDatabaseMigrator.migrate(database)
+        try database.execute("""
+            INSERT INTO model_pricing (
+                model_key, input_per_mtok_micros, output_per_mtok_micros,
+                cache_read_per_mtok_micros, cache_write_5m_per_mtok_micros,
+                cache_write_1h_per_mtok_micros, source, pricing_fingerprint
+            ) VALUES ('test', 1000000, 2000000, NULL, 0, NULL, 'litellm', 'test')
+            """)
+        let row = try XCTUnwrap(database.query("SELECT * FROM model_pricing").first)
+        XCTAssertNil(row.int("cache_read_per_mtok_micros"))
+        XCTAssertEqual(row.int("cache_write_5m_per_mtok_micros"), 0)
+        XCTAssertNil(row.int("cache_write_1h_per_mtok_micros"))
+    }
+
     func testModelPricingPersistsPerModelFingerprint() throws {
         let database = try memoryDatabase()
         try TokenMeterDatabaseMigrator.migrate(database)

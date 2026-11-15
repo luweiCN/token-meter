@@ -12,12 +12,12 @@ public enum PricingSnapshotUpdateOutcome: Equatable {
 /// 客户端不直接解析 LiteLLM 原始 schema，避免上游改字段时把错价扩散到每台机器。
 public enum PricingSnapshotUpdater {
     static let snapshotURL = URL(
-        string: "https://github.com/luweiCN/token-meter/releases/download/pricing-data/litellm-pricing.json"
+        string: "https://github.com/luweiCN/token-meter/releases/download/pricing-data/litellm-pricing-v\(PricingSnapshot.currentSchemaVersion).json"
     )!
     static let checksumURL = URL(
-        string: "https://github.com/luweiCN/token-meter/releases/download/pricing-data/litellm-pricing.json.sha256"
+        string: "https://github.com/luweiCN/token-meter/releases/download/pricing-data/litellm-pricing-v\(PricingSnapshot.currentSchemaVersion).json.sha256"
     )!
-    static let lastSuccessfulCheckKey = "pricingSnapshotLastSuccessfulCheckAt"
+    static let lastSuccessfulCheckKey = "pricingSnapshotLastSuccessfulCheckAt.v\(PricingSnapshot.currentSchemaVersion)"
     static let checkInterval: TimeInterval = 24 * 60 * 60
     static let maximumSnapshotBytes = 10 * 1_024 * 1_024
     public static let minimumRemoteModelCount = 300

@@ -22,7 +22,7 @@ public enum TokenMeterDatabaseSchema {
     /// 14：Codex 预筛保留 thread_settings_applied；重扫修正曾被误算成 Standard 的 Fast 事件
     /// 15：峰谷模型按模型级本地时刻表优先于任何供应商上报价，重扫修正既有 DeepSeek 成本
     /// 16：价格表保留长上下文档位，并持久化逐模型指纹以支持运行时价格快照增量重算
-    public static let derivedVersion: Int64 = 16
+    public static let derivedVersion: Int64 = 20
 
     /// 用户配置。永不删除。这三张表存的是无法从会话文件重建的东西：
     /// - settings：过滤器 / 菜单栏偏好 / 自动刷新间隔
@@ -298,9 +298,9 @@ public enum TokenMeterDatabaseSchema {
       model_key TEXT PRIMARY KEY,
       input_per_mtok_micros INTEGER NOT NULL,
       output_per_mtok_micros INTEGER NOT NULL,
-      cache_read_per_mtok_micros INTEGER NOT NULL,
-      cache_write_5m_per_mtok_micros INTEGER NOT NULL,
-      cache_write_1h_per_mtok_micros INTEGER NOT NULL,
+      cache_read_per_mtok_micros INTEGER,
+      cache_write_5m_per_mtok_micros INTEGER,
+      cache_write_1h_per_mtok_micros INTEGER,
       source TEXT NOT NULL CHECK (source IN ('litellm', 'builtin', 'user')),
       snapshot_version TEXT,
       pricing_fingerprint TEXT NOT NULL

@@ -148,8 +148,8 @@ public final class LocalAgentScanner {
         pricingStateReconciled = true
     }
 
-    /// 内置快照 + 用户条目 → 计价器。凑不齐完整价格的条目被丢弃（其 ignoreReported
-    /// 一并不生效）——绝不用半份价格算账。
+    /// 内置快照 + 用户条目 → 计价器。缺基础价或规则非法的条目被丢弃，
+    /// 其 ignoreReported 一并不生效；缓存缺价由计价器按实际用量处理。
     private static func makeCostCalculator(snapshot: PricingSnapshot, overrides: CustomPricingOverrides) -> CostCalculator {
         let (resolved, dropped) = overrides.resolvedModels(bundled: snapshot)
         return CostCalculator(
@@ -230,9 +230,9 @@ public final class LocalAgentScanner {
                         .text(key),
                         .int(Self.priceMicros(pricing.inputPerMTok)),
                         .int(Self.priceMicros(pricing.outputPerMTok)),
-                        .int(Self.priceMicros(pricing.cacheReadPerMTok)),
-                        .int(Self.priceMicros(pricing.cacheWrite5mPerMTok)),
-                        .int(Self.priceMicros(pricing.cacheWrite1hPerMTok)),
+                        pricing.cacheReadPerMTok.map { .int(Self.priceMicros($0)) } ?? .null,
+                        pricing.cacheWrite5mPerMTok.map { .int(Self.priceMicros($0)) } ?? .null,
+                        pricing.cacheWrite1hPerMTok.map { .int(Self.priceMicros($0)) } ?? .null,
                         .text(overrideKeys.contains(key) ? "user" : baseSource),
                         .text(snapshotVersion),
                         .text(fingerprint),

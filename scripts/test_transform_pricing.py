@@ -6,13 +6,17 @@
 这些测试用合成数据，不依赖 LiteLLM 的真实内容。快照里的真实价格
 由 Swift 侧的 PricingTests 负责断言。
 """
+import json
 import pathlib
 import re
+import subprocess
+import sys
 import unittest
 
 from transform_pricing import (
     EFFORT_SUFFIXES,
     PROVIDER_PREFIXES,
+    SNAPSHOT_SCHEMA_VERSION,
     add_fast_models,
     apply_overrides,
     canonical,
@@ -41,6 +45,12 @@ class CrossLanguageContractTests(unittest.TestCase):
         pathlib.Path(__file__).resolve().parent.parent
         / "Sources" / "TokenMeterCore" / "CostCalculator.swift"
     )
+
+    def test_snapshot_schema_matches_swift(self):
+        source = self.SWIFT_FILE.with_name("Pricing.swift").read_text(encoding="utf-8")
+        version = re.search(r"currentSchemaVersion\s*=\s*(\d+)", source)
+        self.assertIsNotNone(version)
+        self.assertEqual(SNAPSHOT_SCHEMA_VERSION, int(version.group(1)))
 
     def test_swift_uses_generic_last_segment_rule(self):
         # 白名单前缀表已从 Swift 删除；若有人加回去（重回双表对齐时代），
@@ -91,14 +101,14 @@ class CrossLanguageContractTests(unittest.TestCase):
 
 class RateTests(unittest.TestCase):
     def test_uses_published_value_when_present(self):
-        self.assertEqual(rate(6e-6, fallback=999.0), 6.0)
+        self.assertEqual(rate(6e-6), 6.0)
 
     def test_explicit_zero_means_free_not_missing(self):
         # 这是让 glm 被错误收费的那个 bug
-        self.assertEqual(rate(0, fallback=0.75), 0.0)
+        self.assertEqual(rate(0), 0.0)
 
-    def test_none_falls_back_to_derived(self):
-        self.assertEqual(rate(None, fallback=0.75), 0.75)
+    def test_missing_price_stays_unknown(self):
+        self.assertIsNone(rate(None))
 
 
 class ShouldKeepTests(unittest.TestCase):
@@ -153,11 +163,11 @@ class ConvertModelTests(unittest.TestCase):
         })
         self.assertEqual(out["cacheWrite1hPerMTok"], 6.0)
 
-    def test_absent_cache_fields_derive_fallbacks(self):
+    def test_absent_cache_fields_remain_unknown(self):
         out = convert_model({"input_cost_per_token": 1e-5, "output_cost_per_token": 5e-5})
-        self.assertEqual(out["cacheReadPerMTok"], 1.0)      # input * 0.1
-        self.assertEqual(out["cacheWrite5mPerMTok"], 12.5)  # input * 1.25
-        self.assertEqual(out["cacheWrite1hPerMTok"], 20.0)  # input * 2.0
+        self.assertIsNone(out["cacheReadPerMTok"])
+        self.assertIsNone(out["cacheWrite5mPerMTok"])
+        self.assertIsNone(out["cacheWrite1hPerMTok"])
 
     def test_preserves_long_context_rates_and_strict_threshold(self):
         out = convert_model({
@@ -172,8 +182,8 @@ class ConvertModelTests(unittest.TestCase):
             "cache_creation_input_token_cost_above_272k_tokens": 2.5e-5,
         })
 
-        self.assertEqual(out["longContext"]["thresholdTokens"], 272_000)
-        self.assertEqual(out["longContext"]["rate"], {
+        self.assertEqual(out["longContext"][0]["thresholdTokens"], 272_000)
+        self.assertEqual(out["longContext"][0]["rate"], {
             "inputPerMTok": 20.0,
             "outputPerMTok": 75.0,
             "cacheReadPerMTok": 2.0,
@@ -181,15 +191,28 @@ class ConvertModelTests(unittest.TestCase):
             "cacheWrite1hPerMTok": 25.0,
         })
 
-    def test_rejects_multiple_long_context_thresholds(self):
-        with self.assertRaises(ValueError):
+    def test_preserves_multiple_long_context_thresholds_in_order(self):
+        out = convert_model({
+            "input_cost_per_token": 1e-5,
+            "output_cost_per_token": 5e-5,
+            "cache_read_input_token_cost": 1e-6,
+            "input_cost_per_token_above_256k_tokens": 4e-5,
+            "output_cost_per_token_above_256k_tokens": 1e-4,
+            "cache_read_input_token_cost_above_256k_tokens": 0,
+            "input_cost_per_token_above_32k_tokens": 2e-5,
+            "output_cost_per_token_above_32k_tokens": 7.5e-5,
+        })
+        self.assertEqual([tier["thresholdTokens"] for tier in out["longContext"]], [32_000, 256_000])
+        self.assertEqual(out["longContext"][0]["rate"]["outputPerMTok"], 75)
+        self.assertIsNone(out["longContext"][0]["rate"]["cacheReadPerMTok"])
+        self.assertEqual(out["longContext"][1]["rate"]["cacheReadPerMTok"], 0)
+
+    def test_rejects_incomplete_context_rate_instead_of_using_base_price(self):
+        with self.assertRaisesRegex(ValueError, "output_cost_per_token_above_32k_tokens"):
             convert_model({
                 "input_cost_per_token": 1e-5,
                 "output_cost_per_token": 5e-5,
-                "input_cost_per_token_above_200k_tokens": 2e-5,
-                "output_cost_per_token_above_200k_tokens": 7.5e-5,
-                "input_cost_per_token_above_272k_tokens": 2e-5,
-                "output_cost_per_token_above_272k_tokens": 7.5e-5,
+                "input_cost_per_token_above_32k_tokens": 2e-5,
             })
 
 
@@ -218,8 +241,8 @@ class FastModelTests(unittest.TestCase):
         self.assertEqual(fast["cacheReadPerMTok"], 2.0)
         self.assertEqual(fast["cacheWrite5mPerMTok"], 25.0)
         self.assertEqual(fast["cacheWrite1hPerMTok"], 25.0)
-        self.assertEqual(fast["longContext"]["thresholdTokens"], 272_000)
-        self.assertEqual(fast["longContext"]["rate"]["outputPerMTok"], 150.0)
+        self.assertEqual(fast["longContext"][0]["thresholdTokens"], 272_000)
+        self.assertEqual(fast["longContext"][0]["rate"]["outputPerMTok"], 150.0)
 
     def test_dated_snapshot_puts_fast_before_date(self):
         self.assertEqual(fast_model_name("gpt-6-astra-20260907"), "gpt-6-astra-fast-20260907")
@@ -244,6 +267,80 @@ class FastModelTests(unittest.TestCase):
         }
 
         self.assertEqual(add_fast_models({}, {"gemini/gemini-x": spec}), {})
+
+
+class TransformCommandTests(unittest.TestCase):
+    SCRIPT = pathlib.Path(__file__).with_name("transform_pricing.py")
+    BASE = {
+        "mode": "chat",
+        "litellm_provider": "openai",
+        "input_cost_per_token": 1e-5,
+        "output_cost_per_token": 5e-5,
+    }
+
+    def transform(self, raw):
+        return subprocess.run(
+            [sys.executable, str(self.SCRIPT)],
+            input=json.dumps(raw), text=True, capture_output=True, check=False,
+        )
+
+    def test_multi_tier_model_is_published_alongside_other_prices(self):
+        multiple_tiers = {
+            **self.BASE,
+            "litellm_provider": "kyma",
+            "input_cost_per_token_above_32k_tokens": 1.35e-7,
+            "output_cost_per_token_above_32k_tokens": 5.4e-7,
+            "input_cost_per_token_above_256k_tokens": 2.7e-7,
+            "output_cost_per_token_above_256k_tokens": 1.08e-6,
+        }
+        supported = {
+            **self.BASE,
+            "input_cost_per_token_above_272k_tokens": 2e-5,
+            "output_cost_per_token_above_272k_tokens": 7.5e-5,
+            "input_cost_per_token_priority": 2e-5,
+            "output_cost_per_token_priority": 1e-4,
+        }
+        for raw in [
+            {"kyma/qwen3.7-flash": multiple_tiers, "gpt-x": supported},
+            {"gpt-x": supported, "kyma/qwen3.7-flash": multiple_tiers},
+        ]:
+            with self.subTest(order=list(raw)):
+                result = self.transform(raw)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                snapshot = json.loads(result.stdout)
+                self.assertEqual(snapshot["schemaVersion"], 2)
+                models = snapshot["models"]
+                self.assertEqual(set(models), {"gpt-x", "gpt-x-fast", "kyma/qwen3.7-flash"})
+                self.assertEqual(models["gpt-x"]["inputPerMTok"], 10)
+                self.assertEqual(models["gpt-x"]["longContext"][0]["thresholdTokens"], 272_000)
+                self.assertEqual(models["gpt-x"]["longContext"][0]["rate"]["outputPerMTok"], 75)
+                self.assertEqual(models["gpt-x-fast"]["inputPerMTok"], 20)
+                self.assertEqual([tier["thresholdTokens"] for tier in models["kyma/qwen3.7-flash"]["longContext"]], [32_000, 256_000])
+                self.assertEqual(result.stderr, "")
+
+    def test_priority_prices_keep_all_context_tiers_separate_from_standard(self):
+        result = self.transform({"gpt-x": {
+            **self.BASE,
+            "input_cost_per_token_priority": 2e-5,
+            "output_cost_per_token_priority": 1e-4,
+            "input_cost_per_token_above_32k_tokens_priority": 4e-5,
+            "output_cost_per_token_above_32k_tokens_priority": 2e-4,
+            "input_cost_per_token_above_256k_tokens_priority": 8e-5,
+            "output_cost_per_token_above_256k_tokens_priority": 4e-4,
+        }})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        models = json.loads(result.stdout)["models"]
+        self.assertEqual(set(models), {"gpt-x", "gpt-x-fast"})
+        self.assertEqual(models["gpt-x"]["inputPerMTok"], 10)
+        self.assertNotIn("longContext", models["gpt-x"])
+        self.assertEqual([tier["thresholdTokens"] for tier in models["gpt-x-fast"]["longContext"]], [32_000, 256_000])
+        self.assertEqual(models["gpt-x-fast"]["longContext"][1]["rate"]["outputPerMTok"], 400)
+        self.assertEqual(result.stderr, "")
+
+    def test_unexpected_invalid_data_still_fails_generation(self):
+        result = self.transform({"gpt-x": {**self.BASE, "cache_read_input_token_cost": {"invalid": 1}}})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
 
 
 class CanonicalTests(unittest.TestCase):
@@ -292,6 +389,28 @@ class OverrideTests(unittest.TestCase):
     def test_fills_model_missing_upstream(self):
         models = apply_overrides({}, {"glm-5.2": {**self.PRICE, "note": "出处备忘"}})
         self.assertEqual(models["glm-5.2"], self.PRICE)  # note 不进快照
+
+    def test_override_keeps_all_context_tiers_and_unknown_cache_prices(self):
+        context = [
+            {"thresholdTokens": 32_000, "rate": {"inputPerMTok": 2, "outputPerMTok": 4}},
+            {"thresholdTokens": 256_000, "rate": {**self.PRICE, "cacheReadPerMTok": 0}},
+        ]
+        models = apply_overrides({}, {"m": {**self.PRICE, "longContext": context}})
+        self.assertEqual([tier["thresholdTokens"] for tier in models["m"]["longContext"]], [32_000, 256_000])
+        self.assertIsNone(models["m"]["longContext"][0]["rate"]["cacheReadPerMTok"])
+        self.assertEqual(models["m"]["longContext"][1]["rate"]["cacheReadPerMTok"], 0)
+
+    def test_override_normalizes_legacy_context_object(self):
+        context = {"thresholdTokens": 32_000, "rate": self.PRICE}
+        models = apply_overrides({}, {"m": {**self.PRICE, "longContext": context}})
+        self.assertEqual(models["m"]["longContext"], [context])
+
+    def test_override_rejects_unordered_context_or_ambiguous_time_and_context_rules(self):
+        context = [{"thresholdTokens": 256_000, "rate": self.PRICE}, {"thresholdTokens": 32_000, "rate": self.PRICE}]
+        with self.assertRaises(SystemExit):
+            apply_overrides({}, {"m": {**self.PRICE, "longContext": context}})
+        with self.assertRaises(SystemExit):
+            apply_overrides({}, {"m": {**self.PRICE, "longContext": context[:1], "tiered": self.TIERED}})
 
     def test_override_wins_and_warns_when_upstream_has_it(self):
         upstream = {"zai/glm-5.2": {**self.PRICE, "inputPerMTok": 9.9}}

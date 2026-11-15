@@ -7,6 +7,22 @@ final class PricingSnapshotUpdaterTests: XCTestCase {
         super.tearDown()
     }
 
+    func testFormatUpgradeUsesSeparateCacheAndDownloadAddresses() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cacheURL = TokenMeterPaths.pricingSnapshotURL(homeDirectory: directory)
+        XCTAssertEqual(cacheURL.lastPathComponent, PricingSnapshotUpdater.snapshotURL.lastPathComponent)
+        let legacyURL = cacheURL.deletingLastPathComponent().appendingPathComponent("litellm-pricing.json")
+        XCTAssertNotEqual(cacheURL, legacyURL, "旧客户端不能用 v1 缓存覆盖 v2 客户端价格")
+        try FileManager.default.createDirectory(at: legacyURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let oldData = try snapshotData(inputPrice: 1)
+        try oldData.write(to: legacyURL)
+        let effective = try PricingSnapshot.loadEffective(cachedURL: cacheURL)
+        let bundled = try PricingSnapshot.loadBundled()
+        XCTAssertTrue(effective == bundled, "升级时旧缓存不能压过新版随包价格")
+        XCTAssertEqual(try Data(contentsOf: legacyURL), oldData)
+    }
+
     func testChecksImmediatelyThenWaitsTwentyFourHours() {
         let now = Date(timeIntervalSince1970: 1_000_000)
 
@@ -61,7 +77,7 @@ final class PricingSnapshotUpdaterTests: XCTestCase {
         let effective = try PricingSnapshot.loadEffective(cachedURL: cacheURL)
         XCTAssertEqual(effective.snapshotVersion, "remote-test")
         XCTAssertEqual(effective.models["gpt-6-astra"]?.inputPerMTok, 10)
-        XCTAssertEqual(effective.models["gpt-6-astra"]?.longContext?.thresholdTokens, 272_000)
+        XCTAssertEqual(effective.models["gpt-6-astra"]?.longContext.first?.thresholdTokens, 272_000)
     }
 
     func testBadChecksumLeavesExistingCacheUntouched() throws {
@@ -186,7 +202,7 @@ final class PricingSnapshotUpdaterTests: XCTestCase {
                     cacheReadPerMTok: 1,
                     cacheWrite5mPerMTok: 12.5,
                     cacheWrite1hPerMTok: 12.5,
-                    longContext: LongContextPricing(thresholdTokens: 272_000, rate: rate)
+                    longContext: [LongContextPricing(thresholdTokens: 272_000, rate: rate)]
                 )
             ]
         )

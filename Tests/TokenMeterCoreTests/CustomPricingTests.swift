@@ -279,6 +279,34 @@ final class CustomPricingTests: XCTestCase {
         XCTAssertEqual(event.costMicros, 200_000)
         XCTAssertEqual(try fixture.appliedPricingCount(), 1)
     }
+
+    func testScannerReprojectsExistingEventsAndRollupsWhenOnlyContextTierChanges() async throws {
+        let fixture = try CustomPricingScanFixture.make()
+        defer { fixture.cleanup() }
+        func tiers(_ lastInput: Double, _ lastOutput: Double) -> [LongContextPricing] {
+            [LongContextPricing(thresholdTokens: 500, rate: RateCard(
+                inputPerMTok: 3, outputPerMTok: 4, cacheReadPerMTok: nil,
+                cacheWrite5mPerMTok: nil, cacheWrite1hPerMTok: nil)),
+             LongContextPricing(thresholdTokens: 900, rate: RateCard(
+                inputPerMTok: lastInput, outputPerMTok: lastOutput, cacheReadPerMTok: nil,
+                cacheWrite5mPerMTok: nil, cacheWrite1hPerMTok: nil))]
+        }
+
+        try fixture.writeRemotePricing(model: "ox-alpha-free", input: 1, output: 2, longContext: tiers(5, 6))
+        try await fixture.scanner.scanRoot(id: 1)
+        XCTAssertEqual(try fixture.eventRow().costMicros, 8_000)
+        XCTAssertEqual(try fixture.rollupCostMicros(), 8_000)
+
+        // 基础价和 snapshotVersion 都不变，只有第二道阈值后的费率变化。
+        try fixture.writeRemotePricing(model: "ox-alpha-free", input: 1, output: 2, longContext: tiers(7, 8))
+        try await fixture.scanner.scanRoot(id: 1)
+        XCTAssertEqual(try fixture.eventRow().costMicros, 11_000)
+        XCTAssertEqual(try fixture.rollupCostMicros(), 11_000)
+        XCTAssertEqual(try fixture.rollupUnknownCount(), 0)
+        let row = try XCTUnwrap(fixture.database.query("SELECT tokens_input, tokens_output FROM usage_events").first)
+        XCTAssertEqual(row.int("tokens_input"), 1_000)
+        XCTAssertEqual(row.int("tokens_output"), 500)
+    }
 }
 
 // MARK: - Fixtures
@@ -292,6 +320,7 @@ private final class CustomPricingScanFixture {
     let scanner: LocalAgentScanner
     private let sessionKey: String
     private let kind: SourceKind
+    private var remoteWriteCount = 0
 
     static func make(model: String = "ox-alpha-free", kind: SourceKind = .claudeJSONL) throws -> CustomPricingScanFixture {
         try self.init(model: model, kind: kind)
@@ -342,7 +371,8 @@ private final class CustomPricingScanFixture {
         try Data(json.utf8).write(to: pricingURL)
     }
 
-    func writeRemotePricing(model: String, input: Double, output: Double) throws {
+    func writeRemotePricing(model: String, input: Double, output: Double,
+                            longContext: [LongContextPricing] = []) throws {
         let snapshot = PricingSnapshot(
             snapshotVersion: "remote-\(input)-\(output)",
             source: "litellm",
@@ -352,7 +382,8 @@ private final class CustomPricingScanFixture {
                     outputPerMTok: output,
                     cacheReadPerMTok: input * 0.1,
                     cacheWrite5mPerMTok: input * 1.25,
-                    cacheWrite1hPerMTok: input * 2
+                    cacheWrite1hPerMTok: input * 2,
+                    longContext: longContext
                 )
             ]
         )
@@ -360,6 +391,11 @@ private final class CustomPricingScanFixture {
         encoder.outputFormatting = [.sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(snapshot).write(to: remotePricingURL, options: .atomic)
+        remoteWriteCount += 1
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: TimeInterval(remoteWriteCount))],
+            ofItemAtPath: remotePricingURL.path
+        )
     }
 
     /// 追加第二个独立会话文件，验证「新事件也走覆盖价」。

@@ -40,11 +40,11 @@ public enum TokenMeterPaths {
         baseDirectory(homeDirectory: homeDirectory).appendingPathComponent("custom-pricing.json")
     }
 
-    /// GitHub 定时生成的 TokenMeter 价格快照在本机的缓存。
+    /// 缓存按格式隔离，防止旧客户端覆盖新版价格，或旧缓存压过新版随包快照。
     public static func pricingSnapshotURL(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
         baseDirectory(homeDirectory: homeDirectory)
             .appendingPathComponent("cache", isDirectory: true)
-            .appendingPathComponent("litellm-pricing.json")
+            .appendingPathComponent("litellm-pricing-v\(PricingSnapshot.currentSchemaVersion).json")
     }
 
     public static func defaultScanRoots(

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 手动运行，联网拉取 LiteLLM 定价表并写回仓库。产物需提交。
+# 本地与 CI 共用：联网拉取 LiteLLM 定价表，生成随包快照。契约见 docs/pricing.md。
 set -euo pipefail
 
 URL="https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"

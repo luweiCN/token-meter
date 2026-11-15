@@ -50,7 +50,9 @@ public struct CostCalculator {
     }
 
     public init(snapshot: PricingSnapshot, ignoreReportedModels: Set<String> = []) {
-        canonicalIndex = Self.canonicalModels(from: snapshot)
+        canonicalIndex = Self.canonicalModels(from: snapshot).filter {
+            (try? $0.value.validate(allowFree: true)) != nil
+        }
         self.ignoreReportedModels = ignoreReportedModels
     }
 
@@ -96,8 +98,7 @@ public struct CostCalculator {
 
         // 峰谷价（如 DeepSeek）：生效时刻之后按事件发生时刻选高峰/空闲价；
         // 生效时刻之前的存量事件仍按基础价计。长上下文价按单次完整输入
-        // （未缓存 + 缓存读 + 缓存写）切档。目前数据源中两类档位不重叠；
-        // 如果将来某模型同时出现，峰谷价优先，避免猜测二维价格矩阵。
+        // （未缓存 + 缓存读 + 缓存写）切档；整次请求使用最高已超过阈值的费率。
         let rate: RateCard
         if let tiered = pricing.tiered {
             switch tiered.phase(at: event.observedAt) {
@@ -105,25 +106,28 @@ public struct CostCalculator {
             case .offPeak: rate = tiered.offPeak
             case .notYetEffective: rate = pricing.rate
             }
-        } else if let longContext = pricing.longContext,
-                  billableInputTokens(for: event) > longContext.thresholdTokens {
-            rate = longContext.rate
         } else {
-            rate = pricing.rate
+            let input = billableInputTokens(for: event)
+            rate = pricing.longContext.last(where: { input > $0.thresholdTokens })?.rate ?? pricing.rate
         }
 
-        let usd =
-            perMillion(event.inputTokens, rate.inputPerMTok) +
-            perMillion(event.outputTokens, rate.outputPerMTok) +
-            perMillion(event.cacheReadTokens, rate.cacheReadPerMTok) +
-            perMillion(event.cacheWrite5mTokens, rate.cacheWrite5mPerMTok) +
-            perMillion(event.cacheWrite1hTokens, rate.cacheWrite1hPerMTok)
-
-        return (Int64((usd * 1_000_000).rounded()), .computed)
-    }
-
-    private func perMillion(_ tokens: Int64, _ pricePerMTok: Double) -> Double {
-        Double(tokens) / 1_000_000.0 * pricePerMTok
+        let components: [(Int64, Double?)] = [
+            (event.inputTokens, rate.inputPerMTok), (event.outputTokens, rate.outputPerMTok),
+            (event.cacheReadTokens, rate.cacheReadPerMTok),
+            (event.cacheWrite5mTokens, rate.cacheWrite5mPerMTok),
+            (event.cacheWrite1hTokens, rate.cacheWrite1hPerMTok),
+        ]
+        var micros: Double = 0
+        for (tokens, price) in components {
+            guard tokens >= 0 else { return (nil, .unknown) }
+            guard tokens > 0 else { continue }
+            guard let price else { return (nil, .unknown) }
+            // USD/百万 Token × Token = 微美元，最后统一舍入。
+            micros += Double(tokens) * price
+        }
+        let rounded = micros.rounded()
+        guard rounded.isFinite, rounded < Double(Int64.max) else { return (nil, .unknown) }
+        return (Int64(rounded), .computed)
     }
 
     private func billableInputTokens(for event: UsageEvent) -> Int64 {

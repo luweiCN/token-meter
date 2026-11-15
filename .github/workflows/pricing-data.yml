@@ -25,13 +25,15 @@ jobs:
       - name: 验证转换规则与快照解码
         run: |
           python3 -m unittest discover -s scripts -p 'test_*.py'
-          swift test --filter PricingTests
-          swift test --filter CostCalculatorTests
+          swift test --filter 'PricingTests|CostCalculatorTests|PricingSnapshotUpdaterTests|TokenMeterDatabaseMigratorTests'
 
       - name: 生成校验和
         run: |
-          cp Sources/TokenMeterCore/Resources/litellm-pricing.json litellm-pricing.json
-          shasum -a 256 litellm-pricing.json > litellm-pricing.json.sha256
+          version=$(python3 -c 'import json; print(json.load(open("Sources/TokenMeterCore/Resources/litellm-pricing.json"))["schemaVersion"])')
+          asset="litellm-pricing-v${version}.json"
+          cp Sources/TokenMeterCore/Resources/litellm-pricing.json "$asset"
+          shasum -a 256 "$asset" > "$asset.sha256"
+          echo "PRICING_ASSET=$asset" >> "$GITHUB_ENV"
 
       - name: 发布稳定下载地址
         env:
@@ -43,4 +45,4 @@ jobs:
               --notes "TokenMeter 自动校验的 LiteLLM 价格快照。"
           fi
           gh release upload pricing-data \
-            litellm-pricing.json litellm-pricing.json.sha256 --clobber
+            "$PRICING_ASSET" "$PRICING_ASSET.sha256" --clobber

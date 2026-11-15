@@ -69,18 +69,18 @@ final class PricingTests: XCTestCase {
         XCTAssertEqual(standard.outputPerMTok, 50)
         XCTAssertEqual(standard.cacheReadPerMTok, 1)
         XCTAssertEqual(standard.cacheWrite5mPerMTok, 12.5)
-        XCTAssertEqual(standard.longContext?.thresholdTokens, 272_000)
-        XCTAssertEqual(standard.longContext?.rate.inputPerMTok, 20)
-        XCTAssertEqual(standard.longContext?.rate.outputPerMTok, 75)
+        XCTAssertEqual(standard.longContext.first?.thresholdTokens, 272_000)
+        XCTAssertEqual(standard.longContext.first?.rate.inputPerMTok, 20)
+        XCTAssertEqual(standard.longContext.first?.rate.outputPerMTok, 75)
 
         let fast = try XCTUnwrap(snapshot.models["gpt-6-astra-fast"])
         XCTAssertEqual(fast.inputPerMTok, 20)
         XCTAssertEqual(fast.outputPerMTok, 100)
         XCTAssertEqual(fast.cacheReadPerMTok, 2)
         XCTAssertEqual(fast.cacheWrite5mPerMTok, 25)
-        XCTAssertEqual(fast.longContext?.thresholdTokens, 272_000)
-        XCTAssertEqual(fast.longContext?.rate.inputPerMTok, 40)
-        XCTAssertEqual(fast.longContext?.rate.outputPerMTok, 150)
+        XCTAssertEqual(fast.longContext.first?.thresholdTokens, 272_000)
+        XCTAssertEqual(fast.longContext.first?.rate.inputPerMTok, 40)
+        XCTAssertEqual(fast.longContext.first?.rate.outputPerMTok, 150)
     }
 
     func testEveryBundledModelHasPositiveBasePrices() throws {
@@ -220,7 +220,8 @@ final class PricingTests: XCTestCase {
             XCTAssertTrue(tiered.holidays.contains(CalendarDay(year: 2026, month: 10, day: 1)))
             XCTAssertEqual(tiered.offPeak.inputPerMTok, tiered.peak.inputPerMTok / 2, accuracy: 1e-9)
             XCTAssertEqual(tiered.offPeak.outputPerMTok, tiered.peak.outputPerMTok / 2, accuracy: 1e-9)
-            XCTAssertEqual(tiered.offPeak.cacheReadPerMTok, tiered.peak.cacheReadPerMTok / 2, accuracy: 1e-9)
+            XCTAssertEqual(try XCTUnwrap(tiered.offPeak.cacheReadPerMTok),
+                           try XCTUnwrap(tiered.peak.cacheReadPerMTok) / 2, accuracy: 1e-9)
         }
     }
 

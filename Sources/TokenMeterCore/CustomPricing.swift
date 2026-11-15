@@ -2,7 +2,7 @@ import Foundation
 
 /// custom-pricing.json 的单个条目。所有字段都可省略：
 /// - 省略的价格字段逐项沿用当前生效快照价（含 longContext/tiered）——只想开
-///   ignoreReported 时一个价格都不用抄；生效快照里也没有的模型则必须写全五价。
+///   ignoreReported 时一个价格都不用抄；新模型必须提供输入/输出价，缓存缺价保持未知。
 /// - `ignoreReported: true` = 忽略日志上报成本（OpenCode/OMP 会带），强制按本地价计。
 public struct CustomPricingEntry: Equatable, Codable {
     public let inputPerMTok: Double?
@@ -10,7 +10,7 @@ public struct CustomPricingEntry: Equatable, Codable {
     public let cacheReadPerMTok: Double?
     public let cacheWrite5mPerMTok: Double?
     public let cacheWrite1hPerMTok: Double?
-    public let longContext: LongContextPricing?
+    public let longContext: [LongContextPricing]?
     public let tiered: PeakOffPeakPricing?
     public let ignoreReported: Bool?
 
@@ -20,7 +20,7 @@ public struct CustomPricingEntry: Equatable, Codable {
         cacheReadPerMTok: Double? = nil,
         cacheWrite5mPerMTok: Double? = nil,
         cacheWrite1hPerMTok: Double? = nil,
-        longContext: LongContextPricing? = nil,
+        longContext: [LongContextPricing]? = nil,
         tiered: PeakOffPeakPricing? = nil,
         ignoreReported: Bool? = nil
     ) {
@@ -32,6 +32,25 @@ public struct CustomPricingEntry: Equatable, Codable {
         self.longContext = longContext
         self.tiered = tiered
         self.ignoreReported = ignoreReported
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case inputPerMTok, outputPerMTok, cacheReadPerMTok, cacheWrite5mPerMTok, cacheWrite1hPerMTok
+        case longContext, tiered, ignoreReported
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            inputPerMTok: try values.decodeIfPresent(Double.self, forKey: .inputPerMTok),
+            outputPerMTok: try values.decodeIfPresent(Double.self, forKey: .outputPerMTok),
+            cacheReadPerMTok: try values.decodeIfPresent(Double.self, forKey: .cacheReadPerMTok),
+            cacheWrite5mPerMTok: try values.decodeIfPresent(Double.self, forKey: .cacheWrite5mPerMTok),
+            cacheWrite1hPerMTok: try values.decodeIfPresent(Double.self, forKey: .cacheWrite1hPerMTok),
+            longContext: try values.decodeContextTiersIfPresent(forKey: .longContext),
+            tiered: try values.decodeIfPresent(PeakOffPeakPricing.self, forKey: .tiered),
+            ignoreReported: try values.decodeIfPresent(Bool.self, forKey: .ignoreReported)
+        )
     }
 }
 
@@ -77,8 +96,10 @@ public struct CustomPricingOverrides: Equatable {
         let sizeBytes = (metadata[.size] as? NSNumber)?.int64Value ?? 0
         let modifiedAt = (metadata[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
 
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
         guard let data = try? Data(contentsOf: url),
-              let decoded = try? JSONDecoder().decode([String: CustomPricingEntry].self, from: data) else {
+              let decoded = try? decoder.decode([String: CustomPricingEntry].self, from: data) else {
             return .empty
         }
 
@@ -101,8 +122,8 @@ public struct CustomPricingOverrides: Equatable {
     }
 
     /// 把条目与生效快照逐字段合并成完整价：条目缺的字段从快照继承（键先用原名查、
-    /// 再用 canonical 查）。任何一项价格在两边都取不到 → 无法安全计价，整个条目的
-    /// 价格部分（连同 ignoreReported）一起放弃，绝不用半份价格算账。
+    /// 再用 canonical 查）。缺少输入/输出价或规则非法则整个条目（含 ignoreReported）
+    /// 放弃；缓存缺价由计价器按请求实际消费判断。longContext: [] 显式关闭上下文分档。
     public func resolvedModels(bundled: PricingSnapshot) -> (models: [String: ModelPricing], droppedKeys: Set<String>) {
         var resolved: [String: ModelPricing] = [:]
         var dropped = Set<String>()
@@ -115,10 +136,7 @@ public struct CustomPricingOverrides: Equatable {
                 value ?? fallback
             }
             guard let input = inherit(entry.inputPerMTok, base?.inputPerMTok),
-                  let output = inherit(entry.outputPerMTok, base?.outputPerMTok),
-                  let cacheRead = inherit(entry.cacheReadPerMTok, base?.cacheReadPerMTok),
-                  let cacheWrite5m = inherit(entry.cacheWrite5mPerMTok, base?.cacheWrite5mPerMTok),
-                  let cacheWrite1h = inherit(entry.cacheWrite1hPerMTok, base?.cacheWrite1hPerMTok) else {
+                  let output = inherit(entry.outputPerMTok, base?.outputPerMTok) else {
                 if resolved[normalized] == nil {
                     dropped.insert(normalized)
                 }
@@ -127,16 +145,21 @@ public struct CustomPricingOverrides: Equatable {
             // 覆盖直接以 canonical 键合并，保证 omniroute/cx/... 这类写法
             // 不会在 CostCalculator 的字典序撞名裁决中输给随包裸键。
             guard resolved[normalized] == nil else { continue }
-            resolved[normalized] = ModelPricing(
+            let pricing = ModelPricing(
                 inputPerMTok: input,
                 outputPerMTok: output,
-                cacheReadPerMTok: cacheRead,
-                cacheWrite5mPerMTok: cacheWrite5m,
-                cacheWrite1hPerMTok: cacheWrite1h,
-                longContext: entry.longContext ?? base?.longContext,
+                cacheReadPerMTok: inherit(entry.cacheReadPerMTok, base?.cacheReadPerMTok),
+                cacheWrite5mPerMTok: inherit(entry.cacheWrite5mPerMTok, base?.cacheWrite5mPerMTok),
+                cacheWrite1hPerMTok: inherit(entry.cacheWrite1hPerMTok, base?.cacheWrite1hPerMTok),
+                longContext: entry.longContext ?? base?.longContext ?? [],
                 tiered: entry.tiered ?? base?.tiered,
                 ignoreReported: entry.ignoreReported
             )
+            guard (try? pricing.validate(allowFree: true)) != nil else {
+                dropped.insert(normalized)
+                continue
+            }
+            resolved[normalized] = pricing
             dropped.remove(normalized)
         }
         return (resolved, dropped)

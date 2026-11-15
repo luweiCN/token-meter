@@ -139,7 +139,7 @@ final class CostCalculatorTests: XCTestCase {
                     cacheReadPerMTok: 3,
                     cacheWrite5mPerMTok: 4,
                     cacheWrite1hPerMTok: 5,
-                    longContext: LongContextPricing(thresholdTokens: 272_000, rate: longRate)
+                    longContext: [LongContextPricing(thresholdTokens: 272_000, rate: longRate)]
                 )
             ]
         ))

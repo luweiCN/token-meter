@@ -3,9 +3,11 @@
 
 LiteLLM 的价格是「每 token 美元」，输出改成「每百万 token 美元」。
 从 stdin 读 LiteLLM JSON，往 stdout 写快照 JSON。
+上下文价格按阈值递增保存；缓存单价缺失保留为 null，显式 0 才表示免费。
 """
 import hashlib
 import json
+import math
 import re
 import sys
 
@@ -15,6 +17,7 @@ import sys
 # 匹配面由 PROVIDER_PREFIXES 控制：前缀不在剥离列表里的第三方托管键
 # （cloudflare/、fireworks_ai/ 等）归一后保持原样，不会冒充官方价。
 M = 1_000_000
+SNAPSHOT_SCHEMA_VERSION = 2
 
 # 定价键侧专用白名单。用量侧（Swift ModelNameNormalizer）已改为通用规则
 # ——任意 `provider/` 前缀一律剥掉取最后一段（用户裁定）；这里不能跟：
@@ -44,92 +47,58 @@ def should_keep(name: str, spec: object) -> bool:
     return bool(spec.get("input_cost_per_token")) and bool(spec.get("output_cost_per_token"))
 
 
-def rate(published: float | None, fallback: float) -> float:
-    """published 为 None 表示 LiteLLM 没说，回落到派生值。
-
-    必须用 `is not None` 而不是真值判断：LiteLLM 把「免费」显式写成 0
-    （glm 全系列的 cache_creation 都是 0）。把那个 0 当成「缺失」会给免费的
-    东西按派生公式收费。「免费」和「不知道」是两件事。
-    """
-    return round(published * M if published is not None else fallback, 6)
+def rate(published: float | None) -> float | None:
+    if published is None:
+        return None
+    if isinstance(published, bool) or not isinstance(published, (int, float)) or not math.isfinite(published) or published < 0:
+        raise ValueError(f"非法单价: {published!r}")
+    return round(published * M, 6)
 
 
-def source_key(field: str, suffix: str) -> str:
-    return f"{field}{suffix}"
+def source_key(field: str, suffix: str, threshold_k: int | None = None) -> str:
+    context = f"_above_{threshold_k}k_tokens" if threshold_k is not None else ""
+    return f"{field}{context}{suffix}"
 
 
-def convert_rate_card(spec: dict, suffix: str = "") -> dict:
-    input_m = spec[source_key("input_cost_per_token", suffix)] * M
-    output_m = spec[source_key("output_cost_per_token", suffix)] * M
-    cache_write = spec.get(source_key("cache_creation_input_token_cost", suffix))
-    cache_write_m = rate(cache_write, input_m * 1.25)
-    cache_write_1h = spec.get(source_key("cache_creation_input_token_cost_above_1hr", suffix))
-    # OpenAI 只发布一档 cache write；有明示价时 5m/1h 都用它。
-    # Anthropic 等厂商有独立 1h 价；缺失时保留原有 input*2 派生规则。
-    one_hour_fallback = (
-        cache_write_m
-        if spec.get("litellm_provider") == "openai" and cache_write is not None
-        else input_m * 2.0
-    )
+def convert_rate_card(spec: dict, suffix: str = "", threshold_k: int | None = None) -> dict:
+    def price(field: str) -> float | None:
+        return rate(spec.get(source_key(field, suffix, threshold_k)))
+
+    input_m = price("input_cost_per_token")
+    output_m = price("output_cost_per_token")
+    for field, value in [("input_cost_per_token", input_m), ("output_cost_per_token", output_m)]:
+        if value is None or value <= 0:
+            raise ValueError(f"缺少有效基础价格 {source_key(field, suffix, threshold_k)}")
+    cache_write = price("cache_creation_input_token_cost")
+    cache_write_1h = price("cache_creation_input_token_cost_above_1hr")
+    # OpenAI 的同一档明示 cache write 价不区分 TTL；其他供应商不能套这个规则。
+    if cache_write_1h is None and spec.get("litellm_provider") == "openai":
+        cache_write_1h = cache_write
     return {
-        "inputPerMTok": round(input_m, 6),
-        "outputPerMTok": round(output_m, 6),
-        "cacheReadPerMTok": rate(spec.get(source_key("cache_read_input_token_cost", suffix)), input_m * 0.1),
-        "cacheWrite5mPerMTok": cache_write_m,
-        # LiteLLM 给了真实的 1h 缓存写入价就用它。别硬编码 input*2：
-        # claude-3-opus 的实际比值是 0.40，claude-3-haiku 是 24.00。
-        "cacheWrite1hPerMTok": rate(cache_write_1h, one_hour_fallback),
+        "inputPerMTok": input_m,
+        "outputPerMTok": output_m,
+        "cacheReadPerMTok": price("cache_read_input_token_cost"),
+        "cacheWrite5mPerMTok": cache_write,
+        "cacheWrite1hPerMTok": cache_write_1h,
     }
 
 
-def long_context_key(field: str, threshold_k: int, suffix: str) -> str:
-    return f"{field}_above_{threshold_k}k_tokens{suffix}"
-
-
-def convert_long_context(spec: dict, suffix: str = "") -> dict | None:
-    pattern = re.compile(rf"^input_cost_per_token_above_(\d+)k_tokens{re.escape(suffix)}$")
+def convert_long_context(spec: dict, suffix: str = "") -> list:
+    fields = "input_cost_per_token|output_cost_per_token|cache_read_input_token_cost|cache_creation_input_token_cost|cache_creation_input_token_cost_above_1hr"
+    pattern = re.compile(rf"^(?:{fields})_above_(\d+)k_tokens{re.escape(suffix)}$")
     thresholds = sorted({int(match.group(1)) for key in spec for match in [pattern.match(key)] if match})
-    if not thresholds:
-        return None
-    if len(thresholds) != 1:
-        raise ValueError(f"一个模型出现多个长上下文阈值: {thresholds}")
-
-    threshold_k = thresholds[0]
-    input_key = long_context_key("input_cost_per_token", threshold_k, suffix)
-    output_key = long_context_key("output_cost_per_token", threshold_k, suffix)
-    if not spec.get(input_key) or not spec.get(output_key):
-        return None
-
-    input_m = spec[input_key] * M
-    output_m = spec[output_key] * M
-    cache_write_key = long_context_key("cache_creation_input_token_cost", threshold_k, suffix)
-    cache_write = spec.get(cache_write_key)
-    cache_write_m = rate(cache_write, input_m * 1.25)
-    cache_write_1h = spec.get(long_context_key("cache_creation_input_token_cost_above_1hr", threshold_k, suffix))
-    one_hour_fallback = (
-        cache_write_m
-        if spec.get("litellm_provider") == "openai" and cache_write is not None
-        else input_m * 2.0
-    )
-    return {
-        "thresholdTokens": threshold_k * 1_000,
-        "rate": {
-            "inputPerMTok": round(input_m, 6),
-            "outputPerMTok": round(output_m, 6),
-            "cacheReadPerMTok": rate(
-                spec.get(long_context_key("cache_read_input_token_cost", threshold_k, suffix)),
-                input_m * 0.1,
-            ),
-            "cacheWrite5mPerMTok": cache_write_m,
-            "cacheWrite1hPerMTok": rate(cache_write_1h, one_hour_fallback),
-        },
-    }
+    if any(threshold <= 0 for threshold in thresholds):
+        raise ValueError(f"非法长上下文阈值: {thresholds}")
+    return [
+        {"thresholdTokens": threshold * 1_000, "rate": convert_rate_card(spec, suffix, threshold)}
+        for threshold in thresholds
+    ]
 
 
 def convert_model(spec: dict, suffix: str = "") -> dict:
     result = convert_rate_card(spec, suffix)
     long_context = convert_long_context(spec, suffix)
-    if long_context is not None:
+    if long_context:
         result["longContext"] = long_context
     return result
 
@@ -145,8 +114,8 @@ def add_fast_models(models: dict, raw: dict) -> dict:
     """LiteLLM 的 Priority 就是 OpenAI Fast；为用量侧 `{base}-fast` 合成同名价格键。"""
     for name, spec in raw.items():
         if (
-            spec.get("litellm_provider") != "openai"
-            or not should_keep(name, spec)
+            not should_keep(name, spec)
+            or spec.get("litellm_provider") != "openai"
             or canonical(name).endswith("-fast")
         ):
             continue
@@ -180,6 +149,36 @@ def canonical(name: str) -> str:
 PRICE_FIELDS = ("inputPerMTok", "outputPerMTok", "cacheReadPerMTok", "cacheWrite5mPerMTok", "cacheWrite1hPerMTok")
 
 
+def normalize_rate_card(name: str, spec: object) -> dict:
+    if not isinstance(spec, dict):
+        sys.exit(f"error: override {name} 的价格必须是对象")
+    result = {field: spec.get(field) for field in PRICE_FIELDS}
+    for field, value in result.items():
+        is_base = field in PRICE_FIELDS[:2]
+        if value is None and not is_base:
+            continue
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or value < 0 or (is_base and value == 0)):
+            sys.exit(f"error: override {name} 缺少有效价格 {field}")
+    return result
+
+
+def normalize_context_tiers(name: str, tiers: object) -> list:
+    if isinstance(tiers, dict):
+        tiers = [tiers]
+    if not isinstance(tiers, list):
+        sys.exit(f"error: override {name} 的 longContext 必须是列表")
+    result = []
+    previous = 0
+    for tier in tiers:
+        threshold = tier.get("thresholdTokens") if isinstance(tier, dict) else None
+        if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold <= previous:
+            sys.exit(f"error: override {name} 的上下文阈值必须为正且严格递增")
+        result.append({"thresholdTokens": threshold, "rate": normalize_rate_card(f"{name}.longContext", tier.get("rate"))})
+        previous = threshold
+    return result
+
+
 def normalize_tiered(name: str, tiered: object) -> dict:
     """校验 override 的 tiered 字段并去掉说明性字段。
 
@@ -211,14 +210,9 @@ def normalize_tiered(name: str, tiered: object) -> dict:
             and 1 <= day["day"] <= 31
         ):
             sys.exit(f"error: override {name} 的 tiered.holidays 含非法日期 {day}")
+    result = {k: tiered[k] for k in ("effectiveAfter", "peakHoursUTC")}
     for which in ("peak", "offPeak"):
-        spec = tiered[which]
-        if not isinstance(spec, dict):
-            sys.exit(f"error: override {name} 的 tiered.{which} 必须是对象")
-        missing = [f for f in PRICE_FIELDS if f not in spec]
-        if missing:
-            sys.exit(f"error: override {name} 的 tiered.{which} 缺价格字段 {missing}")
-    result = {k: tiered[k] for k in ("effectiveAfter", "peakHoursUTC", "peak", "offPeak")}
+        result[which] = normalize_rate_card(f"{name}.tiered.{which}", tiered[which])
     result["weekdaysOnly"] = weekdays_only
     result["holidays"] = holidays
     return result
@@ -233,12 +227,13 @@ def apply_overrides(models: dict, overrides: dict) -> dict:
     表达不了峰谷价，这类 override 无条件优先是刻意的。
     """
     for name, spec in overrides.items():
-        missing = [f for f in PRICE_FIELDS if f not in spec]
-        if missing:
-            sys.exit(f"error: override {name} 缺价格字段 {missing}")
-        entry = {f: spec[f] for f in PRICE_FIELDS}
+        entry = normalize_rate_card(name, spec)
+        if spec.get("longContext") is not None:
+            entry["longContext"] = normalize_context_tiers(name, spec["longContext"])
         tiered = spec.get("tiered")
         if tiered is not None:
+            if entry.get("longContext"):
+                sys.exit(f"error: override {name} 同时含上下文和峰谷价，缺少组合费率")
             entry["tiered"] = normalize_tiered(name, tiered)
         upstream = [k for k in models if canonical(k) == canonical(name)]
         if upstream and tiered is None:
@@ -292,7 +287,7 @@ def main() -> None:
     version = hashlib.sha256(payload.encode()).hexdigest()[:12]
 
     json.dump(
-        {"snapshotVersion": version, "source": "litellm", "models": models},
+        {"schemaVersion": SNAPSHOT_SCHEMA_VERSION, "snapshotVersion": version, "source": "litellm", "models": models},
         sys.stdout,
         indent=2,
         sort_keys=True,

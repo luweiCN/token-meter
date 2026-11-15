@@ -5,22 +5,29 @@ import Foundation
 public struct RateCard: Equatable, Codable {
     public let inputPerMTok: Double
     public let outputPerMTok: Double
-    public let cacheReadPerMTok: Double
-    public let cacheWrite5mPerMTok: Double
-    public let cacheWrite1hPerMTok: Double
+    /// nil 表示来源未提供单价，0 表示免费；两者不可互换。
+    public let cacheReadPerMTok: Double?
+    public let cacheWrite5mPerMTok: Double?
+    public let cacheWrite1hPerMTok: Double?
 
     public init(
         inputPerMTok: Double,
         outputPerMTok: Double,
-        cacheReadPerMTok: Double,
-        cacheWrite5mPerMTok: Double,
-        cacheWrite1hPerMTok: Double
+        cacheReadPerMTok: Double?,
+        cacheWrite5mPerMTok: Double?,
+        cacheWrite1hPerMTok: Double?
     ) {
         self.inputPerMTok = inputPerMTok
         self.outputPerMTok = outputPerMTok
         self.cacheReadPerMTok = cacheReadPerMTok
         self.cacheWrite5mPerMTok = cacheWrite5mPerMTok
         self.cacheWrite1hPerMTok = cacheWrite1hPerMTok
+    }
+
+    func isValid(allowFree: Bool) -> Bool {
+        [inputPerMTok, outputPerMTok].allSatisfy { $0.isFinite && (allowFree ? $0 >= 0 : $0 > 0) }
+            && [cacheReadPerMTok, cacheWrite5mPerMTok, cacheWrite1hPerMTok]
+                .allSatisfy { $0.map { $0.isFinite && $0 >= 0 } ?? true }
     }
 }
 
@@ -34,6 +41,17 @@ public struct LongContextPricing: Equatable, Codable {
     public init(thresholdTokens: Int64, rate: RateCard) {
         self.thresholdTokens = thresholdTokens
         self.rate = rate
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// 旧缓存和用户覆盖的单对象只在读取边界转换；内存及新快照统一使用列表。
+    func decodeContextTiersIfPresent(forKey key: Key) throws -> [LongContextPricing]? {
+        guard contains(key), try !decodeNil(forKey: key) else { return nil }
+        if let legacy = try? decode(LongContextPricing.self, forKey: key) {
+            return [legacy]
+        }
+        return try decode([LongContextPricing].self, forKey: key)
     }
 }
 
@@ -222,11 +240,11 @@ public struct PhaseTransition: Equatable {
 public struct ModelPricing: Equatable, Codable {
     public let inputPerMTok: Double
     public let outputPerMTok: Double
-    public let cacheReadPerMTok: Double
-    public let cacheWrite5mPerMTok: Double
-    public let cacheWrite1hPerMTok: Double
-    /// 可选长上下文价格。nil 表示不按单次输入长度切档。
-    public let longContext: LongContextPricing?
+    public let cacheReadPerMTok: Double?
+    public let cacheWrite5mPerMTok: Double?
+    public let cacheWrite1hPerMTok: Double?
+    /// 按阈值严格递增；空列表表示所有输入长度都使用基础价。
+    public let longContext: [LongContextPricing]
     /// 可选峰谷价。nil 表示该模型只有一套固定价。
     public let tiered: PeakOffPeakPricing?
     /// 用户覆盖专用（custom-pricing.json）：true = 该模型忽略日志上报成本，
@@ -237,10 +255,10 @@ public struct ModelPricing: Equatable, Codable {
     public init(
         inputPerMTok: Double,
         outputPerMTok: Double,
-        cacheReadPerMTok: Double,
-        cacheWrite5mPerMTok: Double,
-        cacheWrite1hPerMTok: Double,
-        longContext: LongContextPricing? = nil,
+        cacheReadPerMTok: Double?,
+        cacheWrite5mPerMTok: Double?,
+        cacheWrite1hPerMTok: Double?,
+        longContext: [LongContextPricing] = [],
         tiered: PeakOffPeakPricing? = nil,
         ignoreReported: Bool? = nil
     ) {
@@ -252,6 +270,43 @@ public struct ModelPricing: Equatable, Codable {
         self.longContext = longContext
         self.tiered = tiered
         self.ignoreReported = ignoreReported
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case inputPerMTok, outputPerMTok, cacheReadPerMTok, cacheWrite5mPerMTok, cacheWrite1hPerMTok
+        case longContext, tiered, ignoreReported
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            inputPerMTok: try values.decode(Double.self, forKey: .inputPerMTok),
+            outputPerMTok: try values.decode(Double.self, forKey: .outputPerMTok),
+            cacheReadPerMTok: try values.decodeIfPresent(Double.self, forKey: .cacheReadPerMTok),
+            cacheWrite5mPerMTok: try values.decodeIfPresent(Double.self, forKey: .cacheWrite5mPerMTok),
+            cacheWrite1hPerMTok: try values.decodeIfPresent(Double.self, forKey: .cacheWrite1hPerMTok),
+            longContext: try values.decodeContextTiersIfPresent(forKey: .longContext) ?? [],
+            tiered: try values.decodeIfPresent(PeakOffPeakPricing.self, forKey: .tiered),
+            ignoreReported: try values.decodeIfPresent(Bool.self, forKey: .ignoreReported)
+        )
+    }
+
+    func validate(allowFree: Bool = false) throws {
+        guard rate.isValid(allowFree: allowFree) else { throw PricingError.invalidSnapshot("rate") }
+        var previous: Int64 = 0
+        for context in longContext {
+            guard context.thresholdTokens > previous, context.rate.isValid(allowFree: allowFree) else {
+                throw PricingError.invalidSnapshot("longContext")
+            }
+            previous = context.thresholdTokens
+        }
+        if let tiered {
+            // 没有二维费率表时无法推断上下文与时段价格的组合。
+            guard longContext.isEmpty, tiered.peak.isValid(allowFree: allowFree),
+                  tiered.offPeak.isValid(allowFree: allowFree) else {
+                throw PricingError.invalidSnapshot("tiered")
+            }
+        }
     }
 
     /// 基础价五元组。峰谷价生效前按它计价。
@@ -267,6 +322,8 @@ public struct ModelPricing: Equatable, Codable {
 }
 
 public struct PricingSnapshot: Equatable, Codable {
+    public static let currentSchemaVersion = 2
+    public let schemaVersion = currentSchemaVersion
     public let snapshotVersion: String
     public let source: String
     public let models: [String: ModelPricing]
@@ -275,6 +332,23 @@ public struct PricingSnapshot: Equatable, Codable {
         self.snapshotVersion = snapshotVersion
         self.source = source
         self.models = models
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, snapshotVersion, source, models
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        guard (1...Self.currentSchemaVersion).contains(version) else {
+            throw PricingError.invalidSnapshot("schemaVersion=\(version)")
+        }
+        self.init(
+            snapshotVersion: try values.decode(String.self, forKey: .snapshotVersion),
+            source: try values.decode(String.self, forKey: .source),
+            models: try values.decode([String: ModelPricing].self, forKey: .models)
+        )
     }
 
     /// 从随包分发的快照加载。运行时不发起任何网络请求。
@@ -305,32 +379,21 @@ public struct PricingSnapshot: Equatable, Codable {
     }
 
     /// 远程快照在入缓存前的语义校验。免费模型不从 LiteLLM 快照进入，
-    /// 因此基础 input/output 必须为正；缓存价允许为 0。
+    /// 因此基础 input/output 必须为正；缓存价允许为 0 或未知。
     public func validate(minimumModelCount: Int = 1) throws {
         guard !snapshotVersion.isEmpty, !source.isEmpty, models.count >= minimumModelCount else {
             throw PricingError.invalidSnapshot("metadata")
         }
         for (key, pricing) in models {
-            guard !key.isEmpty, Self.isValid(rate: pricing.rate) else {
+            guard !key.isEmpty else {
                 throw PricingError.invalidSnapshot(key)
             }
-            if let longContext = pricing.longContext,
-               (longContext.thresholdTokens <= 0 || !Self.isValid(rate: longContext.rate)) {
-                throw PricingError.invalidSnapshot("\(key).longContext")
-            }
-            if let tiered = pricing.tiered,
-               (!Self.isValid(rate: tiered.peak) || !Self.isValid(rate: tiered.offPeak)) {
-                throw PricingError.invalidSnapshot("\(key).tiered")
+            do {
+                try pricing.validate()
+            } catch PricingError.invalidSnapshot(let field) {
+                throw PricingError.invalidSnapshot("\(key).\(field)")
             }
         }
-    }
-
-    private static func isValid(rate: RateCard) -> Bool {
-        rate.inputPerMTok.isFinite && rate.inputPerMTok > 0
-            && rate.outputPerMTok.isFinite && rate.outputPerMTok > 0
-            && rate.cacheReadPerMTok.isFinite && rate.cacheReadPerMTok >= 0
-            && rate.cacheWrite5mPerMTok.isFinite && rate.cacheWrite5mPerMTok >= 0
-            && rate.cacheWrite1hPerMTok.isFinite && rate.cacheWrite1hPerMTok >= 0
     }
 
     /// 内置价打底、用户覆盖叠加（同名覆盖、新名补充）。返回新实例，不改自身。

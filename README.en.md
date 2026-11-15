@@ -76,7 +76,7 @@ Codex reset cards show the remaining days, hours, or minutes. An opt-in setting 
     └─ Reads the same SQLite, event-driven refresh
 ```
 
-- **Cost**: a daily GitHub Action generates and validates the LiteLLM pricing snapshot; the app downloads and atomically caches it every 24 hours, falls back to its previous or bundled snapshot on failure, and still computes costs locally
+- **Cost**: a daily GitHub Action generates and validates the LiteLLM pricing snapshot; the app downloads and atomically caches it every 24 hours and falls back to its previous or bundled snapshot on failure. Local calculations support multiple context-length price tiers and preserve unknown prices; see the [pricing contract](docs/pricing.md)
 - **One source of truth**: menu bar "today", popover, and every main-window page all derive from the same message-level event table (`usage_events`)
 
 ## Install
