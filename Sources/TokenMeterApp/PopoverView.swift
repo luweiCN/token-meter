@@ -529,7 +529,7 @@ private struct TodayBlock: View {
 
 /// 顶部总览右侧的当月热力图。7 列固定为周一…周日，行数随当月 1 号的星期偏移与
 /// 天数动态 4–6 行（1 号前的空位与月末后的空位留白），与系统日历完全对齐；
-/// 颜色深浅=当天 token 量相对当月峰值的分位。悬浮单点弹详情浮窗（复刻主界面：
+/// 颜色对应固定日 Token 区间，同样的用量在不同月份同色。悬浮单点弹详情浮窗：
 /// Token/花费/会话/事件四指标 + 当天按模型的消耗明细，箭头指向锚点、系统自动避让）。
 /// 还没到的日期不响应悬浮、也不弹浮窗。顶部一行极淡的「一二三四五六日」作列标题，
 /// 不抢视觉但让「第几列是周几」一目了然。
@@ -562,10 +562,6 @@ private struct MonthHeatmapView: View {
 
     private var todayDay: Int {
         calendar.component(.day, from: Date())
-    }
-
-    private var maxTokens: Int64 {
-        days.map(\.tokens).max() ?? 0
     }
 
     /// 当月 1 号在「周一为第 0 列」坐标系下的偏移（0=周一，6=周日）。
@@ -611,6 +607,19 @@ private struct MonthHeatmapView: View {
                     }
                 }
             }
+            HStack(spacing: Self.spacing) {
+                ForEach(MonthHeatmapBand.allCases, id: \.self) { band in
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(band.color(in: theme))
+                        .frame(width: Self.cellSize, height: 4)
+                }
+            }
+            .padding(.top, 2)
+            .padding(.bottom, 2)
+            .contentShape(Rectangle())
+            .help(MonthHeatmapBand.legendDescription)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(MonthHeatmapBand.legendDescription)
         }
     }
 
@@ -679,6 +688,17 @@ private struct MonthHeatmapView: View {
                     ))
                     stat("会话", "\(activity?.sessions ?? 0)")
                     stat("事件", "\(activity?.events ?? 0)")
+                }
+
+                let band = MonthHeatmapBand.band(for: activity?.tokens ?? 0)
+                HStack(spacing: 5) {
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(band.color(in: theme))
+                        .frame(width: 7, height: 7)
+                        .accessibilityHidden(true)
+                    Text("日用量档位 · \(band.rangeLabel)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(theme.fg2)
                 }
 
                 Rectangle().fill(theme.border).frame(height: 1)
@@ -762,14 +782,7 @@ private struct MonthHeatmapView: View {
     private func color(tokens: Int64, isFuture: Bool) -> Color {
         // 未来日期用 muted 半透明：浅色模式下也不至于和面板底色糊成一片。
         if isFuture { return theme.muted.opacity(0.3) }
-        guard tokens > 0, maxTokens > 0 else { return theme.surface2 }
-        let ratio = Double(tokens) / Double(maxTokens)
-        switch ratio {
-        case ..<0.25: return theme.accent.opacity(0.2)
-        case ..<0.5: return theme.accent.opacity(0.4)
-        case ..<0.75: return theme.accent.opacity(0.65)
-        default: return theme.accent
-        }
+        return MonthHeatmapBand.band(for: tokens).color(in: theme)
     }
 
     private func dayLabel(_ day: Int) -> String {
