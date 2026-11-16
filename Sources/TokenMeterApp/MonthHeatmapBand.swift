@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 固定日 Token 区间。边界同时驱动取色与图例，月份和峰值不参与分档。
+/// 固定日 Token 区间。边界同时驱动取色与日期详情，月份和峰值不参与分档。
 enum MonthHeatmapBand: Int, CaseIterable {
     case zero, lightBlue, blue, cyan, green, yellow, red
 
@@ -27,23 +27,6 @@ enum MonthHeatmapBand: Int, CaseIterable {
         let upper = "\(next.minimumTokens / 100_000_000)亿"
         if self == .lightBlue { return "非零，不足\(upper) Token" }
         return "\(lower)至不足\(upper) Token"
-    }
-
-    private var colorName: String {
-        switch self {
-        case .zero: return "灰色"
-        case .lightBlue: return "浅蓝"
-        case .blue: return "蓝色"
-        case .cyan: return "青色"
-        case .green: return "绿色"
-        case .yellow: return "黄色"
-        case .red: return "红色"
-        }
-    }
-
-    static var legendDescription: String {
-        (["日 Token 用量 · 固定区间"] + allCases.map { "\($0.colorName)：\($0.rangeLabel)" })
-            .joined(separator: "\n")
     }
 
     func color(in theme: MBTheme) -> Color {

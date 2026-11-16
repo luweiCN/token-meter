@@ -24,14 +24,13 @@ final class MonthHeatmapBandTests: XCTestCase {
         XCTAssertEqual(values.map(MonthHeatmapBand.band(for:)), [.zero, .cyan, .green, .green, .red])
     }
 
-    func testLegendUsesTheSameBoundariesAsClassification() {
+    func testRangeLabelsUseTheSameBoundariesAsClassification() {
         XCTAssertEqual(MonthHeatmapBand.allCases.count, 7)
         XCTAssertEqual(MonthHeatmapBand.lightBlue.rangeLabel, "非零，不足1亿 Token")
         XCTAssertEqual(MonthHeatmapBand.green.rangeLabel, "6亿至不足10亿 Token")
         XCTAssertEqual(MonthHeatmapBand.yellow.rangeLabel, "10亿至不足20亿 Token")
         XCTAssertEqual(MonthHeatmapBand.red.rangeLabel, "20亿及以上 Token")
         for band in MonthHeatmapBand.allCases {
-            XCTAssertTrue(MonthHeatmapBand.legendDescription.contains(band.rangeLabel))
             XCTAssertEqual(MonthHeatmapBand.band(for: band.minimumTokens), band)
         }
     }

@@ -530,7 +530,7 @@ private struct TodayBlock: View {
 /// 顶部总览右侧的当月热力图。7 列固定为周一…周日，行数随当月 1 号的星期偏移与
 /// 天数动态 4–6 行（1 号前的空位与月末后的空位留白），与系统日历完全对齐；
 /// 颜色对应固定日 Token 区间，同样的用量在不同月份同色。悬浮单点弹详情浮窗：
-/// Token/花费/会话/事件四指标 + 当天按模型的消耗明细，箭头指向锚点、系统自动避让）。
+/// Token/花费/会话/事件四指标 + 当天按模型的消耗明细，箭头指向锚点、系统自动避让。
 /// 还没到的日期不响应悬浮、也不弹浮窗。顶部一行极淡的「一二三四五六日」作列标题，
 /// 不抢视觉但让「第几列是周几」一目了然。
 private struct MonthHeatmapView: View {
@@ -607,19 +607,6 @@ private struct MonthHeatmapView: View {
                     }
                 }
             }
-            HStack(spacing: Self.spacing) {
-                ForEach(MonthHeatmapBand.allCases, id: \.self) { band in
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(band.color(in: theme))
-                        .frame(width: Self.cellSize, height: 4)
-                }
-            }
-            .padding(.top, 2)
-            .padding(.bottom, 2)
-            .contentShape(Rectangle())
-            .help(MonthHeatmapBand.legendDescription)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(MonthHeatmapBand.legendDescription)
         }
     }
 
