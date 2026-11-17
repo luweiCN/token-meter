@@ -1,19 +1,12 @@
+import Foundation
 import SwiftUI
 
-/// 固定日 Token 区间。边界同时驱动取色与日期详情，月份和峰值不参与分档。
+/// 与全年活跃度共用资源中的固定阈值和颜色，月份与峰值不参与分档。
 enum MonthHeatmapBand: Int, CaseIterable {
     case zero, lightBlue, blue, cyan, green, yellow, red
 
     var minimumTokens: Int64 {
-        switch self {
-        case .zero: return 0
-        case .lightBlue: return 1
-        case .blue: return 100_000_000
-        case .cyan: return 300_000_000
-        case .green: return 600_000_000
-        case .yellow: return 1_000_000_000
-        case .red: return 2_000_000_000
-        }
+        Self.definitions[rawValue].minimumTokens
     }
 
     static func band(for tokens: Int64) -> Self {
@@ -30,16 +23,43 @@ enum MonthHeatmapBand: Int, CaseIterable {
     }
 
     func color(in theme: MBTheme) -> Color {
-        let palette: (dark: UInt32, light: UInt32)
-        switch self {
-        case .zero: return theme.surface2
-        case .lightBlue: palette = (0x4D7C97, 0x5289AC)
-        case .blue: palette = (0x4C8DD8, 0x3476BE)
-        case .cyan: palette = (0x2BA2B5, 0x00798F)
-        case .green: palette = (0x45B68B, 0x087559)
-        case .yellow: palette = (0xD0AD48, 0x866200)
-        case .red: palette = (0xF4A5A0, 0xB82F39)
-        }
+        let palette = Self.definitions[rawValue]
         return Color(hex: theme == .light ? palette.light : palette.dark)
     }
+
+    private struct Definition: Decodable {
+        let minimumTokens: Int64
+        let dark: UInt32
+        let light: UInt32
+
+        private enum CodingKeys: String, CodingKey { case minimumTokens, dark, light }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            minimumTokens = try values.decode(Int64.self, forKey: .minimumTokens)
+            func hex(_ key: CodingKeys) throws -> UInt32 {
+                let text = try values.decode(String.self, forKey: key)
+                guard text.count == 7, text.hasPrefix("#"), let value = UInt32(text.dropFirst(), radix: 16) else {
+                    throw DecodingError.dataCorruptedError(forKey: key, in: values, debugDescription: "Expected #RRGGBB")
+                }
+                return value
+            }
+            dark = try hex(.dark)
+            light = try hex(.light)
+        }
+    }
+
+    private static let definitions: [Definition] = {
+        guard let url = Bundle.module.url(forResource: "token-heatmap-bands", withExtension: "json") else {
+            preconditionFailure("Missing bundled token heatmap configuration")
+        }
+        do {
+            let values = try JSONDecoder().decode([Definition].self, from: Data(contentsOf: url))
+            precondition(values.count == allCases.count && values[0].minimumTokens == 0 && values[1].minimumTokens == 1)
+            precondition(zip(values, values.dropFirst()).allSatisfy { $0.0.minimumTokens < $0.1.minimumTokens })
+            return values
+        } catch {
+            preconditionFailure("Invalid bundled token heatmap configuration: \(error)")
+        }
+    }()
 }

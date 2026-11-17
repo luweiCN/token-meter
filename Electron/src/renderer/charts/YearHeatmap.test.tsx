@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { YearHeatmap } from './YearHeatmap.js';
 
 const days = [
-  { date: '2026-07-10', tokens: 1_000_000_000, costUsdMicros: 5_000_000, sessions: 3, events: 40 }, // 峰值 → level 4
+  { date: '2026-07-10', tokens: 1_000_000_000, costUsdMicros: 5_000_000, sessions: 3, events: 40 }, // 10 亿 → 黄色档
   { date: '2026-07-09', tokens: 0, costUsdMicros: 0, sessions: 0, events: 0 }               // 零值 → level 0
 ];
 
@@ -29,24 +29,49 @@ beforeEach(() => {
 });
 
 describe('YearHeatmap', () => {
-  it('renders one cell per day in the window, with levels from logBucket', () => {
+  it('renders one cell per day using fixed token bands', () => {
     const { container } = render(<YearHeatmap days={days} lastDay="2026-07-10" />);
     expect(container.querySelectorAll('[data-date]')).toHaveLength(371);
 
     // 有数据但为零的一天是 level 0，不是空洞
     expect(container.querySelector('[data-date="2026-07-09"]')!.getAttribute('data-level')).toBe('0');
-    // 峰值那天是最高档
-    expect(container.querySelector('[data-date="2026-07-10"]')!.getAttribute('data-level')).toBe('4');
+    // 10 亿始终是黄色档，即使它恰好是当前窗口的峰值。
+    expect(container.querySelector('[data-date="2026-07-10"]')!.getAttribute('data-level')).toBe('5');
     // 窗口内没有数据的日子由网格补成 level 0（repository 不为空日造行）
     expect(container.querySelector('[data-date="2026-01-01"]')!.getAttribute('data-level')).toBe('0');
   });
 
-  it('renders the 少→多 legend with all five levels', () => {
+  it('does not render a persistent legend', () => {
     const { container } = render(<YearHeatmap days={days} lastDay="2026-07-10" />);
 
-    expect(screen.getByText('少')).toBeTruthy();
-    expect(screen.getByText('多')).toBeTruthy();
-    expect(container.querySelectorAll('.hscale i')).toHaveLength(5);
+    expect(screen.queryByText('少')).toBeNull();
+    expect(screen.queryByText('多')).toBeNull();
+    expect(container.querySelector('.heat-foot')).toBeNull();
+    expect(container.querySelector('.hscale')).toBeNull();
+  });
+
+  it('keeps ordinary token days in their fixed bands when a much larger peak arrives', () => {
+    const tokens = [0, 50_000_000, 100_000_000, 300_000_000, 700_000_000,
+      800_000_000, 1_000_000_000, 2_000_000_000, 4_000_000_000];
+    const sample = tokens.map((value, index) => ({
+      ...days[0], date: `2026-07-${String(index + 1).padStart(2, '0')}`, tokens: value,
+    }));
+    const { container, rerender } = render(<YearHeatmap days={sample} lastDay="2026-07-31" count={31} />);
+    const levels = () => sample.map(day => container.querySelector(`[data-date="${day.date}"]`)?.getAttribute('data-level'));
+    expect(levels()).toEqual(['0', '1', '2', '3', '4', '4', '5', '6', '6']);
+    rerender(<YearHeatmap days={[...sample, { ...days[0], date: '2026-07-20', tokens: 1e13 }]} lastDay="2026-07-31" count={31} />);
+    expect(levels()).toEqual(['0', '1', '2', '3', '4', '4', '5', '6', '6']);
+  });
+
+  it('shows the fixed band only for token hovers and keeps other metrics on their own scale', () => {
+    const { container, rerender } = render(<YearHeatmap days={days} lastDay="2026-07-10" />);
+    fireEvent.mouseOver(container.querySelector('[data-date="2026-07-10"]')!);
+    expect(screen.getByRole('tooltip').textContent).toContain('10亿至不足20亿 Token');
+    for (const metric of ['costUsdMicros', 'sessions', 'events'] as const) {
+      rerender(<YearHeatmap days={days} lastDay="2026-07-10" metric={metric} />);
+      expect(container.querySelector('[data-date="2026-07-10"]')?.getAttribute('data-level')).toBe('4');
+      expect(screen.getByRole('tooltip').textContent).not.toContain('用量档位');
+    }
   });
 
   it('shows all four day totals on hover (Token first), regardless of the selected metric', () => {

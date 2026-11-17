@@ -766,6 +766,22 @@ select {
   transform: scale(1.35);
 }
 
+.day-pop__token-band {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0;
+  color: var(--fg2);
+  font-size: 11px;
+}
+
+.day-pop__token-band i {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 2px;
+}
+
 /* hover/点击某天弹出的小卡片，视觉上跟顶部 KPI 的 .metric-card 是一家人：
    同样的边框/圆角/阴影，只是浮层定位、体积更小。钉住状态多一圈强调色边框，
    跟"只是路过悬停"区分开。 */
@@ -2024,34 +2040,6 @@ th.sort.desc::after{content:"↓";opacity:1;color:var(--accent)}
   outline: 1px solid var(--fg);
   outline-offset: 1px;
 }
-
-.heat-foot {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 10px;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.hscale {
-  display: flex;
-  gap: 3px;
-}
-
-.hscale i {
-  width: 9px;
-  height: 9px;
-  border-radius: 2px;
-  background: var(--heat-0);
-  box-shadow: inset 0 0 0 1px rgb(140 160 178 / 0.16);
-}
-
-.hscale i[data-l="1"] { background: var(--heat-1); }
-.hscale i[data-l="2"] { background: var(--heat-2); }
-.hscale i[data-l="3"] { background: var(--heat-3); }
-.hscale i[data-l="4"] { background: var(--heat-4); }
 
 /* ── 模型标签（模型排行 / 会话卡通用）── */
 .mname {

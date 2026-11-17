@@ -78,6 +78,18 @@ final class OverviewStatsRepositoryTests: XCTestCase {
         XCTAssertEqual(stats.totalSessions, 0)
     }
 
+    func testMonthActivityDoesNotCountReasoningTokensTwice() throws {
+        let database = try makeDatabase()
+        try insertRollup(database, date: "2026-08-18", tokensInput: 600_000_000,
+                         tokensOutput: 300_000_000, tokensCacheRead: 0, cost: 1_000, sessions: 1)
+        try database.execute("UPDATE daily_rollup SET tokens_reasoning = 200000000 WHERE usage_date = '2026-08-18'")
+
+        let days = MonthActivityRepository.load(from: database, now: now(18), calendar: calendar)
+        // 思考 Token 已包含在 3 亿输出内，实际 9 亿仍应落在绿色档。
+        XCTAssertEqual(days.first?.tokens, 900_000_000)
+        XCTAssertEqual(days.first?.tokens, OverviewStatsRepository.load(from: database, now: now(18), calendar: calendar).month.tokens)
+    }
+
     func testDayTextZeroPadsAndMatchesSqliteLocalTimeShape() {
         let date = calendar.date(from: DateComponents(year: 2026, month: 8, day: 5))!
         XCTAssertEqual(MonthActivityRepository.dayText(date, calendar: calendar), "2026-08-05")

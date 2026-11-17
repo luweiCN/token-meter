@@ -3,12 +3,12 @@ import { createPortal } from 'react-dom';
 import type { HeatmapDay } from '../../main/overviewRepository.js';
 import { buildCalendarGrid } from './calendar.js';
 import { logBucket } from './scale.js';
+import { tokenHeatmapBand } from './tokenHeatmap.js';
 import { formatCount, formatTokens, formatUsdMicros } from '../format.js';
 
 export type HeatmapMetric = 'tokens' | 'costUsdMicros' | 'sessions' | 'events';
 
-/// 色阶走 CSS 变量 --heat-0..4（主题可切），带 GitHub 式绿色兜底，
-/// 使本组件不依赖 styles.css 的先行定义。
+/// 非 Token 指标使用相对色阶；Token 视图与菜单栏共用固定档位。
 const HEAT_FALLBACK = ['#ebedf0', '#9be9a8', '#40c463', '#30a14e', '#216e39'];
 
 export interface YearHeatmapProps {
@@ -106,9 +106,11 @@ export function YearHeatmap({ days, lastDay, count = 371, metric = 'tokens' }: Y
   }, [hovered]);
 
   const dayByDate = new Map(days.map(d => [d.date, d]));
-  const max = Math.max(0, ...days.map(d => d[metric]));
+  const max = metric === 'tokens' ? 0 : Math.max(0, ...days.map(d => d[metric]));
   const columns = buildCalendarGrid(lastDay, count);
   const shownDay = hovered ? dayByDate.get(hovered) : undefined;
+  const shownTokenBand = metric === 'tokens' && shownDay && shownDay.tokens > 0
+    ? tokenHeatmapBand(shownDay.tokens) : null;
 
   const handleOver = (e: MouseEvent) => {
     const d = (e.target as HTMLElement).dataset?.date;
@@ -134,29 +136,20 @@ export function YearHeatmap({ days, lastDay, count = 371, metric = 'tokens' }: Y
               if (cell.date === null) {
                 return <div key={rowIndex} style={{ width: 11, height: 11 }} aria-hidden="true" />;
               }
-              const level = logBucket(dayByDate.get(cell.date)?.[metric] ?? 0, max);
+              const value = dayByDate.get(cell.date)?.[metric] ?? 0;
+              const tokenBand = metric === 'tokens' ? tokenHeatmapBand(value) : null;
+              const level = tokenBand?.level ?? logBucket(value, max);
               return (
                 <div key={cell.date} className="year-heatmap__cell"
                   data-date={cell.date} data-level={level}
                   style={{
                     width: 11, height: 11, borderRadius: 2,
-                    backgroundColor: `var(--heat-${level}, ${HEAT_FALLBACK[level]})`
+                    backgroundColor: tokenBand?.cssColor ?? `var(--heat-${level}, ${HEAT_FALLBACK[level]})`
                   }} />
               );
             })}
           </div>
         ))}
-      </div>
-
-      {/* 色阶图例：不标注方向时读者无法知道深浅代表多还是少（用户实测困惑）。 */}
-      <div className="heat-foot">
-        <span>少</span>
-        <div className="hscale" aria-hidden="true">
-          {[0, 1, 2, 3, 4].map((level) => (
-            <i key={level} data-l={level} />
-          ))}
-        </div>
-        <span>多</span>
       </div>
 
       {hovered && shownDay && createPortal((() => {
@@ -195,6 +188,12 @@ export function YearHeatmap({ days, lastDay, count = 371, metric = 'tokens' }: Y
                 <span>事件</span>
               </div>
             </div>
+            {shownTokenBand && (
+              <div className="day-pop__token-band">
+                <i style={{ backgroundColor: shownTokenBand.cssColor }} aria-hidden="true" />
+                <span>已记录用量档位 · {shownTokenBand.rangeLabel}</span>
+              </div>
+            )}
             {[...detailRows]
               .sort((a, b) => b[metric] - a[metric])
               .slice(0, 6)

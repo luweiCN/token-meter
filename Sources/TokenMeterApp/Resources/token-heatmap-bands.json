@@ -1,0 +1,9 @@
+[
+  { "minimumTokens": 0, "dark": "#032138", "light": "#e9f1f7" },
+  { "minimumTokens": 1, "dark": "#4d7c97", "light": "#5289ac" },
+  { "minimumTokens": 100000000, "dark": "#4c8dd8", "light": "#3476be" },
+  { "minimumTokens": 300000000, "dark": "#2ba2b5", "light": "#00798f" },
+  { "minimumTokens": 600000000, "dark": "#45b68b", "light": "#087559" },
+  { "minimumTokens": 1000000000, "dark": "#d0ad48", "light": "#866200" },
+  { "minimumTokens": 2000000000, "dark": "#f4a5a0", "light": "#b82f39" }
+]

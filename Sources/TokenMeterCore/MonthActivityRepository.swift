@@ -35,7 +35,7 @@ public enum MonthActivityRepository {
         let rows = (try? database.query(
             """
             SELECT usage_date,
-                   sum(tokens_input + tokens_output + tokens_reasoning +
+                   sum(tokens_input + tokens_output +
                        tokens_cache_read + tokens_cache_write_5m + tokens_cache_write_1h) AS tokens_total,
                    sum(cost_usd_micros) AS cost_total,
                    sum(sessions_count) AS sessions_total,
