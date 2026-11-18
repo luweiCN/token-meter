@@ -17,6 +17,7 @@ export interface MenubarPreviewState {
   windowOrder: MenubarWindowOrder;
   showPeakBadge: boolean;
   peakBadgeStyle: PeakBadgeStyle;
+  pinnedBalance?: { demoId: string; name: string };
   providers: Array<{
     id: string;
     visible: boolean;
@@ -66,12 +67,13 @@ interface DemoProvider {
   w7: DemoWindow | null;
   /// 第三窗（OpenCode Go / Command Code 的月度）；null = 双窗家。
   w3: DemoWindow | null;
+  exampleBalance?: string;
 }
 
 /// 演示数据（稿 data 口径）：CC 5h62/7d41 · CX 34/18 · 智谱 8/55 · Go 98/100 · Command 75/80/80 · Grok 单窗 42 · OMP 71/30。
 export const PREVIEW_PROVIDERS: DemoProvider[] = [
-  { id: 'claude', short: 'CC', mono: 'C', w5: { p: 62, c: 'ok' }, w7: { p: 41, c: 'ok' }, w3: null },
-  { id: 'codex', short: 'CX', mono: 'X', w5: { p: 34, c: 'warn' }, w7: { p: 18, c: 'warn' }, w3: null },
+  { id: 'claude', short: 'CC', mono: 'C', w5: { p: 62, c: 'ok' }, w7: { p: 41, c: 'ok' }, w3: null, exampleBalance: 'US$18.50' },
+  { id: 'codex', short: 'CX', mono: 'X', w5: { p: 34, c: 'warn' }, w7: { p: 18, c: 'warn' }, w3: null, exampleBalance: '320 积分' },
   { id: 'zhipu', short: '智谱', mono: '智', w5: { p: 8, c: 'bad' }, w7: { p: 55, c: 'ok' }, w3: null },
   { id: 'opencodeGo', short: 'Go', mono: 'G', w5: { p: 98, c: 'ok' }, w7: { p: 100, c: 'ok' }, w3: { p: 100, c: 'ok' } },
   { id: 'commandCode', short: 'Command', mono: 'M', w5: { p: 75, c: 'ok' }, w7: { p: 80, c: 'ok' }, w3: { p: 80, c: 'ok' } },
@@ -416,12 +418,20 @@ function CompactCell({ ctx, providers }: { ctx: CellContext; providers: DemoProv
 export function MenubarPreviewBar({ mode, state }: { mode: 'dark' | 'light'; state: MenubarPreviewState }) {
   const ctx: CellContext = { state, mode };
   const visible = PREVIEW_PROVIDERS.filter((d) => providerConfig(state, d.id)?.visible ?? true);
+  const pinned = state.pinnedBalance;
+  const balance = PREVIEW_PROVIDERS.find((provider) => provider.id === pinned?.demoId)?.exampleBalance;
+  const inlineBalance = !COMPACT[state.style] && visible.some((provider) => provider.id === pinned?.demoId);
 
   const cells = COMPACT[state.style]
     ? visible.length > 0
       ? [<CompactCell ctx={ctx} providers={visible} key="compact" />]
       : []
-    : visible.map((d) => <ProviderCell ctx={ctx} d={d} key={d.id} />);
+    : visible.map((d) => (
+        <Fragment key={d.id}>
+          <ProviderCell ctx={ctx} d={d} />
+          {d.id === pinned?.demoId && balance && <span className="mbcell pct nm">{balance}</span>}
+        </Fragment>
+      ));
 
   const tail =
     state.usage !== 'off' ? (
@@ -431,11 +441,12 @@ export function MenubarPreviewBar({ mode, state }: { mode: 'dark' | 'light'; sta
     ) : null;
 
   const peakBadge = state.showPeakBadge ? <PeakBadgePreview style={state.peakBadgeStyle} key="peak" /> : null;
-  const empty = cells.length === 0 && tail === null && peakBadge === null;
+  const empty = cells.length === 0 && !balance && tail === null && peakBadge === null;
 
   return (
     <div className={`mbar ${mode === 'dark' ? 'mbdark' : 'mblight'}`}>
       {cells}
+      {balance && !inlineBalance && <span className="mbcell"><span className="pct nm">{pinned?.name} {balance}</span></span>}
       {tail}
       {peakBadge}
       {empty ? (

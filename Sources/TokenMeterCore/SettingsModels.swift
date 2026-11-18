@@ -97,6 +97,7 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
     public let showPeakBadge: Bool
     /// 峰/谷标识样式。
     public let peakBadgeStyle: PeakBadgeStyle
+    public let pinnedBalanceProviderId: String?
 
     public static let `default` = MenuBarAppearanceSettings(
         style: .rings,
@@ -117,7 +118,8 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
         usage: MenuBarUsageTail,
         windowOrder: MenuBarWindowOrder,
         showPeakBadge: Bool = true,
-        peakBadgeStyle: PeakBadgeStyle = .dotWord
+        peakBadgeStyle: PeakBadgeStyle = .dotWord,
+        pinnedBalanceProviderId: String? = nil
     ) {
         self.style = style
         self.showName = showName
@@ -127,6 +129,7 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
         self.windowOrder = windowOrder
         self.showPeakBadge = showPeakBadge
         self.peakBadgeStyle = peakBadgeStyle
+        self.pinnedBalanceProviderId = pinnedBalanceProviderId
     }
 
     // 旧数据没有 showPeakBadge/peakBadgeStyle：解码补默认，不炸老快照。
@@ -139,6 +142,7 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
         case windowOrder
         case showPeakBadge
         case peakBadgeStyle
+        case pinnedBalanceProviderId
     }
 
     public init(from decoder: Decoder) throws {
@@ -151,6 +155,7 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
         windowOrder = try container.decodeIfPresent(MenuBarWindowOrder.self, forKey: .windowOrder) ?? .longFirst
         showPeakBadge = try container.decodeIfPresent(Bool.self, forKey: .showPeakBadge) ?? true
         peakBadgeStyle = try container.decodeIfPresent(PeakBadgeStyle.self, forKey: .peakBadgeStyle) ?? .dotWord
+        pinnedBalanceProviderId = try container.decodeIfPresent(String.self, forKey: .pinnedBalanceProviderId)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -163,6 +168,7 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
         try container.encode(windowOrder, forKey: .windowOrder)
         try container.encode(showPeakBadge, forKey: .showPeakBadge)
         try container.encode(peakBadgeStyle, forKey: .peakBadgeStyle)
+        try container.encodeIfPresent(pinnedBalanceProviderId, forKey: .pinnedBalanceProviderId)
     }
 }
 

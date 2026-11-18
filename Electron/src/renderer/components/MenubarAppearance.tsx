@@ -79,6 +79,8 @@ const MENUBAR_PROVIDERS: Array<{ id: string; name: string; demoId: string; short
 /// settings → 预览状态：真实 override 映射到 demo 家；OMP 无真实映射，恒显示（演示密度）。
 export function previewStateFromSettings(snapshot: SettingsSnapshot): MenubarPreviewState {
   const byDemoId = new Map(MENUBAR_PROVIDERS.map((p) => [p.demoId, p.id]));
+  const pinned = MENUBAR_PROVIDERS.find((provider) => provider.id === snapshot.menubarAppearance.pinnedBalanceProviderId);
+  const pinnedOverride = pinned && snapshot.providerOverrides.find((provider) => provider.providerId === pinned.id);
   return {
     style: snapshot.menubarAppearance.style,
     showName: snapshot.menubarAppearance.showName,
@@ -88,6 +90,8 @@ export function previewStateFromSettings(snapshot: SettingsSnapshot): MenubarPre
     windowOrder: snapshot.menubarAppearance.windowOrder,
     showPeakBadge: snapshot.menubarAppearance.showPeakBadge,
     peakBadgeStyle: snapshot.menubarAppearance.peakBadgeStyle,
+    pinnedBalance: pinned && pinnedOverride?.enabled !== false
+      ? { demoId: pinned.demoId, name: pinnedOverride?.displayName || pinned.name } : undefined,
     providers: PREVIEW_PROVIDERS.map((demo) => {
       const realId = byDemoId.get(demo.id);
       const override = realId === undefined

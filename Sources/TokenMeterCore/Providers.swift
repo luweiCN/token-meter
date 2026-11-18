@@ -69,7 +69,8 @@ public extension ProviderUsageSnapshot {
             summary: summary,
             message: message,
             groups: groups,
-            resetCredits: resetCredits
+            resetCredits: resetCredits,
+            accountCredits: accountCredits
         )
     }
 }
@@ -126,13 +127,15 @@ public struct CodexUsageProvider: UsageProvider {
                 return providerErrorSnapshot(
                     providerId: id,
                     displayName: displayName,
-                    message: "未检测到 Codex 命令行（桌面版 App 不含 CLI），额度读取需要安装 Codex CLI"
+                    message: "未检测到 Codex 命令行（桌面版 App 不含 CLI），额度读取需要安装 Codex CLI",
+                    accountCredits: .codex(.unavailable)
                 )
             }
             return providerErrorSnapshot(
                 providerId: id,
                 displayName: displayName,
-                message: ProviderErrorMessage.sanitized(providerName: displayName, errorMessage: error.localizedDescription)
+                message: ProviderErrorMessage.sanitized(providerName: displayName, errorMessage: error.localizedDescription),
+                accountCredits: .codex(.unavailable)
             )
         }
     }
@@ -213,38 +216,69 @@ public struct ClaudeCodeUsageProvider: UsageProvider {
                 )
             }.value
             let token = try ClaudeCredentialParser.accessToken(from: credentialData)
-            var request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
-            request.httpMethod = "GET"
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            return await fetchAccountUsage(token: token)
+        } catch {
+            return providerErrorSnapshot(
+                providerId: id, displayName: displayName,
+                message: ProviderErrorMessage.sanitized(providerName: "Claude", errorMessage: error.localizedDescription),
+                accountCredits: .claude(prepaid: nil, extraUsage: nil)
+            )
+        }
+    }
+
+    func fetchAccountUsage(token: String) async -> ProviderUsageSnapshot {
+        async let prepaid = fetchPrepaid(token: token)
+        do {
+            let (data, response) = try await get("usage", token: token)
+            if !(200..<300).contains(response.statusCode) {
+                let message = ProviderHTTPErrorFormatter.message(
+                    providerName: "Claude", statusCode: response.statusCode, data: data,
+                    retryAfter: response.value(forHTTPHeaderField: "retry-after")
+                )
+                return await providerErrorSnapshot(providerId: id, displayName: displayName, message: message,
+                                                   accountCredits: .claude(prepaid: prepaid, extraUsage: nil))
+            }
+            return try await ClaudeUsageParser.parse(data: data, providerId: id, displayName: displayName, prepaid: prepaid)
+        } catch {
+            return await providerErrorSnapshot(
+                providerId: id, displayName: displayName,
+                message: ProviderErrorMessage.sanitized(providerName: "Claude", errorMessage: error.localizedDescription),
+                accountCredits: .claude(prepaid: prepaid, extraUsage: nil)
+            )
+        }
+    }
+
+    private func fetchPrepaid(token: String) async -> ClaudeCreditAmount? {
+        struct Profile: Decodable {
+            struct Organization: Decodable { let uuid: UUID }
+            let organization: Organization
+        }
+        // 用同一凭据确认组织，避免切换账户时读取旧组织的钱包。
+        guard let (profile, profileResponse) = try? await get("profile", token: token), profileResponse.statusCode == 200,
+              let org = try? JSONDecoder().decode(Profile.self, from: profile).organization.uuid else { return nil }
+        let orgID = org.uuidString.lowercased()
+        guard let (data, response) = try? await get("organizations/\(orgID)/prepaid/credits", token: token, organization: orgID),
+              response.statusCode == 200 else { return nil }
+        return ClaudeCreditAmount.prepaid(from: data)
+    }
+
+    private func get(_ path: String, token: String, organization: String? = nil) async throws -> (Data, HTTPURLResponse) {
+        let url = URL(string: "https://api.anthropic.com/api/oauth/")!.appendingPathComponent(path)
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 8)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.setValue(organization, forHTTPHeaderField: "x-organization-uuid")
+        if path == "usage" {
             request.setValue("true", forHTTPHeaderField: "anthropic-dangerous-direct-browser-access")
             request.setValue("cli", forHTTPHeaderField: "x-app")
             request.setValue("claude-cli/\(Self.clientVersion()) (external, cli)", forHTTPHeaderField: "User-Agent")
-
-            let (data, response) = try await urlSession.data(for: request)
-            if let httpResponse = response as? HTTPURLResponse,
-               !(200..<300).contains(httpResponse.statusCode) {
-                return providerErrorSnapshot(
-                    providerId: id,
-                    displayName: displayName,
-                    message: ProviderHTTPErrorFormatter.message(
-                        providerName: "Claude",
-                        statusCode: httpResponse.statusCode,
-                        data: data,
-                        retryAfter: httpResponse.value(forHTTPHeaderField: "retry-after")
-                    )
-                )
-            }
-
-            return try ClaudeUsageParser.parse(data: data, providerId: id, displayName: displayName)
-        } catch {
-            return providerErrorSnapshot(
-                providerId: id,
-                displayName: displayName,
-                message: ProviderErrorMessage.sanitized(providerName: "Claude", errorMessage: error.localizedDescription)
-            )
+        } else {
+            request.setValue("TokenMeter", forHTTPHeaderField: "User-Agent")
         }
+        let (data, response) = try await urlSession.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        return (data, http)
     }
 }
 
@@ -769,10 +803,19 @@ public enum CodexUsageParser {
         fetchedAt: Date = Date()
     ) throws -> ProviderUsageSnapshot {
         let object = try JSONSerialization.jsonObject(with: data)
-        guard let dictionary = object as? [String: Any],
-              let buckets = dictionary["rateLimitsByLimitId"] as? [String: Any] else {
+        guard let dictionary = object as? [String: Any] else {
             throw ParseError.missingRateLimits
         }
+        let main = dictionary["rateLimits"] as? [String: Any]
+        var buckets = dictionary["rateLimitsByLimitId"] as? [String: Any] ?? [:]
+        if let main {
+            let id = main["limitId"] as? String ?? "codex"
+            if buckets[id] == nil { buckets[id] = main }
+        }
+        let codex = buckets["codex"] as? [String: Any]
+        let mainIsCodex = (main?["limitId"] as? String ?? "codex") == "codex"
+        let primaryBalance = CodexCreditBalance.parse(mainIsCodex ? main?["credits"] : nil)
+        let credits = primaryBalance == .unavailable ? CodexCreditBalance.parse(codex?["credits"]) : primaryBalance
 
         let groups = buckets
             .compactMap { key, value -> UsageGroup? in
@@ -804,7 +847,7 @@ public enum CodexUsageParser {
                 return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
             }
 
-        guard !groups.isEmpty else {
+        guard !groups.isEmpty || credits != .unavailable else {
             throw ParseError.missingRateLimits
         }
 
@@ -819,7 +862,8 @@ public enum CodexUsageParser {
             fetchedAt: fetchedAt,
             summary: summary,
             message: nil,
-            groups: groups
+            groups: groups,
+            accountCredits: .codex(credits)
         )
     }
 
@@ -870,7 +914,8 @@ public enum ClaudeUsageParser {
         data: Data,
         providerId: String,
         displayName: String,
-        fetchedAt: Date = Date()
+        fetchedAt: Date = Date(),
+        prepaid: ClaudeCreditAmount? = nil
     ) throws -> ProviderUsageSnapshot {
         let object = try JSONSerialization.jsonObject(with: data)
         guard let dictionary = object as? [String: Any] else {
@@ -916,7 +961,8 @@ public enum ClaudeUsageParser {
             )
         )
 
-        guard !groups.isEmpty else {
+        let extraUsage = ClaudeExtraUsage.parse(dictionary["extra_usage"])
+        guard !groups.isEmpty || prepaid != nil || extraUsage != nil else {
             throw ParseError.missingUsage
         }
 
@@ -931,7 +977,8 @@ public enum ClaudeUsageParser {
             fetchedAt: fetchedAt,
             summary: summary,
             message: nil,
-            groups: groups
+            groups: groups,
+            accountCredits: .claude(prepaid: prepaid, extraUsage: extraUsage)
         )
     }
 
@@ -1579,7 +1626,7 @@ private func compactTokenText(_ value: Double) -> String {
     return UsageFormatter.numberText(value)
 }
 
-func providerErrorSnapshot(providerId: String, displayName: String, message: String) -> ProviderUsageSnapshot {
+func providerErrorSnapshot(providerId: String, displayName: String, message: String, accountCredits: AccountCredits? = nil) -> ProviderUsageSnapshot {
     ProviderUsageSnapshot(
         providerId: providerId,
         displayName: displayName,
@@ -1605,7 +1652,8 @@ func providerErrorSnapshot(providerId: String, displayName: String, message: Str
                     )
                 ]
             )
-        ]
+        ],
+        accountCredits: accountCredits
     )
 }
 

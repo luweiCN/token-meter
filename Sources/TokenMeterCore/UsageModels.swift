@@ -130,6 +130,7 @@ public struct ProviderUsageSnapshot: Codable, Equatable {
     public let message: String?
     public let groups: [UsageGroup]
     public let resetCredits: ResetCreditSummary?
+    public internal(set) var accountCredits: AccountCredits?
 
     public init(
         providerId: String,
@@ -139,7 +140,8 @@ public struct ProviderUsageSnapshot: Codable, Equatable {
         summary: String?,
         message: String?,
         groups: [UsageGroup],
-        resetCredits: ResetCreditSummary? = nil
+        resetCredits: ResetCreditSummary? = nil,
+        accountCredits: AccountCredits? = nil
     ) {
         self.providerId = providerId
         self.displayName = displayName
@@ -149,6 +151,7 @@ public struct ProviderUsageSnapshot: Codable, Equatable {
         self.message = message
         self.groups = groups
         self.resetCredits = resetCredits
+        self.accountCredits = accountCredits
     }
 
     /// 应用供应商别名（设置页的 displayName override）：换 displayName 的同时，
@@ -169,7 +172,8 @@ public struct ProviderUsageSnapshot: Codable, Equatable {
             summary: summary,
             message: message,
             groups: renamedGroups,
-            resetCredits: resetCredits
+            resetCredits: resetCredits,
+            accountCredits: accountCredits
         )
     }
 }

@@ -54,14 +54,20 @@ export function Settings() {
 
   useEffect(() => {
     let cancelled = false;
-    void settingsStore.load().then(() => {
-      if (!cancelled) setLoadError(null);
-    }).catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : '设置加载失败';
-      if (!cancelled) setLoadError(message);
-    });
+    const load = async () => {
+      try {
+        await settingsStore.load();
+        if (!cancelled) setLoadError(null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '设置加载失败';
+        if (!cancelled) setLoadError(message);
+      }
+    };
+    load();
+    window.addEventListener('focus', load);
     return () => {
       cancelled = true;
+      window.removeEventListener('focus', load);
     };
   }, []);
 

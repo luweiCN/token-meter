@@ -21,6 +21,7 @@ export interface MenubarAppearance {
   windowOrder: MenubarWindowOrder;
   showPeakBadge: boolean;
   peakBadgeStyle: PeakBadgeStyle;
+  pinnedBalanceProviderId?: string;
 }
 
 export interface ProviderConfigOverride {
@@ -165,7 +166,8 @@ export class SettingsRepository {
         usage: this.enumSetting('menubar.usage', MENUBAR_USAGE_TAILS, 'tok'),
         windowOrder: this.enumSetting('menubar.windowOrder', MENUBAR_WINDOW_ORDERS, 'longFirst'),
         showPeakBadge: (this.settingInt('menubar.showPeakBadge') ?? 1) !== 0,
-        peakBadgeStyle: this.enumSetting('menubar.peakBadgeStyle', PEAK_BADGE_STYLES, 'dotWord')
+        peakBadgeStyle: this.enumSetting('menubar.peakBadgeStyle', PEAK_BADGE_STYLES, 'dotWord'),
+        pinnedBalanceProviderId: this.settingString('menubar.pinnedBalanceProviderId') || undefined
       },
       displayCurrency: this.enumSetting('display.currency', DISPLAY_CURRENCIES, 'cny')
     };

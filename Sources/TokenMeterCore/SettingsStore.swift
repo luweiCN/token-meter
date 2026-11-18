@@ -116,8 +116,17 @@ public final class SettingsStore {
             usage: string("menubar.usage").flatMap(MenuBarUsageTail.init(rawValue:)) ?? .tok,
             windowOrder: string("menubar.windowOrder").flatMap(MenuBarWindowOrder.init(rawValue:)) ?? .longFirst,
             showPeakBadge: flag("menubar.showPeakBadge"),
-            peakBadgeStyle: string("menubar.peakBadgeStyle").flatMap(PeakBadgeStyle.init(rawValue:)) ?? .dotWord
+            peakBadgeStyle: string("menubar.peakBadgeStyle").flatMap(PeakBadgeStyle.init(rawValue:)) ?? .dotWord,
+            pinnedBalanceProviderId: string("menubar.pinnedBalanceProviderId").flatMap { $0.isEmpty ? nil : $0 }
         )
+    }
+
+    public func setPinnedBalanceProvider(_ providerId: String?) throws {
+        // 与 Electron 共用版本计数；在同一条写语句内取号，避免刷新页面和固定操作争用旧版本。
+        try database.execute("""
+            INSERT OR REPLACE INTO settings (key, value_json, value_type, version, updated_by)
+            SELECT 'menubar.pinnedBalanceProviderId', ?, 'string', coalesce(max(version), 0) + 1, 'swift' FROM settings
+            """, [.text(jsonString(providerId ?? ""))])
     }
 
     public func apply(

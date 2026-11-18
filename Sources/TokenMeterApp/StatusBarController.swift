@@ -154,10 +154,19 @@ struct MenuBarStyleRouterView: View {
     @ViewBuilder
     private var styled: some View {
         switch projection.style {
-        case .rings, .vbars, .hbar, .digits, .dots, .caps, .ticks, .ring1:
+        case .rings, .vbars, .hbar, .digits, .dots, .caps, .ticks, .ring1, .ringdeck, .barsdeck:
             HStack(spacing: 9) {
                 ForEach(projection.cells, id: \.providerId) { cell in
-                    BasicStyleCellView(cell: cell, projection: projection)
+                    HStack(spacing: 4) {
+                        if projection.style == .ringdeck || projection.style == .barsdeck {
+                            HybridCellView(cell: cell, projection: projection)
+                        } else {
+                            BasicStyleCellView(cell: cell, projection: projection)
+                        }
+                        if let pinned = projection.pinnedBalance, pinned.providerId == cell.providerId {
+                            MenuBarBalanceText(balance: pinned, includesName: false)
+                        }
+                    }
                 }
             }
         case .grid:
@@ -172,13 +181,21 @@ struct MenuBarStyleRouterView: View {
             TagnumAggregateView(projection: projection)
         case .deck2:
             Deck2AggregateView(projection: projection)
-        case .ringdeck, .barsdeck:
-            HStack(spacing: 9) {
-                ForEach(projection.cells, id: \.providerId) { cell in
-                    HybridCellView(cell: cell, projection: projection)
-                }
-            }
         }
+    }
+}
+
+private struct MenuBarBalanceText: View {
+    let balance: MenuBarQuotaModel.MenuBarProjection.PinnedBalance
+    let includesName: Bool
+
+    var body: some View {
+        Text(includesName ? "\(balance.providerName) \(balance.value)" : balance.value)
+            .font(.system(size: 11, weight: .medium))
+            .monospacedDigit()
+            .foregroundStyle(MenuBarToneColor.text)
+            .fixedSize()
+            .accessibilityLabel("\(balance.providerName)余额，\(balance.value)")
     }
 }
 
@@ -196,11 +213,14 @@ struct StatusBarContentView: View {
     var body: some View {
         HStack(spacing: 9) {
             MenuBarStyleRouterView(projection: projection)
+            if let pinned = projection.pinnedBalance, !projection.showsBalanceInline {
+                MenuBarBalanceText(balance: pinned, includesName: true)
+            }
             if let tailText {
                 // 尾巴纯白满亮度（用户裁定：token 量不要灰灰的）。
                 StatusBarTitleView(title: tailText)
                     .foregroundStyle(MenuBarToneColor.text)
-            } else if projection.cells.isEmpty {
+            } else if projection.cells.isEmpty && projection.pinnedBalance == nil {
                 MenuBarBrandMark()
             }
             // 峰谷定价模型的聚合标识，独占最右一块。
@@ -427,11 +447,9 @@ final class StatusBarController: NSObject {
                     displayCurrency: self.store.displayCurrency,
                     usdToCny: self.store.exchangeRate.usdToCny
                 )
-                if case let .text(text) = self.projection.tail {
-                    self.updateTitle(text)
-                } else {
-                    self.updateTitle("")
-                }
+                var labels = self.projection.pinnedBalance.map { ["\($0.providerName)余额 \($0.value)"] } ?? []
+                if case let .text(text) = self.projection.tail { labels.append(text) }
+                self.updateTitle(labels.joined(separator: " · "))
             }
             .store(in: &cancellables)
     }

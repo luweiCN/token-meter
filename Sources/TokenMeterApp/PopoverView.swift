@@ -287,11 +287,13 @@ struct PopoverView: View {
                     }
 
                     if !store.displayProviderSnapshots.isEmpty {
-                        SectionBlock(title: "订阅额度") {
+                        SectionBlock(title: "账户额度") {
                             VStack(spacing: 8) {
                                 ForEach(store.displayProviderSnapshots, id: \.providerId) { snapshot in
                                     QuotaGroupView(
                                         snapshot: snapshot,
+                                        isBalancePinned: store.settingsSnapshot?.menuBarAppearance.pinnedBalanceProviderId == snapshot.providerId,
+                                        onPinBalance: store.setPinnedBalanceProvider,
                                         isExpanded: resolvedExpandedProviderId == snapshot.providerId,
                                         onToggleExpanded: {
                                             expandedProviderId = resolvedExpandedProviderId == snapshot.providerId
@@ -1394,6 +1396,9 @@ struct QuotaDisplayModel {
 
 private struct QuotaGroupView: View {
     let snapshot: ProviderUsageSnapshot
+    let isBalancePinned: Bool
+    let onPinBalance: (String?) throws -> Void
+    @State private var pinFailed = false
     /// 展开态由列表层受控（手风琴：至多一家展开），不再各组自持。
     let isExpanded: Bool
     let onToggleExpanded: () -> Void
@@ -1403,11 +1408,15 @@ private struct QuotaGroupView: View {
 
     init(
         snapshot: ProviderUsageSnapshot,
+        isBalancePinned: Bool,
+        onPinBalance: @escaping (String?) throws -> Void,
         isExpanded: Bool,
         onToggleExpanded: @escaping () -> Void,
         onRetry: @escaping () -> Void
     ) {
         self.snapshot = snapshot
+        self.isBalancePinned = isBalancePinned
+        self.onPinBalance = onPinBalance
         self.isExpanded = isExpanded
         self.onToggleExpanded = onToggleExpanded
         self.onRetry = onRetry
@@ -1446,6 +1455,32 @@ private struct QuotaGroupView: View {
                         if let credits = model.resetCredits, credits.availableCount > 0 {
                             ResetCardsGroup(summary: credits)
                         }
+                        if let credits = snapshot.accountCredits {
+                            if case let .claude(_, extra?) = credits {
+                                if extra.enabled == false {
+                                    creditDetail("额外用量", value: "已关闭")
+                                }
+                                if let used = extra.used {
+                                    creditDetail("本月额外已用", value: used.displayText)
+                                }
+                                if let limit = extra.monthlyLimit {
+                                    creditDetail("每月支出上限", value: limit.displayText)
+                                }
+                            }
+                            HStack {
+                                if pinFailed { Text("保存失败，请重试").foregroundStyle(theme.danger) }
+                                Spacer()
+                                Button(isBalancePinned ? "取消固定余额" : "固定余额到菜单栏") {
+                                    do {
+                                        try onPinBalance(isBalancePinned ? nil : snapshot.providerId)
+                                        pinFailed = false
+                                    } catch { pinFailed = true }
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(theme.accent)
+                            }
+                            .font(.system(size: 11.5))
+                        }
                     }
                     .padding(EdgeInsets(top: 10, leading: 12, bottom: 12, trailing: 12))
                     .opacity(model.staleMinutes != nil ? 0.9 : 1)
@@ -1460,61 +1495,81 @@ private struct QuotaGroupView: View {
         )
     }
 
+    private func creditDetail(_ label: String, value: String) -> some View {
+        HStack(spacing: 8) {
+            Text(label).foregroundStyle(theme.fg2)
+            Spacer(minLength: 4)
+            Text(value).monospacedDigit().foregroundStyle(theme.fg)
+        }
+        .font(.system(size: 12))
+        .accessibilityElement(children: .combine)
+    }
+
     private var summaryRow: some View {
         // 内容即时插拔，不做 SwiftUI 高度动画——面板高度的平滑过渡由 NSPopover 的
         // contentSize 原生动画负责，两边同时动画会互相打架（内容先压扁再弹开）。
         Button(action: onToggleExpanded) {
-            HStack(spacing: 8) {
-                Text(model.badge)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(theme.accent)
-                    .frame(width: 22, height: 22)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.surface2))
-
-                Text(model.name)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(theme.fg)
-                    .lineLimit(1)
-
-                // 登录过期用感叹号 + hover 说明怎么重新登录；其它告警仍用警告三角。
-                if model.needsLogin {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(theme.danger)
-                        .help(model.statusHelp ?? QuotaDisplayModel.grokLoginHelp)
-                        .accessibilityLabel("需要重新登录")
-                } else if model.isWarn || model.staleMinutes != nil {
-                    WarnTriangle()
-                        .frame(width: 14, height: 14)
-                        .help(model.statusHelp ?? "")
+            VStack(alignment: .leading, spacing: 6) {
+                summaryHeader
+                if let credits = snapshot.accountCredits {
+                    creditDetail(credits.balanceLabel, value: credits.balanceText)
+                        .padding(.leading, 30)
                 }
-
-                Spacer(minLength: 8)
-
-                // 摘要各段跟随环的 tone（tmux 同款：健康绿/超速黄/用尽红），
-                // 展开与收起都显示——展开后它就是标题行的速览。
-                model.summarySegments.enumerated().reduce(Text("")) { acc, pair in
-                    acc
-                        + Text(pair.offset > 0 ? " · " : "").foregroundColor(theme.muted)
-                        + Text(pair.element.text)
-                            .foregroundColor(summaryToneColor(pair.element.tone, theme: theme))
-                }
-                .font(.system(size: 10, design: .monospaced))
-                .monospacedDigit()
-                .lineLimit(1)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(theme.muted)
-                    .frame(width: 14, height: 14)
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    .animation(.easeOut(duration: 0.15), value: isExpanded)
             }
             .padding(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusable(false)
+    }
+
+    private var summaryHeader: some View {
+        HStack(spacing: 8) {
+            Text(model.badge)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(theme.accent)
+                .frame(width: 22, height: 22)
+                .background(RoundedRectangle(cornerRadius: 6).fill(theme.surface2))
+
+            Text(model.name)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(theme.fg)
+                .lineLimit(1)
+
+            // 登录过期用感叹号 + hover 说明怎么重新登录；其它告警仍用警告三角。
+            if model.needsLogin {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.danger)
+                    .help(model.statusHelp ?? QuotaDisplayModel.grokLoginHelp)
+                    .accessibilityLabel("需要重新登录")
+            } else if model.isWarn || model.staleMinutes != nil {
+                WarnTriangle()
+                    .frame(width: 14, height: 14)
+                    .help(model.statusHelp ?? "")
+            }
+
+            Spacer(minLength: 8)
+
+            // 摘要各段跟随环的 tone（tmux 同款：健康绿/超速黄/用尽红），
+            // 展开与收起都显示——展开后它就是标题行的速览。
+            model.summarySegments.enumerated().reduce(Text("")) { acc, pair in
+                acc
+                    + Text(pair.offset > 0 ? " · " : "").foregroundColor(theme.muted)
+                    + Text(pair.element.text)
+                        .foregroundColor(summaryToneColor(pair.element.tone, theme: theme))
+            }
+            .font(.system(size: 10, design: .monospaced))
+            .monospacedDigit()
+            .lineLimit(1)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(theme.muted)
+                .frame(width: 14, height: 14)
+                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                .animation(.easeOut(duration: 0.15), value: isExpanded)
+        }
     }
 
 }

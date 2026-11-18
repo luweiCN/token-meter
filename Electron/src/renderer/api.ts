@@ -58,6 +58,7 @@ export interface MenubarAppearance {
   windowOrder: MenubarWindowOrder;
   showPeakBadge: boolean;
   peakBadgeStyle: PeakBadgeStyle;
+  pinnedBalanceProviderId?: string;
 }
 
 export interface SettingsSnapshot {

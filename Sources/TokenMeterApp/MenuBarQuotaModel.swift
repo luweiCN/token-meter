@@ -176,6 +176,19 @@ enum MenuBarQuotaModel {
         let peakTiers: [PeakTierEntry]
         /// 峰/谷标识样式（设置页可调）。
         let peakBadgeStyle: PeakBadgeStyle
+        struct PinnedBalance: Equatable {
+            let providerId: String
+            let providerName: String
+            let value: String
+        }
+        var pinnedBalance: PinnedBalance? = nil
+        var showsBalanceInline: Bool {
+            guard let pinnedBalance, cells.contains(where: { $0.providerId == pinnedBalance.providerId }) else { return false }
+            switch style {
+            case .grid, .strip, .monogram, .sentinel, .tagnum, .deck2: return false
+            default: return true
+            }
+        }
     }
 
     static func projection(
@@ -254,6 +267,12 @@ enum MenuBarQuotaModel {
 
         // 峰/谷标识由定价模型驱动，不与任一额度供应商绑定；设置页关闭时整体不显示。
         let visiblePeakTiers = appearance.showPeakBadge ? peakTiers : []
+        let pinnedBalance = snapshots.first { $0.providerId == appearance.pinnedBalanceProviderId }
+            .flatMap { snapshot in
+                snapshot.accountCredits.map {
+                    MenuBarProjection.PinnedBalance(providerId: snapshot.providerId, providerName: snapshot.displayName, value: $0.balanceText)
+                }
+            }
 
         return MenuBarProjection(
             style: appearance.style,
@@ -264,7 +283,8 @@ enum MenuBarQuotaModel {
             cells: cells,
             tail: tail,
             peakTiers: visiblePeakTiers,
-            peakBadgeStyle: appearance.peakBadgeStyle
+            peakBadgeStyle: appearance.peakBadgeStyle,
+            pinnedBalance: pinnedBalance
         )
     }
 }

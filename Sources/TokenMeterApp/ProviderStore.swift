@@ -270,6 +270,12 @@ final class ProviderStore: ObservableObject {
         notificationCenter?.openNotificationSettings()
     }
 
+    func setPinnedBalanceProvider(_ providerId: String?) throws {
+        guard let settingsStore else { throw ProviderStoreError.settingsUnavailable }
+        try settingsStore.setPinnedBalanceProvider(providerId)
+        settingsSnapshot = try settingsStore.snapshot()
+    }
+
     func reloadSettings(expectedVersion: Int? = nil) throws {
         guard let settingsStore else { throw ProviderStoreError.settingsUnavailable }
         let snapshot = try settingsStore.snapshot()

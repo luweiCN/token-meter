@@ -27,7 +27,8 @@ public enum ProviderSnapshotCache {
                     summary: carried.summary,
                     message: carried.message,
                     groups: carried.groups,
-                    resetCredits: resetCredits
+                    resetCredits: resetCredits,
+                    accountCredits: carried.accountCredits
                 )
             }
 
@@ -45,7 +46,8 @@ public enum ProviderSnapshotCache {
                 summary: cached.summary,
                 message: carried.message,
                 groups: cached.groups,
-                resetCredits: cached.resetCredits
+                resetCredits: cached.resetCredits,
+                accountCredits: snapshot.accountCredits
             )
         }
     }
@@ -103,7 +105,8 @@ public enum ProviderSnapshotCache {
             summary: refreshed.summary,
             message: refreshed.message,
             groups: groups,
-            resetCredits: refreshed.resetCredits
+            resetCredits: refreshed.resetCredits,
+            accountCredits: refreshed.accountCredits
         )
     }
 }
@@ -128,7 +131,13 @@ public enum ProviderSnapshotDiskCache {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(snapshots.filter(hasUsableQuota))
+        // 登录账户可能在两次启动之间改变。只缓存钱包类型，余额由本次登录态重新确认。
+        let cached = snapshots.filter { hasUsableQuota($0) || $0.accountCredits?.hasReportedData == true }.map { snapshot in
+            var copy = snapshot
+            copy.accountCredits = snapshot.accountCredits?.unavailable
+            return copy
+        }
+        let data = try encoder.encode(cached)
         try data.write(to: url, options: .atomic)
     }
 
