@@ -68,7 +68,7 @@ public struct UsageMetric: Equatable {
 
 `UsageMetric` 表达额度窗口。账户积分和预付款在 `ProviderUsageSnapshot.accountCredits` 中保存供应商实际返回的数值、币种或状态。冷启动和查询失败时等待下一次账户确认。
 
-菜单栏弹窗的「账户额度」只在供应商确认有可用积分或预付款时于名称旁显示余额，空间不足时换到名称下方。额度窗口的摘要和圆环保留各自的剩余百分比。感叹号的悬停提示说明触发告警的窗口、供应商返回的原因或数据的更新时间。Codex 积分取自主额度快照的 `credits`，悬停可查看完整数值，重置卡另按张数展示。Claude Code 的预付余额按当前登录组织读取，`extra_usage` 提供本月已用和支出上限。金额均以来源币种显示。macOS 顶栏按 Codex 账户主额度窗口判断：所有已上报窗口均有剩余时显示额度，任一用尽或没有套餐窗口时显示可用积分。账户确认无积分时显示 0，积分数据尚未取得时显示「—」。其他供应商已固定的余额可从顶栏右键菜单取消固定。[Codex 积分规则](https://help.openai.com/en/articles/12642688) · [Claude 用量积分规则](https://support.claude.com/en/articles/12429409)
+菜单栏弹窗的「账户额度」只在供应商确认有可用积分或预付款时于名称旁显示余额，空间不足时换到名称下方。额度窗口的摘要和圆环保留各自的剩余百分比。感叹号的悬停提示说明触发告警的窗口、供应商返回的原因或数据的更新时间。Codex 积分取自主额度快照的 `credits`，悬停可查看完整数值，重置卡另按张数展示。Claude Code 的预付余额按当前登录组织读取，`extra_usage` 提供本月已用和支出上限。金额均以来源币种显示。macOS 顶栏按 Codex 账户主额度窗口判断：所有已上报窗口均有剩余时显示额度，任一用尽或没有套餐窗口时显示可用积分。账户确认无积分时显示 0，等待账户查询期间隐藏未确认的值。其他供应商已固定的余额可从顶栏右键菜单取消固定。[Codex 积分规则](https://help.openai.com/en/articles/12642688) · [Claude 用量积分规则](https://support.claude.com/en/articles/12429409)
 
 `UsageSnapshot` 可以继续存在，用于菜单栏标题和旧测试兼容；新的 provider 优先返回 `ProviderUsageSnapshot`。实现时可以先给 `UsageProvider` 增加默认适配方法，避免一次性重写所有 provider。
 

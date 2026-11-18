@@ -214,11 +214,11 @@ final class ProviderStore: ObservableObject {
     }
 
     func refresh() async {
-        guard !isScanPaused else {
-            return
+        // 启动时重置卡检查可能先取得账户查询权。等它结束后仍要完成本轮额度刷新。
+        while let resetTask = codexResetTask {
+            await resetTask.value
         }
-
-        guard !isRefreshing, codexResetTask == nil else {
+        guard !Task.isCancelled, !isScanPaused, !isRefreshing else {
             return
         }
 

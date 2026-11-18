@@ -182,15 +182,16 @@ final class MenuBarQuotaModelTests: XCTestCase {
     }
 
     func testCodexCreditsOnlyEmptyAndUnconfirmedBalances() {
-        for (credits, expected): (CodexCreditBalance, String) in [
+        for (credits, expected): (CodexCreditBalance, String?) in [
             (.amount(12), "12 积分"), (.available, "有可用积分"), (.unlimited, "积分不限额"),
-            (.noCredits, "0"), (.amount(0), "0"), (.unavailable, "—")
+            (.noCredits, "0"), (.amount(0), "0"), (.unavailable, nil)
         ] {
             var wallet = snapshot("codex", "GPT", groups: [])
             wallet.accountCredits = .codex(credits)
             let projection = MenuBarQuotaModel.projection(snapshots: [wallet], settings: nil, todaySummary: .empty)
             XCTAssertTrue(projection.cells.isEmpty)
             XCTAssertEqual(projection.accountReadouts.first?.value, expected)
+            XCTAssertEqual(projection.entries.isEmpty, expected == nil)
         }
         let hidden = ProviderConfigOverride(providerId: "codex", enabled: true, displayName: nil, menuRank: nil,
                                            showInMenuBar: false, showInCharts: nil)

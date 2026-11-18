@@ -269,8 +269,7 @@ enum MenuBarQuotaModel {
                         value = "0"
                         description = "可用额度和积分为 0"
                     default:
-                        value = "—"
-                        description = "可用余额待确认"
+                        return nil
                     }
                 }
                 return .account(.init(providerId: snapshot.providerId, providerName: snapshot.displayName,
