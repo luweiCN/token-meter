@@ -292,8 +292,6 @@ struct PopoverView: View {
                                 ForEach(store.displayProviderSnapshots, id: \.providerId) { snapshot in
                                     QuotaGroupView(
                                         snapshot: snapshot,
-                                        isBalancePinned: store.settingsSnapshot?.menuBarAppearance.pinnedBalanceProviderId == snapshot.providerId,
-                                        onPinBalance: store.setPinnedBalanceProvider,
                                         isExpanded: resolvedExpandedProviderId == snapshot.providerId,
                                         onToggleExpanded: {
                                             expandedProviderId = resolvedExpandedProviderId == snapshot.providerId
@@ -1258,6 +1256,12 @@ struct QuotaDisplayModel {
     let rings: [Ring]
     let bars: [Bar]
     let resetCredits: ResetCreditSummary?
+    let creditDetails: [(label: String, value: String)]
+
+    var hasDetails: Bool {
+        staleMinutes != nil || alertMessage != nil || !rings.isEmpty || !bars.isEmpty
+            || (resetCredits?.availableCount ?? 0) > 0 || !creditDetails.isEmpty
+    }
 
     init(snapshot: ProviderUsageSnapshot, now: Date = Date()) {
         name = snapshot.displayName
@@ -1367,6 +1371,15 @@ struct QuotaDisplayModel {
         }
 
         resetCredits = snapshot.resetCredits
+        if case let .claude(_, extra?) = snapshot.accountCredits {
+            creditDetails = [
+                ("额外用量", extra.enabled == false ? "已关闭" : nil),
+                ("本月额外已用", extra.used?.displayText),
+                ("每月支出上限", extra.monthlyLimit?.displayText)
+            ].compactMap { label, value in value.map { (label, $0) } }
+        } else {
+            creditDetails = []
+        }
     }
 
     /// 「智谱 GLM」→「智」；「Claude Code」→「Cl」（稿：badge 双字符/单汉字）。
@@ -1396,9 +1409,6 @@ struct QuotaDisplayModel {
 
 private struct QuotaGroupView: View {
     let snapshot: ProviderUsageSnapshot
-    let isBalancePinned: Bool
-    let onPinBalance: (String?) throws -> Void
-    @State private var pinFailed = false
     /// 展开态由列表层受控（手风琴：至多一家展开），不再各组自持。
     let isExpanded: Bool
     let onToggleExpanded: () -> Void
@@ -1408,15 +1418,11 @@ private struct QuotaGroupView: View {
 
     init(
         snapshot: ProviderUsageSnapshot,
-        isBalancePinned: Bool,
-        onPinBalance: @escaping (String?) throws -> Void,
         isExpanded: Bool,
         onToggleExpanded: @escaping () -> Void,
         onRetry: @escaping () -> Void
     ) {
         self.snapshot = snapshot
-        self.isBalancePinned = isBalancePinned
-        self.onPinBalance = onPinBalance
         self.isExpanded = isExpanded
         self.onToggleExpanded = onToggleExpanded
         self.onRetry = onRetry
@@ -1427,7 +1433,7 @@ private struct QuotaGroupView: View {
         VStack(spacing: 0) {
             summaryRow
 
-            if isExpanded {
+            if isExpanded && model.hasDetails {
                 VStack(alignment: .leading, spacing: 0) {
                     PanelDivider()
 
@@ -1455,31 +1461,8 @@ private struct QuotaGroupView: View {
                         if let credits = model.resetCredits, credits.availableCount > 0 {
                             ResetCardsGroup(summary: credits)
                         }
-                        if let credits = snapshot.accountCredits {
-                            if case let .claude(_, extra?) = credits {
-                                if extra.enabled == false {
-                                    creditDetail("额外用量", value: "已关闭")
-                                }
-                                if let used = extra.used {
-                                    creditDetail("本月额外已用", value: used.displayText)
-                                }
-                                if let limit = extra.monthlyLimit {
-                                    creditDetail("每月支出上限", value: limit.displayText)
-                                }
-                            }
-                            HStack {
-                                if pinFailed { Text("保存失败，请重试").foregroundStyle(theme.danger) }
-                                Spacer()
-                                Button(isBalancePinned ? "取消固定余额" : "固定余额到菜单栏") {
-                                    do {
-                                        try onPinBalance(isBalancePinned ? nil : snapshot.providerId)
-                                        pinFailed = false
-                                    } catch { pinFailed = true }
-                                }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(theme.accent)
-                            }
-                            .font(.system(size: 11.5))
+                        ForEach(model.creditDetails, id: \.label) { row in
+                            creditDetail(row.label, value: row.value)
                         }
                     }
                     .padding(EdgeInsets(top: 10, leading: 12, bottom: 12, trailing: 12))
@@ -1505,22 +1488,16 @@ private struct QuotaGroupView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var summaryRow: some View {
+    @ViewBuilder private var summaryRow: some View {
         // 内容即时插拔，不做 SwiftUI 高度动画——面板高度的平滑过渡由 NSPopover 的
         // contentSize 原生动画负责，两边同时动画会互相打架（内容先压扁再弹开）。
-        Button(action: onToggleExpanded) {
-            VStack(alignment: .leading, spacing: 6) {
-                summaryHeader
-                if let credits = snapshot.accountCredits {
-                    creditDetail(credits.balanceLabel, value: credits.balanceText)
-                        .padding(.leading, 30)
-                }
-            }
-            .padding(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
-            .contentShape(Rectangle())
+        if model.hasDetails {
+            Button(action: onToggleExpanded) { summaryHeader }
+                .buttonStyle(.plain)
+                .focusable(false)
+        } else {
+            summaryHeader.accessibilityElement(children: .combine)
         }
-        .buttonStyle(.plain)
-        .focusable(false)
     }
 
     private var summaryHeader: some View {
@@ -1531,22 +1508,26 @@ private struct QuotaGroupView: View {
                 .frame(width: 22, height: 22)
                 .background(RoundedRectangle(cornerRadius: 6).fill(theme.surface2))
 
-            Text(model.name)
-                .font(.system(size: 12.5, weight: .semibold))
-                .foregroundStyle(theme.fg)
-                .lineLimit(1)
-
-            // 登录过期用感叹号 + hover 说明怎么重新登录；其它告警仍用警告三角。
-            if model.needsLogin {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.danger)
-                    .help(model.statusHelp ?? QuotaDisplayModel.grokLoginHelp)
-                    .accessibilityLabel("需要重新登录")
-            } else if model.isWarn || model.staleMinutes != nil {
-                WarnTriangle()
-                    .frame(width: 14, height: 14)
-                    .help(model.statusHelp ?? "")
+            if let credits = snapshot.accountCredits {
+                let balance = Text(verbatim: credits.compactBalanceText)
+                    .font(.system(size: 11))
+                    .monospacedDigit()
+                    .foregroundStyle(theme.fg2)
+                    .lineLimit(1)
+                    .help("\(credits.balanceLabel) \(credits.balanceText)")
+                    .accessibilityLabel(Text("\(credits.balanceLabel) \(credits.balanceText)"))
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 7) {
+                        providerName
+                        balance
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        providerName
+                        balance
+                    }
+                }
+            } else {
+                providerName
             }
 
             Spacer(minLength: 8)
@@ -1562,16 +1543,41 @@ private struct QuotaGroupView: View {
             .font(.system(size: 10, design: .monospaced))
             .monospacedDigit()
             .lineLimit(1)
+            .layoutPriority(1)
 
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(theme.muted)
-                .frame(width: 14, height: 14)
-                .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                .animation(.easeOut(duration: 0.15), value: isExpanded)
+            if model.hasDetails {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(theme.muted)
+                    .frame(width: 14, height: 14)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .animation(.easeOut(duration: 0.15), value: isExpanded)
+            }
         }
+        .padding(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
+        .contentShape(Rectangle())
     }
 
+    private var providerName: some View {
+        HStack(spacing: 6) {
+            Text(model.name)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(theme.fg)
+                .lineLimit(1)
+
+            if model.needsLogin {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.danger)
+                    .help(model.statusHelp ?? QuotaDisplayModel.grokLoginHelp)
+                    .accessibilityLabel("需要重新登录")
+            } else if model.isWarn || model.staleMinutes != nil {
+                WarnTriangle()
+                    .frame(width: 14, height: 14)
+                    .help(model.statusHelp ?? "")
+            }
+        }
+    }
 }
 
 /// 稿 .gwarn：警告三角。

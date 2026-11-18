@@ -4,6 +4,32 @@ import XCTest
 
 @MainActor
 final class QuotaDisplayModelTests: XCTestCase {
+    func testCompactBalanceKeepsTheExactValueAndDistinguishesSmallAmountsFromZero() throws {
+        let amount = try XCTUnwrap(Decimal(string: "12345.67891234"))
+        let balance = AccountCredits.codex(.amount(amount))
+        XCTAssertEqual(balance.compactBalanceText, "12,345.68 积分")
+        XCTAssertEqual(balance.balanceText, "12,345.67891234 积分")
+        XCTAssertEqual(AccountCredits.codex(.amount(0)).compactBalanceText, "0 积分")
+        XCTAssertEqual(AccountCredits.codex(.amount(0.003)).compactBalanceText, "0.003 积分")
+        XCTAssertEqual(AccountCredits.codex(.unavailable).compactBalanceText, "积分暂不可用")
+        XCTAssertEqual(AccountCredits.claude(prepaid: nil, extraUsage: nil).compactBalanceText, "预付余额暂不可用")
+    }
+
+    func testCardWithOnlyABalanceExpandsWhenThereIsAdditionalCreditDetail() {
+        func model(_ credits: AccountCredits) -> QuotaDisplayModel {
+            QuotaDisplayModel(snapshot: ProviderUsageSnapshot(
+                providerId: "claude-code", displayName: "Claude Code", status: .ok, fetchedAt: Date(),
+                summary: nil, message: nil, groups: [], accountCredits: credits
+            ))
+        }
+        let prepaid = ClaudeCreditAmount(minorUnits: 1500, currency: "USD")
+        XCTAssertFalse(model(.claude(prepaid: prepaid, extraUsage: nil)).hasDetails)
+        let extra = ClaudeExtraUsage(enabled: false, used: prepaid, monthlyLimit: nil)
+        let expanded = model(.claude(prepaid: prepaid, extraUsage: extra))
+        XCTAssertTrue(expanded.hasDetails)
+        XCTAssertEqual(expanded.creditDetails.map(\.label), ["额外用量", "本月额外已用"])
+    }
+
     private func metric(id: String, used: Double, windowMinutes: Int?) -> UsageMetric {
         UsageMetric(
             id: id,

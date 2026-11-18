@@ -68,7 +68,7 @@ public struct UsageMetric: Equatable {
 
 `UsageMetric` 表达额度窗口。账户积分和预付款在 `ProviderUsageSnapshot.accountCredits` 中保存供应商实际返回的数值、币种或状态。冷启动和查询失败时等待下一次账户确认。
 
-菜单栏弹窗的「账户额度」在卡片折叠时也显示余额。展开卡片可将一家固定到顶栏，默认关闭。Codex 的积分取自主额度快照的 `credits`，重置卡另按张数展示。Claude Code 的预付余额按当前登录组织读取，`extra_usage` 提供本月已用和支出上限。这些金额均以来源币种显示。[Codex 积分规则](https://help.openai.com/en/articles/12642688) · [Claude 用量积分规则](https://support.claude.com/en/articles/12429409)
+菜单栏弹窗的「账户额度」在供应商名称旁显示余额，空间不足时换到名称下方。额度窗口的摘要和圆环保留各自的剩余百分比。Codex 积分取自主额度快照的 `credits`，悬停可查看完整数值，重置卡另按张数展示。Claude Code 的预付余额按当前登录组织读取，`extra_usage` 提供本月已用和支出上限。金额均以来源币种显示。顶栏已固定的余额可从顶栏右键菜单取消固定。[Codex 积分规则](https://help.openai.com/en/articles/12642688) · [Claude 用量积分规则](https://support.claude.com/en/articles/12429409)
 
 `UsageSnapshot` 可以继续存在，用于菜单栏标题和旧测试兼容；新的 provider 优先返回 `ProviderUsageSnapshot`。实现时可以先给 `UsageProvider` 增加默认适配方法，避免一次性重写所有 provider。
 

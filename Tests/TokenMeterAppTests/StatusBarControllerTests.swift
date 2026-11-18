@@ -104,6 +104,21 @@ final class StatusBarControllerTests: XCTestCase {
         XCTAssertEqual(launcher.openCount, 1)
     }
 
+    func testPreviouslyPinnedBalanceCanBeRemovedFromTheStatusMenu() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProviderStore(
+            config: TokenMeterConfig(menuBar: MenuBarConfig(primaryProviderId: nil), providers: []),
+            databaseURL: directory.appendingPathComponent("test.sqlite")
+        )
+        try store.setPinnedBalanceProvider("codex")
+        let controller = StatusBarController(store: store)
+        let menu = controller.makeContextMenuForTesting()
+        try performMenuItem(try XCTUnwrap(menu.item(withTitle: "取消固定余额")))
+        XCTAssertNil(store.settingsSnapshot?.menuBarAppearance.pinnedBalanceProviderId)
+        XCTAssertNil(controller.makeContextMenuForTesting().item(withTitle: "取消固定余额"))
+    }
+
     func testQuitMenuItemInvokesQuitHandler() throws {
         var didQuit = false
         let controller = StatusBarController(

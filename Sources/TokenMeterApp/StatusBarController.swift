@@ -507,6 +507,12 @@ final class StatusBarController: NSObject {
         openItem.target = self
         menu.addItem(openItem)
 
+        if store.settingsSnapshot?.menuBarAppearance.pinnedBalanceProviderId != nil {
+            let item = NSMenuItem(title: "取消固定余额", action: #selector(clearPinnedBalance), keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+
         // 已发现可安装的新版时，菜单直接给一键更新入口（静默检查的通知也指到这里）。
         if let release = UpdateChecker.pendingRelease,
            UpdateChecker.isNewer(remoteTag: release.tagName, than: UpdateChecker.currentVersion),
@@ -541,6 +547,14 @@ final class StatusBarController: NSObject {
 
     @objc private func openMainInterface() {
         mainInterfaceLauncher.openMainInterface()
+    }
+
+    @objc private func clearPinnedBalance() {
+        do {
+            try store.setPinnedBalanceProvider(nil)
+        } catch {
+            NSApp.presentError(error)
+        }
     }
 
     @objc private func checkForUpdates() {
