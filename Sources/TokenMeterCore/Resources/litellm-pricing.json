@@ -1396,6 +1396,44 @@
       ],
       "outputPerMTok": 6.0
     },
+    "azure/apac/gpt-6.2-astra": {
+      "cacheReadPerMTok": 0.48,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 12.0,
+      "inputPerMTok": 9.6,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.96,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 24.0,
+            "inputPerMTok": 19.2,
+            "outputPerMTok": 72.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 48.0
+    },
+    "azure/apac/gpt-6.2-sol": {
+      "cacheReadPerMTok": 0.12,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 3.0,
+      "inputPerMTok": 2.4,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.24,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 6.0,
+            "inputPerMTok": 4.8,
+            "outputPerMTok": 18.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 12.0
+    },
     "azure/chat-latest": {
       "cacheReadPerMTok": 0.5,
       "cacheWrite1hPerMTok": null,
@@ -1836,6 +1874,44 @@
         }
       ],
       "outputPerMTok": 6.0
+    },
+    "azure/eu/gpt-6.2-astra": {
+      "cacheReadPerMTok": 0.48,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 12.0,
+      "inputPerMTok": 9.6,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.96,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 24.0,
+            "inputPerMTok": 19.2,
+            "outputPerMTok": 72.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 48.0
+    },
+    "azure/eu/gpt-6.2-sol": {
+      "cacheReadPerMTok": 0.12,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 3.0,
+      "inputPerMTok": 2.4,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.24,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 6.0,
+            "inputPerMTok": 4.8,
+            "outputPerMTok": 18.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 12.0
     },
     "azure/eu/o1": {
       "cacheReadPerMTok": 8.25,
@@ -2628,6 +2704,44 @@
       ],
       "outputPerMTok": 5.0
     },
+    "azure/gpt-6.2-astra": {
+      "cacheReadPerMTok": 0.4,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.8,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 20.0,
+            "inputPerMTok": 16.0,
+            "outputPerMTok": 60.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 40.0
+    },
+    "azure/gpt-6.2-sol": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.2,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 5.0,
+            "inputPerMTok": 4.0,
+            "outputPerMTok": 15.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 10.0
+    },
     "azure/gpt-audio": {
       "cacheReadPerMTok": null,
       "cacheWrite1hPerMTok": null,
@@ -2761,12 +2875,90 @@
       "inputPerMTok": 1.1,
       "outputPerMTok": 4.4
     },
+    "azure/us-gov/gpt-4.1": {
+      "cacheReadPerMTok": 0.688,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 2.75,
+      "outputPerMTok": 11.0
+    },
+    "azure/us-gov/gpt-4.1-mini": {
+      "cacheReadPerMTok": 0.138,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.55,
+      "outputPerMTok": 2.2
+    },
+    "azure/us-gov/gpt-4o": {
+      "cacheReadPerMTok": 1.719,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 3.438,
+      "outputPerMTok": 13.75
+    },
     "azure/us-gov/gpt-5.1": {
       "cacheReadPerMTok": 0.171875,
       "cacheWrite1hPerMTok": null,
       "cacheWrite5mPerMTok": null,
       "inputPerMTok": 1.71875,
       "outputPerMTok": 13.75
+    },
+    "azure/us-gov/gpt-5.6-luna": {
+      "cacheReadPerMTok": 0.0275,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 0.34375,
+      "inputPerMTok": 0.275,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.055,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 0.6875,
+            "inputPerMTok": 0.55,
+            "outputPerMTok": 2.475
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 1.65
+    },
+    "azure/us-gov/gpt-5.6-sol": {
+      "cacheReadPerMTok": 0.55,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 6.875,
+      "inputPerMTok": 5.5,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 1.1,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 13.75,
+            "inputPerMTok": 11.0,
+            "outputPerMTok": 41.25
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 27.5
+    },
+    "azure/us-gov/gpt-5.6-terra": {
+      "cacheReadPerMTok": 0.275,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 3.4375,
+      "inputPerMTok": 2.75,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.55,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 6.875,
+            "inputPerMTok": 5.5,
+            "outputPerMTok": 24.75
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 16.5
     },
     "azure/us-gov/o3-mini": {
       "cacheReadPerMTok": 0.757,
@@ -3222,6 +3414,44 @@
         }
       ],
       "outputPerMTok": 5.5
+    },
+    "azure/us/gpt-6.2-astra": {
+      "cacheReadPerMTok": 0.44,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 11.0,
+      "inputPerMTok": 8.8,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.88,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 22.0,
+            "inputPerMTok": 17.6,
+            "outputPerMTok": 66.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 44.0
+    },
+    "azure/us/gpt-6.2-sol": {
+      "cacheReadPerMTok": 0.11,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 2.75,
+      "inputPerMTok": 2.2,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.22,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 5.5,
+            "inputPerMTok": 4.4,
+            "outputPerMTok": 16.5
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 11.0
     },
     "azure/us/gpt-chat-latest": {
       "cacheReadPerMTok": 0.55,
@@ -5020,6 +5250,88 @@
       "inputPerMTok": 3.0,
       "outputPerMTok": 15.0
     },
+    "bedrock/mantle/anthropic.claude-fable-5": {
+      "cacheReadPerMTok": 1.1,
+      "cacheWrite1hPerMTok": 22.0,
+      "cacheWrite5mPerMTok": 13.75,
+      "inputPerMTok": 11.0,
+      "outputPerMTok": 55.0
+    },
+    "bedrock/mantle/anthropic.claude-haiku-4-5": {
+      "cacheReadPerMTok": 0.11,
+      "cacheWrite1hPerMTok": 2.2,
+      "cacheWrite5mPerMTok": 1.375,
+      "inputPerMTok": 1.1,
+      "outputPerMTok": 5.5
+    },
+    "bedrock/mantle/anthropic.claude-haiku-5-5": {
+      "cacheReadPerMTok": 0.011,
+      "cacheWrite1hPerMTok": 0.22,
+      "cacheWrite5mPerMTok": 0.1375,
+      "inputPerMTok": 0.11,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.055,
+            "cacheWrite1hPerMTok": 1.1,
+            "cacheWrite5mPerMTok": 0.6875,
+            "inputPerMTok": 0.55,
+            "outputPerMTok": 2.75
+          },
+          "thresholdTokens": 100000
+        }
+      ],
+      "outputPerMTok": 0.55
+    },
+    "bedrock/mantle/anthropic.claude-mythos-5": {
+      "cacheReadPerMTok": 1.1,
+      "cacheWrite1hPerMTok": 22.0,
+      "cacheWrite5mPerMTok": 13.75,
+      "inputPerMTok": 11.0,
+      "outputPerMTok": 55.0
+    },
+    "bedrock/mantle/anthropic.claude-opus-4-7": {
+      "cacheReadPerMTok": 0.55,
+      "cacheWrite1hPerMTok": 11.0,
+      "cacheWrite5mPerMTok": 6.875,
+      "inputPerMTok": 5.5,
+      "outputPerMTok": 27.5
+    },
+    "bedrock/mantle/anthropic.claude-opus-4-8": {
+      "cacheReadPerMTok": 0.55,
+      "cacheWrite1hPerMTok": 11.0,
+      "cacheWrite5mPerMTok": 6.875,
+      "inputPerMTok": 5.5,
+      "outputPerMTok": 27.5
+    },
+    "bedrock/mantle/anthropic.claude-opus-5": {
+      "cacheReadPerMTok": 0.55,
+      "cacheWrite1hPerMTok": 11.0,
+      "cacheWrite5mPerMTok": 6.875,
+      "inputPerMTok": 5.5,
+      "outputPerMTok": 27.5
+    },
+    "bedrock/mantle/anthropic.claude-opus-5-5": {
+      "cacheReadPerMTok": 0.22,
+      "cacheWrite1hPerMTok": 8.8,
+      "cacheWrite5mPerMTok": 5.5,
+      "inputPerMTok": 4.4,
+      "outputPerMTok": 22.0
+    },
+    "bedrock/mantle/anthropic.claude-sonnet-5": {
+      "cacheReadPerMTok": 0.22,
+      "cacheWrite1hPerMTok": 4.4,
+      "cacheWrite5mPerMTok": 2.75,
+      "inputPerMTok": 2.2,
+      "outputPerMTok": 11.0
+    },
+    "bedrock/mantle/anthropic.claude-sonnet-5-5": {
+      "cacheReadPerMTok": 0.11,
+      "cacheWrite1hPerMTok": 4.4,
+      "cacheWrite5mPerMTok": 2.75,
+      "inputPerMTok": 2.2,
+      "outputPerMTok": 11.0
+    },
     "bedrock/moonshotai.kimi-k2-thinking": {
       "cacheReadPerMTok": null,
       "cacheWrite1hPerMTok": null,
@@ -5382,13 +5694,6 @@
       "inputPerMTok": 2.4,
       "outputPerMTok": 12.0
     },
-    "bedrock/us-gov-east-1/claude-sonnet-4-5-20250929-v1:0": {
-      "cacheReadPerMTok": 0.36,
-      "cacheWrite1hPerMTok": 7.2,
-      "cacheWrite5mPerMTok": 4.5,
-      "inputPerMTok": 3.6,
-      "outputPerMTok": 18.0
-    },
     "bedrock/us-gov-east-1/meta.llama3-70b-instruct-v1:0": {
       "cacheReadPerMTok": null,
       "cacheWrite1hPerMTok": null,
@@ -5604,13 +5909,6 @@
       "inputPerMTok": 2.4,
       "outputPerMTok": 12.0
     },
-    "bedrock/us-gov-west-1/claude-sonnet-4-5-20250929-v1:0": {
-      "cacheReadPerMTok": 0.36,
-      "cacheWrite1hPerMTok": 7.2,
-      "cacheWrite5mPerMTok": 4.5,
-      "inputPerMTok": 3.6,
-      "outputPerMTok": 18.0
-    },
     "bedrock/us-gov-west-1/meta.llama3-70b-instruct-v1:0": {
       "cacheReadPerMTok": null,
       "cacheWrite1hPerMTok": null,
@@ -5786,12 +6084,19 @@
       "inputPerMTok": 0.8,
       "outputPerMTok": 4.0
     },
+    "bedrock_mantle/anthropic.claude-fable-5": {
+      "cacheReadPerMTok": 1.1,
+      "cacheWrite1hPerMTok": 22.0,
+      "cacheWrite5mPerMTok": 13.75,
+      "inputPerMTok": 11.0,
+      "outputPerMTok": 55.0
+    },
     "bedrock_mantle/anthropic.claude-haiku-4-5": {
-      "cacheReadPerMTok": 0.1,
-      "cacheWrite1hPerMTok": 2.0,
-      "cacheWrite5mPerMTok": 1.25,
-      "inputPerMTok": 1.0,
-      "outputPerMTok": 5.0
+      "cacheReadPerMTok": 0.11,
+      "cacheWrite1hPerMTok": 2.2,
+      "cacheWrite5mPerMTok": 1.375,
+      "inputPerMTok": 1.1,
+      "outputPerMTok": 5.5
     },
     "bedrock_mantle/anthropic.claude-haiku-5-5": {
       "cacheReadPerMTok": 0.011,
@@ -5812,12 +6117,47 @@
       ],
       "outputPerMTok": 0.55
     },
+    "bedrock_mantle/anthropic.claude-mythos-5": {
+      "cacheReadPerMTok": 1.1,
+      "cacheWrite1hPerMTok": 22.0,
+      "cacheWrite5mPerMTok": 13.75,
+      "inputPerMTok": 11.0,
+      "outputPerMTok": 55.0
+    },
+    "bedrock_mantle/anthropic.claude-opus-4-7": {
+      "cacheReadPerMTok": 0.55,
+      "cacheWrite1hPerMTok": 11.0,
+      "cacheWrite5mPerMTok": 6.875,
+      "inputPerMTok": 5.5,
+      "outputPerMTok": 27.5
+    },
+    "bedrock_mantle/anthropic.claude-opus-4-8": {
+      "cacheReadPerMTok": 0.55,
+      "cacheWrite1hPerMTok": 11.0,
+      "cacheWrite5mPerMTok": 6.875,
+      "inputPerMTok": 5.5,
+      "outputPerMTok": 27.5
+    },
+    "bedrock_mantle/anthropic.claude-opus-5": {
+      "cacheReadPerMTok": 0.55,
+      "cacheWrite1hPerMTok": 11.0,
+      "cacheWrite5mPerMTok": 6.875,
+      "inputPerMTok": 5.5,
+      "outputPerMTok": 27.5
+    },
     "bedrock_mantle/anthropic.claude-opus-5-5": {
       "cacheReadPerMTok": 0.22,
       "cacheWrite1hPerMTok": 8.8,
       "cacheWrite5mPerMTok": 5.5,
       "inputPerMTok": 4.4,
       "outputPerMTok": 22.0
+    },
+    "bedrock_mantle/anthropic.claude-sonnet-5": {
+      "cacheReadPerMTok": 0.22,
+      "cacheWrite1hPerMTok": 4.4,
+      "cacheWrite5mPerMTok": 2.75,
+      "inputPerMTok": 2.2,
+      "outputPerMTok": 11.0
     },
     "bedrock_mantle/anthropic.claude-sonnet-5-5": {
       "cacheReadPerMTok": 0.11,
@@ -5832,6 +6172,34 @@
       "cacheWrite5mPerMTok": null,
       "inputPerMTok": 0.58,
       "outputPerMTok": 1.68
+    },
+    "bedrock_mantle/deepseek.v3.2": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.62,
+      "outputPerMTok": 1.85
+    },
+    "bedrock_mantle/google.gemma-3-12b-it": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.09,
+      "outputPerMTok": 0.29
+    },
+    "bedrock_mantle/google.gemma-3-27b-it": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.23,
+      "outputPerMTok": 0.38
+    },
+    "bedrock_mantle/google.gemma-3-4b-it": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.04,
+      "outputPerMTok": 0.08
     },
     "bedrock_mantle/google.gemma-4-26b-a4b": {
       "cacheReadPerMTok": null,
@@ -5854,12 +6222,124 @@
       "inputPerMTok": 0.04,
       "outputPerMTok": 0.08
     },
+    "bedrock_mantle/minimax.minimax-m2": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2
+    },
+    "bedrock_mantle/minimax.minimax-m2.1": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2
+    },
+    "bedrock_mantle/minimax.minimax-m2.5": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.2
+    },
+    "bedrock_mantle/mistral.devstral-2-123b": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.4,
+      "outputPerMTok": 2.0
+    },
+    "bedrock_mantle/mistral.magistral-small-2509": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 1.5
+    },
+    "bedrock_mantle/mistral.ministral-3-14b-instruct": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.2,
+      "outputPerMTok": 0.2
+    },
+    "bedrock_mantle/mistral.ministral-3-3b-instruct": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.1
+    },
+    "bedrock_mantle/mistral.ministral-3-8b-instruct": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.15
+    },
+    "bedrock_mantle/mistral.mistral-large-3-675b-instruct": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 1.5
+    },
+    "bedrock_mantle/mistral.voxtral-mini-3b-2507": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.04,
+      "outputPerMTok": 0.04
+    },
+    "bedrock_mantle/mistral.voxtral-small-24b-2507": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.3
+    },
     "bedrock_mantle/moonshotai.kimi-k2-thinking": {
       "cacheReadPerMTok": null,
       "cacheWrite1hPerMTok": null,
       "cacheWrite5mPerMTok": null,
       "inputPerMTok": 0.6,
       "outputPerMTok": 2.5
+    },
+    "bedrock_mantle/moonshotai.kimi-k2.5": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 3.0
+    },
+    "bedrock_mantle/nvidia.nemotron-nano-12b-v2": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.2,
+      "outputPerMTok": 0.6
+    },
+    "bedrock_mantle/nvidia.nemotron-nano-3-30b": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.06,
+      "outputPerMTok": 0.24
+    },
+    "bedrock_mantle/nvidia.nemotron-nano-9b-v2": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.06,
+      "outputPerMTok": 0.23
+    },
+    "bedrock_mantle/nvidia.nemotron-super-3-120b": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.65
     },
     "bedrock_mantle/openai.gpt-oss-120b": {
       "cacheReadPerMTok": null,
@@ -5916,6 +6396,13 @@
       "cacheWrite5mPerMTok": null,
       "inputPerMTok": 0.45,
       "outputPerMTok": 1.8
+    },
+    "bedrock_mantle/qwen.qwen3-coder-next": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.5,
+      "outputPerMTok": 1.2
     },
     "bedrock_mantle/qwen.qwen3-next-80b-a3b-instruct": {
       "cacheReadPerMTok": null,
@@ -6104,6 +6591,13 @@
       "inputPerMTok": 2.64,
       "outputPerMTok": 7.92
     },
+    "bedrock_mantle/writer.palmyra-vision-7b": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.6
+    },
     "bedrock_mantle/xai.grok-4.3": {
       "cacheReadPerMTok": 0.2,
       "cacheWrite1hPerMTok": null,
@@ -6124,6 +6618,27 @@
       "cacheWrite5mPerMTok": null,
       "inputPerMTok": 2.2,
       "outputPerMTok": 6.6
+    },
+    "bedrock_mantle/zai.glm-4.7": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.6,
+      "outputPerMTok": 2.2
+    },
+    "bedrock_mantle/zai.glm-4.7-flash": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.07,
+      "outputPerMTok": 0.4
+    },
+    "bedrock_mantle/zai.glm-5": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 1.0,
+      "outputPerMTok": 3.2
     },
     "bigmodel/glm-5.3": {
       "cacheReadPerMTok": 0.285714,
@@ -6653,6 +7168,13 @@
       "inputPerMTok": 0.66,
       "outputPerMTok": 1.0
     },
+    "cloudflare/@cf/thinkingmachines/inkling-2-small": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.0
+    },
     "cloudflare/@cf/zai-org/glm-4.7-flash": {
       "cacheReadPerMTok": null,
       "cacheWrite1hPerMTok": null,
@@ -7044,6 +7566,13 @@
       "cacheWrite5mPerMTok": null,
       "inputPerMTok": 0.15,
       "outputPerMTok": 0.47
+    },
+    "dashscope/qwen4-max": {
+      "cacheReadPerMTok": 0.075,
+      "cacheWrite1hPerMTok": 3.0,
+      "cacheWrite5mPerMTok": 1.875,
+      "inputPerMTok": 1.5,
+      "outputPerMTok": 4.5
     },
     "dashscope/qwq-plus": {
       "cacheReadPerMTok": null,
@@ -7651,6 +8180,13 @@
       "cacheWrite5mPerMTok": 2.0,
       "inputPerMTok": 2.0,
       "outputPerMTok": 10.0
+    },
+    "databricks/system.ai.gemini-4-hydrogen": {
+      "cacheReadPerMTok": 1.5,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 1.5,
+      "inputPerMTok": 1.5,
+      "outputPerMTok": 7.5
     },
     "daybreak-blue-latest": {
       "cacheReadPerMTok": 0.4,
@@ -13818,6 +14354,13 @@
       ],
       "outputPerMTok": 30.0
     },
+    "global.openai.gpt-5.6-cyber": {
+      "cacheReadPerMTok": 1.25,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 15.625,
+      "inputPerMTok": 12.5,
+      "outputPerMTok": 75.0
+    },
     "global.openai.gpt-5.6-luna": {
       "cacheReadPerMTok": 0.02,
       "cacheWrite1hPerMTok": null,
@@ -13969,6 +14512,63 @@
         }
       ],
       "outputPerMTok": 5.0
+    },
+    "global.openai.gpt-6.2-astra": {
+      "cacheReadPerMTok": 0.4,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.8,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 20.0,
+            "inputPerMTok": 16.0,
+            "outputPerMTok": 60.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 40.0
+    },
+    "global.openai.gpt-6.2-sol": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.2,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 5.0,
+            "inputPerMTok": 4.0,
+            "outputPerMTok": 15.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 10.0
+    },
+    "global.openai.gpt-daybreak-blue-5.6-sol": {
+      "cacheReadPerMTok": 0.4,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 5.0,
+      "inputPerMTok": 4.0,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.8,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 10.0,
+            "inputPerMTok": 8.0,
+            "outputPerMTok": 30.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 20.0
     },
     "global.xai.grok-4.6": {
       "cacheReadPerMTok": 0.5,
@@ -15707,6 +16307,18 @@
       "cacheWrite1hPerMTok": null,
       "cacheWrite5mPerMTok": null,
       "inputPerMTok": 10.0,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 2.0,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": null,
+            "inputPerMTok": 20.0,
+            "outputPerMTok": 75.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
       "outputPerMTok": 50.0
     },
     "gpt-6-cyber": {
@@ -15899,6 +16511,101 @@
       ],
       "outputPerMTok": 10.0
     },
+    "gpt-6.2-astra": {
+      "cacheReadPerMTok": 0.4,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.8,
+            "cacheWrite1hPerMTok": 20.0,
+            "cacheWrite5mPerMTok": 20.0,
+            "inputPerMTok": 16.0,
+            "outputPerMTok": 60.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 40.0
+    },
+    "gpt-6.2-astra-fast": {
+      "cacheReadPerMTok": 0.8,
+      "cacheWrite1hPerMTok": 20.0,
+      "cacheWrite5mPerMTok": 20.0,
+      "inputPerMTok": 16.0,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 1.6,
+            "cacheWrite1hPerMTok": 40.0,
+            "cacheWrite5mPerMTok": 40.0,
+            "inputPerMTok": 32.0,
+            "outputPerMTok": 120.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 80.0
+    },
+    "gpt-6.2-astra-law": {
+      "cacheReadPerMTok": 0.4,
+      "cacheWrite1hPerMTok": 10.0,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.8,
+            "cacheWrite1hPerMTok": 20.0,
+            "cacheWrite5mPerMTok": 20.0,
+            "inputPerMTok": 16.0,
+            "outputPerMTok": 60.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 40.0
+    },
+    "gpt-6.2-sol": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": 2.5,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.2,
+            "cacheWrite1hPerMTok": 5.0,
+            "cacheWrite5mPerMTok": 5.0,
+            "inputPerMTok": 4.0,
+            "outputPerMTok": 15.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 10.0
+    },
+    "gpt-6.2-sol-fast": {
+      "cacheReadPerMTok": 0.2,
+      "cacheWrite1hPerMTok": 5.0,
+      "cacheWrite5mPerMTok": 5.0,
+      "inputPerMTok": 4.0,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.4,
+            "cacheWrite1hPerMTok": 10.0,
+            "cacheWrite5mPerMTok": 10.0,
+            "inputPerMTok": 8.0,
+            "outputPerMTok": 30.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 20.0
+    },
     "gpt-audio": {
       "cacheReadPerMTok": null,
       "cacheWrite1hPerMTok": null,
@@ -16068,7 +16775,7 @@
       "outputPerMTok": 0.3
     },
     "groq/openai/gpt-oss-safeguard-20b": {
-      "cacheReadPerMTok": 0.037,
+      "cacheReadPerMTok": 0.0375,
       "cacheWrite1hPerMTok": null,
       "cacheWrite5mPerMTok": null,
       "inputPerMTok": 0.075,
@@ -18958,6 +19665,13 @@
       "inputPerMTok": 0.25,
       "outputPerMTok": 1.0
     },
+    "nebius/thinkingmachines/Inkling-2-Small": {
+      "cacheReadPerMTok": 0.06,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.3,
+      "outputPerMTok": 1.0
+    },
     "nebius/zai-org/GLM-5.1": {
       "cacheReadPerMTok": 0.26,
       "cacheWrite1hPerMTok": null,
@@ -20469,6 +21183,44 @@
         {
           "rate": {
             "cacheReadPerMTok": 0.4,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 5.0,
+            "inputPerMTok": 4.0,
+            "outputPerMTok": 15.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 10.0
+    },
+    "openai.gpt-6.2-astra": {
+      "cacheReadPerMTok": 0.4,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 10.0,
+      "inputPerMTok": 8.0,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.8,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 20.0,
+            "inputPerMTok": 16.0,
+            "outputPerMTok": 60.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 40.0
+    },
+    "openai.gpt-6.2-sol": {
+      "cacheReadPerMTok": 0.1,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 2.5,
+      "inputPerMTok": 2.0,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.2,
             "cacheWrite1hPerMTok": null,
             "cacheWrite5mPerMTok": 5.0,
             "inputPerMTok": 4.0,
@@ -22303,28 +23055,28 @@
     "snowflake/claude-4-sonnet": {
       "cacheReadPerMTok": 0.3,
       "cacheWrite1hPerMTok": null,
-      "cacheWrite5mPerMTok": null,
+      "cacheWrite5mPerMTok": 3.75,
       "inputPerMTok": 3.0,
       "outputPerMTok": 15.0
     },
     "snowflake/claude-haiku-4-5": {
       "cacheReadPerMTok": 0.1,
       "cacheWrite1hPerMTok": null,
-      "cacheWrite5mPerMTok": null,
+      "cacheWrite5mPerMTok": 1.25,
       "inputPerMTok": 1.0,
       "outputPerMTok": 5.0
     },
     "snowflake/claude-sonnet-4-5": {
       "cacheReadPerMTok": 0.3,
       "cacheWrite1hPerMTok": null,
-      "cacheWrite5mPerMTok": null,
+      "cacheWrite5mPerMTok": 3.75,
       "inputPerMTok": 3.0,
       "outputPerMTok": 15.0
     },
     "snowflake/claude-sonnet-4-6": {
       "cacheReadPerMTok": 0.3,
       "cacheWrite1hPerMTok": null,
-      "cacheWrite5mPerMTok": null,
+      "cacheWrite5mPerMTok": 3.75,
       "inputPerMTok": 3.0,
       "outputPerMTok": 15.0
     },
@@ -22353,8 +23105,22 @@
       "cacheReadPerMTok": null,
       "cacheWrite1hPerMTok": null,
       "cacheWrite5mPerMTok": null,
-      "inputPerMTok": 0.24,
-      "outputPerMTok": 0.24
+      "inputPerMTok": 0.22,
+      "outputPerMTok": 0.22
+    },
+    "snowflake/llama3.2-1b": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.1,
+      "outputPerMTok": 0.1
+    },
+    "snowflake/llama3.2-3b": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.15
     },
     "snowflake/llama3.3-70b": {
       "cacheReadPerMTok": null,
@@ -22369,6 +23135,13 @@
       "cacheWrite5mPerMTok": null,
       "inputPerMTok": 0.24,
       "outputPerMTok": 0.97
+    },
+    "snowflake/mistral-7b": {
+      "cacheReadPerMTok": null,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 0.15,
+      "outputPerMTok": 0.2
     },
     "snowflake/mistral-large2": {
       "cacheReadPerMTok": null,
@@ -22392,18 +23165,18 @@
       "outputPerMTok": 10.0
     },
     "snowflake/openai-gpt-5-mini": {
-      "cacheReadPerMTok": null,
+      "cacheReadPerMTok": 0.03,
       "cacheWrite1hPerMTok": null,
       "cacheWrite5mPerMTok": null,
-      "inputPerMTok": 0.3,
-      "outputPerMTok": 1.2
+      "inputPerMTok": 0.25,
+      "outputPerMTok": 2.0
     },
     "snowflake/openai-gpt-5-nano": {
-      "cacheReadPerMTok": null,
+      "cacheReadPerMTok": 0.01,
       "cacheWrite1hPerMTok": null,
       "cacheWrite5mPerMTok": null,
-      "inputPerMTok": 0.15,
-      "outputPerMTok": 0.6
+      "inputPerMTok": 0.06,
+      "outputPerMTok": 0.44
     },
     "snowflake/snowflake-llama-3.3-70b": {
       "cacheReadPerMTok": null,
@@ -23866,6 +24639,13 @@
       ],
       "outputPerMTok": 33.0
     },
+    "us.openai.gpt-5.6-cyber": {
+      "cacheReadPerMTok": 1.375,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 17.1875,
+      "inputPerMTok": 13.75,
+      "outputPerMTok": 82.5
+    },
     "us.openai.gpt-5.6-luna": {
       "cacheReadPerMTok": 0.022,
       "cacheWrite1hPerMTok": null,
@@ -24017,6 +24797,63 @@
         }
       ],
       "outputPerMTok": 5.5
+    },
+    "us.openai.gpt-6.2-astra": {
+      "cacheReadPerMTok": 0.44,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 11.0,
+      "inputPerMTok": 8.8,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.88,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 22.0,
+            "inputPerMTok": 17.6,
+            "outputPerMTok": 66.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 44.0
+    },
+    "us.openai.gpt-6.2-sol": {
+      "cacheReadPerMTok": 0.11,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 2.75,
+      "inputPerMTok": 2.2,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.22,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 5.5,
+            "inputPerMTok": 4.4,
+            "outputPerMTok": 16.5
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 11.0
+    },
+    "us.openai.gpt-daybreak-blue-5.6-sol": {
+      "cacheReadPerMTok": 0.44,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": 5.5,
+      "inputPerMTok": 4.4,
+      "longContext": [
+        {
+          "rate": {
+            "cacheReadPerMTok": 0.88,
+            "cacheWrite1hPerMTok": null,
+            "cacheWrite5mPerMTok": 11.0,
+            "inputPerMTok": 8.8,
+            "outputPerMTok": 33.0
+          },
+          "thresholdTokens": 272000
+        }
+      ],
+      "outputPerMTok": 22.0
     },
     "us.writer.palmyra-x4-v1:0": {
       "cacheReadPerMTok": null,
@@ -25686,6 +26523,27 @@
       "inputPerMTok": 1.4,
       "outputPerMTok": 4.4
     },
+    "vispark/vision-large": {
+      "cacheReadPerMTok": 0.0,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 7.37,
+      "outputPerMTok": 22.11
+    },
+    "vispark/vision-medium": {
+      "cacheReadPerMTok": 0.0,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 4.21,
+      "outputPerMTok": 12.63
+    },
+    "vispark/vision-small": {
+      "cacheReadPerMTok": 0.0,
+      "cacheWrite1hPerMTok": null,
+      "cacheWrite5mPerMTok": null,
+      "inputPerMTok": 1.05,
+      "outputPerMTok": 3.16
+    },
     "volcengine/doubao-seed-2-1-lite-260915": {
       "cacheReadPerMTok": 0.023,
       "cacheWrite1hPerMTok": null,
@@ -27170,6 +28028,6 @@
     }
   },
   "schemaVersion": 2,
-  "snapshotVersion": "358997bb281c",
+  "snapshotVersion": "ffaa12e4a1fc",
   "source": "litellm"
 }

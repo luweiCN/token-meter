@@ -74,7 +74,7 @@ final class StatusBarControllerTests: XCTestCase {
         XCTAssertEqual(controller.projectionForTesting, expected)
         XCTAssertEqual(controller.projectionForTesting.style, .rings)
         XCTAssertEqual(controller.projectionForTesting.tail, .hidden)
-        XCTAssertEqual(controller.titleForTesting, "")
+        XCTAssertEqual(controller.titleForTesting, expected.accessibilityTitle)
     }
 
     func testContextMenuContainsOpenMainInterfaceAndQuit() throws {

@@ -23,16 +23,16 @@ final class PricingSnapshotUpdaterTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: legacyURL), oldData)
     }
 
-    func testChecksImmediatelyThenWaitsTwentyFourHours() {
+    func testChecksImmediatelyThenWaitsOneHour() {
         let now = Date(timeIntervalSince1970: 1_000_000)
 
         XCTAssertTrue(PricingSnapshotUpdater.shouldCheck(lastSuccessfulAt: nil, now: now))
         XCTAssertTrue(PricingSnapshotUpdater.shouldCheck(
-            lastSuccessfulAt: now.addingTimeInterval(-86_400),
+            lastSuccessfulAt: now.addingTimeInterval(-3_600),
             now: now
         ))
-        XCTAssertTrue(PricingSnapshotUpdater.shouldCheck(
-            lastSuccessfulAt: now.addingTimeInterval(-86_401),
+        XCTAssertFalse(PricingSnapshotUpdater.shouldCheck(
+            lastSuccessfulAt: now.addingTimeInterval(-3_599),
             now: now
         ))
         XCTAssertTrue(PricingSnapshotUpdater.shouldCheck(
@@ -48,9 +48,9 @@ final class PricingSnapshotUpdaterTests: XCTestCase {
         let now = Date(timeIntervalSince1970: 1_000_000)
 
         XCTAssertEqual(PricingSnapshotUpdater.timeUntilNextCheck(defaults: defaults, now: now), 0)
+        defaults.set(now.addingTimeInterval(-600), forKey: PricingSnapshotUpdater.lastSuccessfulCheckKey)
+        XCTAssertEqual(PricingSnapshotUpdater.timeUntilNextCheck(defaults: defaults, now: now), 3_000)
         defaults.set(now.addingTimeInterval(-3_600), forKey: PricingSnapshotUpdater.lastSuccessfulCheckKey)
-        XCTAssertEqual(PricingSnapshotUpdater.timeUntilNextCheck(defaults: defaults, now: now), 23 * 3_600)
-        defaults.set(now.addingTimeInterval(-86_400), forKey: PricingSnapshotUpdater.lastSuccessfulCheckKey)
         XCTAssertEqual(PricingSnapshotUpdater.timeUntilNextCheck(defaults: defaults, now: now), 0)
     }
 
@@ -161,9 +161,24 @@ final class PricingSnapshotUpdaterTests: XCTestCase {
         )
         XCTAssertEqual(second, .notDue)
         XCTAssertTrue(requestedURLs.isEmpty)
+
+        let nextHour = now.addingTimeInterval(3_600)
+        let unchanged = await PricingSnapshotUpdater.refreshIfDue(defaults: defaults, session: session, cacheURL: cacheURL,
+                                                                 now: nextHour, minimumModelCount: 1)
+        XCTAssertEqual(unchanged, .unchanged)
+        XCTAssertEqual(requestedURLs, [PricingSnapshotUpdater.checksumURL])
+        XCTAssertEqual(defaults.object(forKey: PricingSnapshotUpdater.lastSuccessfulCheckKey) as? Date, nextHour)
+
+        requestedURLs.removeAll()
+        try Data("damaged".utf8).write(to: cacheURL)
+        let repaired = await PricingSnapshotUpdater.refreshIfDue(defaults: defaults, session: session, cacheURL: cacheURL,
+                                                                now: nextHour.addingTimeInterval(3_600), minimumModelCount: 1)
+        XCTAssertEqual(repaired, .updated)
+        XCTAssertEqual(requestedURLs, [PricingSnapshotUpdater.checksumURL, PricingSnapshotUpdater.snapshotURL])
+        XCTAssertEqual(try Data(contentsOf: cacheURL), snapshot)
     }
 
-    func testRefreshFailureDoesNotStartTwentyFourHourThrottle() async throws {
+    func testRefreshFailureDoesNotStartHourlyThrottle() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let suiteName = "PricingSnapshotUpdaterTests.\(UUID().uuidString)"

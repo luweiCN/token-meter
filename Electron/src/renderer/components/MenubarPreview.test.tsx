@@ -27,14 +27,16 @@ function onlyProviders(...ids: string[]): MenubarPreviewState['providers'] {
 }
 
 describe('MenubarPreviewBar', () => {
-  it('places a single pinned balance beside its provider or names it in a compact style', () => {
-    const state = { ...base, pinnedBalance: { demoId: 'codex', name: '工作' } };
+  it('keeps the Claude prepaid pin inline or names it in a compact style', () => {
+    const state = { ...base, pinnedBalance: { demoId: 'claude', name: '工作' } };
     const { rerender } = render(<MenubarPreviewBar mode="dark" state={state} />);
-    expect(screen.getByText('320 积分')).toBeTruthy();
+    expect(screen.getByText('US$18.50')).toBeTruthy();
     rerender(<MenubarPreviewBar mode="light" state={{ ...state, style: 'grid' }} />);
-    expect(screen.getByText('工作 320 积分')).toBeTruthy();
+    expect(screen.getByText('工作 US$18.50')).toBeTruthy();
     rerender(<MenubarPreviewBar mode="dark" state={base} />);
-    expect(screen.queryByText(/320 积分/)).toBeNull();
+    expect(screen.queryByText(/US\$18\.50/)).toBeNull();
+    rerender(<MenubarPreviewBar mode="dark" state={{ ...base, pinnedBalance: { demoId: 'codex', name: 'GPT' } }} />);
+    expect(screen.queryByText(/积分/)).toBeNull();
   });
 
   it('renders one cell per visible provider plus the usage tail for rings', () => {

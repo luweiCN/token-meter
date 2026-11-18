@@ -73,7 +73,7 @@ interface DemoProvider {
 /// 演示数据（稿 data 口径）：CC 5h62/7d41 · CX 34/18 · 智谱 8/55 · Go 98/100 · Command 75/80/80 · Grok 单窗 42 · OMP 71/30。
 export const PREVIEW_PROVIDERS: DemoProvider[] = [
   { id: 'claude', short: 'CC', mono: 'C', w5: { p: 62, c: 'ok' }, w7: { p: 41, c: 'ok' }, w3: null, exampleBalance: 'US$18.50' },
-  { id: 'codex', short: 'CX', mono: 'X', w5: { p: 34, c: 'warn' }, w7: { p: 18, c: 'warn' }, w3: null, exampleBalance: '320 积分' },
+  { id: 'codex', short: 'CX', mono: 'X', w5: { p: 34, c: 'warn' }, w7: { p: 18, c: 'warn' }, w3: null },
   { id: 'zhipu', short: '智谱', mono: '智', w5: { p: 8, c: 'bad' }, w7: { p: 55, c: 'ok' }, w3: null },
   { id: 'opencodeGo', short: 'Go', mono: 'G', w5: { p: 98, c: 'ok' }, w7: { p: 100, c: 'ok' }, w3: { p: 100, c: 'ok' } },
   { id: 'commandCode', short: 'Command', mono: 'M', w5: { p: 75, c: 'ok' }, w7: { p: 80, c: 'ok' }, w3: { p: 80, c: 'ok' } },

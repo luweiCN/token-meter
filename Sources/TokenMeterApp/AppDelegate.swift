@@ -163,7 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 成功后精确排到下一个 24h 检查点；失败则 6h 后重试。
+    /// 成功后按快照检查周期排程，网络或校验失败时提前重试。
     /// 新快照落盘后立即跑一轮本地索引，扫描器只重算变价模型。
     private func schedulePricingRefreshTimer(after delay: TimeInterval) {
         guard !isTerminating else { return }
@@ -184,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func nextPricingRefreshDelay(for outcome: PricingSnapshotUpdateOutcome) -> TimeInterval {
-        outcome == .failed ? 6 * 3600 : PricingSnapshotUpdater.timeUntilNextCheck()
+        outcome == .failed ? 15 * 60 : PricingSnapshotUpdater.timeUntilNextCheck()
     }
 
     private func refreshInterval(for snapshot: SettingsSnapshot?) -> TimeInterval {

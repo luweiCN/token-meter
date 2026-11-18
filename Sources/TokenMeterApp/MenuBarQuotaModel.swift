@@ -11,6 +11,7 @@ enum MenuBarQuotaModel {
         let remainingPercent: Double
         let tone: UsageMetricTone
         var roundedPercent: Int { Int(remainingPercent.rounded()) }
+        var numberText: String { remainingPercent > 0 && roundedPercent == 0 ? "<1" : String(roundedPercent) }
     }
 
     struct Cell: Equatable {
@@ -18,7 +19,7 @@ enum MenuBarQuotaModel {
         /// 用户配置的完整显示名；空格属于名称内容，不能在投影层隐式截断。
         let badge: String
         /// 单字符标（monogram/tagnum 用，全组去重后注入）。
-        let mono: String
+        var mono: String
         /// 短窗（5h 类）；单窗家为 nil——唯一窗恒放 longWindow（沿现状「last = 最长窗」口径）。
         let shortWindow: Window?
         let longWindow: Window
@@ -168,7 +169,30 @@ enum MenuBarQuotaModel {
         let showGlyph: Bool
         let showNumber: Bool
         let windowOrder: MenuBarWindowOrder
-        let cells: [Cell]
+        enum Entry: Equatable, Identifiable {
+            case quota(Cell)
+            case account(AccountReadout)
+
+            var id: String {
+                switch self {
+                case .quota(let cell): return cell.providerId
+                case .account(let readout): return readout.providerId
+                }
+            }
+        }
+        let entries: [Entry]
+        var cells: [Cell] {
+            entries.compactMap { entry in
+                guard case .quota(let cell) = entry else { return nil }
+                return cell
+            }
+        }
+        var accountReadouts: [AccountReadout] {
+            entries.compactMap { entry in
+                guard case .account(let readout) = entry else { return nil }
+                return readout
+            }
+        }
         let tail: Tail
         /// 随包定价模型的峰谷时刻表（与额度供应商无关）。空 = 不显示峰/谷标识。
         /// 只带时刻表不带档位：峰/谷由视图层按当前时刻自判（TimelineView），
@@ -176,18 +200,37 @@ enum MenuBarQuotaModel {
         let peakTiers: [PeakTierEntry]
         /// 峰/谷标识样式（设置页可调）。
         let peakBadgeStyle: PeakBadgeStyle
-        struct PinnedBalance: Equatable {
+        struct AccountReadout: Equatable {
             let providerId: String
             let providerName: String
             let value: String
+            let accessibilityLabel: String
         }
-        var pinnedBalance: PinnedBalance? = nil
-        var showsBalanceInline: Bool {
-            guard let pinnedBalance, cells.contains(where: { $0.providerId == pinnedBalance.providerId }) else { return false }
+        var pinnedBalance: AccountReadout? = nil
+        var usesAggregateStyle: Bool {
             switch style {
-            case .grid, .strip, .monogram, .sentinel, .tagnum, .deck2: return false
-            default: return true
+            case .grid, .strip, .monogram, .sentinel, .tagnum, .deck2: return true
+            default: return false
             }
+        }
+        var showsBalanceInline: Bool {
+            guard let pinnedBalance, !usesAggregateStyle else { return false }
+            return cells.contains { $0.providerId == pinnedBalance.providerId }
+        }
+
+        var accessibilityTitle: String {
+            var labels = entries.map { entry in
+                switch entry {
+                case .quota(let cell):
+                    let windows = cell.numberWindows(order: windowOrder).map { "\($0.label) \($0.numberText)%" }
+                    return ([cell.badge] + windows).joined(separator: " ")
+                case .account(let readout):
+                    return readout.accessibilityLabel
+                }
+            }
+            if let pinnedBalance { labels.append(pinnedBalance.accessibilityLabel) }
+            if case .text(let text) = tail { labels.append(text) }
+            return labels.joined(separator: " · ")
         }
     }
 
@@ -206,15 +249,35 @@ enum MenuBarQuotaModel {
             overrides.first { $0.providerId == id }
         }
 
-        var cells: [Cell] = snapshots.compactMap { snapshot in
+        var entries: [MenuBarProjection.Entry] = snapshots.compactMap { snapshot in
             let providerOverride = override(snapshot.providerId)
             guard providerOverride?.showInMenuBar ?? true else { return nil }
             let model = QuotaDisplayModel(snapshot: snapshot, now: now)
             let windows = model.menuBarWindows.map {
                 Window(label: $0.label, remainingPercent: $0.percent, tone: $0.tone)
             }
+            // Codex 的主额度窗口同时生效，显示窗口的偏好不改变账户何时转用积分。
+            if snapshot.providerId == "codex", windows.isEmpty || windows.contains(where: { $0.remainingPercent == 0 }) {
+                let value: String
+                let description: String
+                if let balance = snapshot.accountCredits?.displayBalance {
+                    value = balance.compact
+                    description = balance.help
+                } else {
+                    switch snapshot.accountCredits {
+                    case .codex(.noCredits), .codex(.amount):
+                        value = "0"
+                        description = "可用额度和积分为 0"
+                    default:
+                        value = "—"
+                        description = "可用余额待确认"
+                    }
+                }
+                return .account(.init(providerId: snapshot.providerId, providerName: snapshot.displayName,
+                                      value: value, accessibilityLabel: "\(snapshot.displayName) \(description)"))
+            }
             guard let longWindow = windows.last else { return nil }
-            return Cell(
+            return .quota(Cell(
                 providerId: snapshot.providerId,
                 badge: snapshot.displayName,
                 mono: "",
@@ -226,22 +289,18 @@ enum MenuBarQuotaModel {
                 numberChoice: providerOverride?.menuBarNumberWindow ?? .all,
                 glyphWindowLabels: providerOverride?.menuBarGlyphWindows,
                 numberWindowLabels: providerOverride?.menuBarNumberWindows
-            )
+            ))
         }
-        let monos = monograms(for: cells.map(\.badge))
-        cells = zip(cells, monos).map { cell, mono in
-            Cell(
-                providerId: cell.providerId,
-                badge: cell.badge,
-                mono: mono,
-                shortWindow: cell.shortWindow,
-                longWindow: cell.longWindow,
-                allWindows: cell.allWindows,
-                glyphChoice: cell.glyphChoice,
-                numberChoice: cell.numberChoice,
-                glyphWindowLabels: cell.glyphWindowLabels,
-                numberWindowLabels: cell.numberWindowLabels
-            )
+        let names = entries.map { entry in
+            switch entry {
+            case .quota(let cell): return cell.badge
+            case .account(let readout): return readout.providerName
+            }
+        }
+        entries = zip(entries, monograms(for: names)).map { entry, mono in
+            guard case .quota(var cell) = entry else { return entry }
+            cell.mono = mono
+            return .quota(cell)
         }
 
         let elements = effectiveElements(
@@ -267,10 +326,11 @@ enum MenuBarQuotaModel {
 
         // 峰/谷标识由定价模型驱动，不与任一额度供应商绑定；设置页关闭时整体不显示。
         let visiblePeakTiers = appearance.showPeakBadge ? peakTiers : []
-        let pinnedBalance = snapshots.first { $0.providerId == appearance.pinnedBalanceProviderId }
+        let pinnedBalance = snapshots.first { $0.providerId != "codex" && $0.providerId == appearance.pinnedBalanceProviderId }
             .flatMap { snapshot in
                 snapshot.accountCredits?.displayBalance.map {
-                    MenuBarProjection.PinnedBalance(providerId: snapshot.providerId, providerName: snapshot.displayName, value: $0.full)
+                    MenuBarProjection.AccountReadout(providerId: snapshot.providerId, providerName: snapshot.displayName,
+                                                     value: $0.full, accessibilityLabel: "\(snapshot.displayName) \($0.help)")
                 }
             }
 
@@ -280,7 +340,7 @@ enum MenuBarQuotaModel {
             showGlyph: elements.glyph,
             showNumber: elements.number,
             windowOrder: appearance.windowOrder,
-            cells: cells,
+            entries: entries,
             tail: tail,
             peakTiers: visiblePeakTiers,
             peakBadgeStyle: appearance.peakBadgeStyle,

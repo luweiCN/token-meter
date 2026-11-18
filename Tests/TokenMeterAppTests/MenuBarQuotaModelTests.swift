@@ -154,28 +154,72 @@ final class MenuBarQuotaModelTests: XCTestCase {
         XCTAssertEqual(projection.cells[0].longWindow.remainingPercent, 95.0)
     }
 
-    func testPinnedBalanceAcrossStylesAndMissingWindows() throws {
-        let json = Data(#"{"rateLimits":{"primary":{"usedPercent":20,"windowDurationMins":300},"credits":{"balance":"12"}}}"#.utf8)
-        let codex = try CodexUsageParser.parse(data: json, providerId: "codex", displayName: "Codex").renamed(to: "工作")
+    func testCodexUsesEveryPrimaryWindowBeforeSwitchingToCreditsAcrossStyles() throws {
+        let json = Data(#"{"rateLimits":{"limitName":"ChatGPT","primary":{"usedPercent":99.8,"windowDurationMins":300},"secondary":{"usedPercent":10,"windowDurationMins":10080},"credits":{"balance":"12.34567"}},"rateLimitsByLimitId":{"spark":{"primary":{"usedPercent":100,"windowDurationMins":300}}}}"#.utf8)
+        let quota = try CodexUsageParser.parse(data: json, providerId: "codex", displayName: "Codex").renamed(to: "工作")
+        var exhausted = twoWindowSnapshot("codex", "工作", shortRemaining: 85, longRemaining: 0)
+        exhausted.accountCredits = quota.accountCredits
+        let claude = twoWindowSnapshot(shortRemaining: 11, longRemaining: 25)
+        let onlyShort = ProviderConfigOverride(providerId: "codex", enabled: true, displayName: nil, menuRank: nil,
+                                              showInMenuBar: true, showInCharts: nil, menuBarGlyphWindow: .short,
+                                              menuBarNumberWindow: .short)
         for style in MenuBarStyleId.allCases {
-            let shown = MenuBarQuotaModel.projection(snapshots: [codex], settings: settings(style: style, pinnedId: "codex"), todaySummary: .empty)
-            XCTAssertEqual(shown.pinnedBalance?.value, "12 积分")
-            XCTAssertEqual(shown.pinnedBalance?.providerName, "工作")
-            XCTAssertEqual(shown.showsBalanceInline, ![.grid, .strip, .sentinel, .monogram, .tagnum, .deck2].contains(style))
+            let config = settings(style: style, pinnedId: "codex", overrides: [onlyShort])
+            let active = MenuBarQuotaModel.projection(snapshots: [quota], settings: config, todaySummary: .empty)
+            XCTAssertEqual(active.cells.first?.shortWindow?.numberText, "<1")
+            XCTAssertTrue(active.accountReadouts.isEmpty)
+            XCTAssertNil(active.pinnedBalance)
+            XCTAssertEqual(active.accessibilityTitle, "工作 5h <1%")
+
+            let switched = MenuBarQuotaModel.projection(snapshots: [exhausted, claude], settings: config, todaySummary: .empty)
+            XCTAssertEqual(switched.entries.map(\.id), ["codex", "claude-code"])
+            XCTAssertEqual(switched.cells.map(\.providerId), ["claude-code"])
+            XCTAssertEqual(switched.accountReadouts.first?.value, "12.35 积分")
+            XCTAssertTrue(switched.accountReadouts.first?.accessibilityLabel.contains("12.34567") == true)
+            XCTAssertNil(switched.pinnedBalance)
+            XCTAssertFalse(switched.accessibilityTitle.contains("7d 0%"))
         }
-        let noPin = MenuBarQuotaModel.projection(snapshots: [codex], settings: nil, todaySummary: .empty)
-        XCTAssertNil(noPin.pinnedBalance)
-        var empty = codex
-        empty.accountCredits = .codex(.amount(0))
-        let noBalance = MenuBarQuotaModel.projection(snapshots: [empty], settings: settings(pinnedId: "codex"), todaySummary: .empty)
-        XCTAssertNil(noBalance.pinnedBalance)
-        XCTAssertEqual(noBalance.cells.count, 1)
-        let walletOnly = try CodexUsageParser.parse(data: Data(#"{"rateLimits":{"credits":{"unlimited":true}}}"#.utf8), providerId: "codex", displayName: "Codex")
-        let noWindows = MenuBarQuotaModel.projection(snapshots: [walletOnly], settings: settings(pinnedId: "codex"), todaySummary: .empty)
-        XCTAssertEqual(noWindows.pinnedBalance?.value, "无限额")
-        XCTAssertFalse(noWindows.showsBalanceInline)
-        let disabled = MenuBarQuotaModel.projection(snapshots: [], settings: settings(pinnedId: "codex"), todaySummary: .empty)
-        XCTAssertNil(disabled.pinnedBalance)
+    }
+
+    func testCodexCreditsOnlyEmptyAndUnconfirmedBalances() {
+        for (credits, expected): (CodexCreditBalance, String) in [
+            (.amount(12), "12 积分"), (.available, "有可用积分"), (.unlimited, "积分不限额"),
+            (.noCredits, "0"), (.amount(0), "0"), (.unavailable, "—")
+        ] {
+            var wallet = snapshot("codex", "GPT", groups: [])
+            wallet.accountCredits = .codex(credits)
+            let projection = MenuBarQuotaModel.projection(snapshots: [wallet], settings: nil, todaySummary: .empty)
+            XCTAssertTrue(projection.cells.isEmpty)
+            XCTAssertEqual(projection.accountReadouts.first?.value, expected)
+        }
+        let hidden = ProviderConfigOverride(providerId: "codex", enabled: true, displayName: nil, menuRank: nil,
+                                           showInMenuBar: false, showInCharts: nil)
+        var exhausted = twoWindowSnapshot("codex", "GPT", shortRemaining: 0, longRemaining: 55)
+        exhausted.accountCredits = .codex(.amount(9))
+        XCTAssertTrue(MenuBarQuotaModel.projection(snapshots: [exhausted], settings: settings(pinnedId: "codex", overrides: [hidden]),
+                                                   todaySummary: .empty).entries.isEmpty)
+        XCTAssertEqual(MenuBarQuotaModel.projection(snapshots: [exhausted], settings: nil, todaySummary: .empty).accountReadouts.first?.value, "9 积分")
+    }
+
+    func testCodexReportedQuotaWithoutDurationStillPrecedesCredits() throws {
+        let data = Data(#"{"rateLimits":{"primary":{"usedPercent":40},"credits":{"balance":"9"}}}"#.utf8)
+        let snapshot = try CodexUsageParser.parse(data: data, providerId: "codex", displayName: "Codex")
+        let projection = MenuBarQuotaModel.projection(snapshots: [snapshot], settings: nil, todaySummary: .empty)
+        XCTAssertEqual(projection.accessibilityTitle, "Codex 额度 60%")
+        XCTAssertTrue(projection.accountReadouts.isEmpty)
+    }
+
+    func testLegacyClaudePinKeepsPrepaidMoneySeparateFromWindows() throws {
+        var claude = twoWindowSnapshot(shortRemaining: 0, longRemaining: 55)
+        let prepaid = try XCTUnwrap(ClaudeCreditAmount(minorUnits: 1_200, currency: "USD"))
+        claude.accountCredits = .claude(prepaid: prepaid, extraUsage: nil)
+        for style in MenuBarStyleId.allCases {
+            let shown = MenuBarQuotaModel.projection(snapshots: [claude], settings: settings(style: style, pinnedId: "claude-code"), todaySummary: .empty)
+            XCTAssertEqual(shown.pinnedBalance?.value, prepaid.displayText)
+            XCTAssertEqual(shown.cells.count, 1)
+            XCTAssertTrue(shown.accountReadouts.isEmpty)
+            XCTAssertEqual(shown.showsBalanceInline, !shown.usesAggregateStyle)
+        }
     }
 
     func testProjectionPreservesWhitespaceSeparatedCustomDisplayName() {

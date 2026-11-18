@@ -16,7 +16,7 @@ Codex reset cards show the remaining days, hours, or minutes. An opt-in setting 
 
 ### Menu bar
 
-- **Account balances** appear beside the provider name when the provider confirms available credits or prepaid funds. Hover over Codex credits to see the full precision. Claude Code shows prepaid funds in the account currency and expands to show reported monthly extra spend and its cap. Hover over a quota warning to see which window is affected, a provider error, or the age of the data.
+- **Account balances** appear beside the provider name when the provider confirms available credits or prepaid funds. The macOS menu bar shows Codex plan quota first, then available credits when a primary window runs out, and 0 when both are exhausted. Hover over Codex credits to see the full precision. Claude Code shows prepaid funds in the account currency and expands to show reported monthly extra spend and its cap. Hover over a quota warning to see which window is affected, a provider error, or the age of the data.
 
 - **Multi-provider subscription quotas**: remaining % for 5-hour / 7-day windows, with pace-aware alert colors (green = healthy, yellow = burning fast, red = exhausted)
 - **16 switchable styles**: concentric rings, bars, capsules, dot grid, sentinel, stacked deck… swap whenever you're bored
@@ -78,7 +78,7 @@ Codex reset cards show the remaining days, hours, or minutes. An opt-in setting 
     └─ Reads the same SQLite, event-driven refresh
 ```
 
-- **Cost**: a daily GitHub Action generates and validates the LiteLLM pricing snapshot; the app downloads and atomically caches it every 24 hours and falls back to its previous or bundled snapshot on failure. Local calculations support multiple context-length price tiers and preserve unknown prices; see the [pricing contract](docs/pricing.md)
+- **Cost**: a daily GitHub Action generates and validates the LiteLLM pricing snapshot; the app checks the checksum hourly and downloads and atomically replaces the cache when prices change and falls back to its previous or bundled snapshot on failure. Local calculations support multiple context-length price tiers and preserve unknown prices; see the [pricing contract](docs/pricing.md)
 - **One source of truth**: menu bar "today", popover, and every main-window page all derive from the same message-level event table (`usage_events`)
 
 ## Install

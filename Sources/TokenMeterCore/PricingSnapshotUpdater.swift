@@ -18,7 +18,7 @@ public enum PricingSnapshotUpdater {
         string: "https://github.com/luweiCN/token-meter/releases/download/pricing-data/litellm-pricing-v\(PricingSnapshot.currentSchemaVersion).json.sha256"
     )!
     static let lastSuccessfulCheckKey = "pricingSnapshotLastSuccessfulCheckAt.v\(PricingSnapshot.currentSchemaVersion)"
-    static let checkInterval: TimeInterval = 24 * 60 * 60
+    static let checkInterval: TimeInterval = 60 * 60
     static let maximumSnapshotBytes = 10 * 1_024 * 1_024
     public static let minimumRemoteModelCount = 300
 
@@ -40,7 +40,7 @@ public enum PricingSnapshotUpdater {
         return max(0, checkInterval - elapsed)
     }
 
-    /// 失败不更新节流时间：应用后续的 6h 定时器会再试，但现有缓存/随包快照始终可用。
+    /// 只有成功核验当前快照后才开始下一轮计时。
     public static func refreshIfDue(
         defaults: UserDefaults = .standard,
         session: URLSession = .shared,
@@ -49,13 +49,22 @@ public enum PricingSnapshotUpdater {
         minimumModelCount: Int = minimumRemoteModelCount
     ) async -> PricingSnapshotUpdateOutcome {
         let lastCheck = defaults.object(forKey: lastSuccessfulCheckKey) as? Date
-        guard shouldCheck(lastSuccessfulAt: lastCheck, now: now) else { return .notDue }
+        guard shouldCheck(lastSuccessfulAt: lastCheck, now: now) || !FileManager.default.fileExists(atPath: cacheURL.path)
+        else { return .notDue }
 
         guard let checksumData = await download(checksumURL, session: session, maximumBytes: 4_096),
-              let snapshotData = await download(snapshotURL, session: session, maximumBytes: maximumSnapshotBytes) else {
+              let expected = parseChecksum(checksumData) else {
             return .failed
         }
 
+        if let cached = try? Data(contentsOf: cacheURL, options: .mappedIfSafe),
+           (try? validate(cached, checksum: expected, minimumModelCount: minimumModelCount)) != nil {
+            defaults.set(now, forKey: lastSuccessfulCheckKey)
+            return .unchanged
+        }
+        guard let snapshotData = await download(snapshotURL, session: session, maximumBytes: maximumSnapshotBytes) else {
+            return .failed
+        }
         do {
             let changed = try validateAndStore(
                 snapshotData: snapshotData,
@@ -78,17 +87,10 @@ public enum PricingSnapshotUpdater {
         cacheURL: URL,
         minimumModelCount: Int = minimumRemoteModelCount
     ) throws -> Bool {
-        guard snapshotData.count <= maximumSnapshotBytes,
-              let expected = parseChecksum(checksumData),
-              expected == sha256Hex(snapshotData) else {
+        guard let expected = parseChecksum(checksumData) else {
             throw PricingSnapshotUpdateError.checksumMismatch
         }
-
-        let snapshot = try PricingSnapshot.decode(snapshotData)
-        try snapshot.validate(minimumModelCount: minimumModelCount)
-        guard snapshot.source == "litellm" else {
-            throw PricingSnapshotUpdateError.unexpectedSource
-        }
+        try validate(snapshotData, checksum: expected, minimumModelCount: minimumModelCount)
 
         if (try? Data(contentsOf: cacheURL)) == snapshotData {
             return false
@@ -99,6 +101,15 @@ public enum PricingSnapshotUpdater {
         )
         try snapshotData.write(to: cacheURL, options: .atomic)
         return true
+    }
+
+    private static func validate(_ data: Data, checksum: String, minimumModelCount: Int) throws {
+        guard data.count <= maximumSnapshotBytes, sha256Hex(data) == checksum else {
+            throw PricingSnapshotUpdateError.checksumMismatch
+        }
+        let snapshot = try PricingSnapshot.decode(data)
+        try snapshot.validate(minimumModelCount: minimumModelCount)
+        guard snapshot.source == "litellm" else { throw PricingSnapshotUpdateError.unexpectedSource }
     }
 
     static func parseChecksum(_ data: Data) -> String? {

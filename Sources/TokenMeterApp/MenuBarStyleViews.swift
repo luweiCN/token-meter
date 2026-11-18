@@ -157,7 +157,7 @@ struct CellNumbersView: View {
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 1.5)
                 }
-                Text("\(window.roundedPercent)")
+                Text(verbatim: window.numberText)
                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                     .monospacedDigit()
                     .foregroundStyle(MenuBarToneColor.color(window.tone))

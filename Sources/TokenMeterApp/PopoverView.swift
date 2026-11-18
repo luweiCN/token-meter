@@ -1273,7 +1273,7 @@ struct QuotaDisplayModel {
         let labeledMetrics = snapshot.groups.flatMap { group in
             group.items.map { metric -> (label: String, metric: UsageMetric, isPrimary: Bool) in
                 let window = Self.shortWindowLabel(metric)
-                let isPrimary = group.title == snapshot.displayName
+                let isPrimary = snapshot.providerId == "codex" ? group.id == "codex" : group.title == snapshot.displayName
                 let label = isPrimary ? window : "\(group.title) \(window)"
                 return (label, metric, isPrimary)
             }
@@ -1327,7 +1327,7 @@ struct QuotaDisplayModel {
             .filter { entry in
                 entry.isPrimary
                     && entry.metric.kind == .quota
-                    && entry.metric.windowDurationMinutes != nil
+                    && (entry.metric.windowDurationMinutes != nil || snapshot.providerId == "codex")
             }
             .enumerated()
             .sorted { lhs, rhs in
