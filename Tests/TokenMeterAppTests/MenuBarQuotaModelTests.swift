@@ -155,16 +155,21 @@ final class MenuBarQuotaModelTests: XCTestCase {
     }
 
     func testPinnedBalanceAcrossStylesAndMissingWindows() throws {
-        let json = Data(#"{"rateLimits":{"primary":{"usedPercent":20,"windowDurationMins":300},"credits":{"balance":"0"}}}"#.utf8)
+        let json = Data(#"{"rateLimits":{"primary":{"usedPercent":20,"windowDurationMins":300},"credits":{"balance":"12"}}}"#.utf8)
         let codex = try CodexUsageParser.parse(data: json, providerId: "codex", displayName: "Codex").renamed(to: "工作")
         for style in MenuBarStyleId.allCases {
             let shown = MenuBarQuotaModel.projection(snapshots: [codex], settings: settings(style: style, pinnedId: "codex"), todaySummary: .empty)
-            XCTAssertEqual(shown.pinnedBalance?.value, "0 积分")
+            XCTAssertEqual(shown.pinnedBalance?.value, "12 积分")
             XCTAssertEqual(shown.pinnedBalance?.providerName, "工作")
             XCTAssertEqual(shown.showsBalanceInline, ![.grid, .strip, .sentinel, .monogram, .tagnum, .deck2].contains(style))
         }
         let noPin = MenuBarQuotaModel.projection(snapshots: [codex], settings: nil, todaySummary: .empty)
         XCTAssertNil(noPin.pinnedBalance)
+        var empty = codex
+        empty.accountCredits = .codex(.amount(0))
+        let noBalance = MenuBarQuotaModel.projection(snapshots: [empty], settings: settings(pinnedId: "codex"), todaySummary: .empty)
+        XCTAssertNil(noBalance.pinnedBalance)
+        XCTAssertEqual(noBalance.cells.count, 1)
         let walletOnly = try CodexUsageParser.parse(data: Data(#"{"rateLimits":{"credits":{"unlimited":true}}}"#.utf8), providerId: "codex", displayName: "Codex")
         let noWindows = MenuBarQuotaModel.projection(snapshots: [walletOnly], settings: settings(pinnedId: "codex"), todaySummary: .empty)
         XCTAssertEqual(noWindows.pinnedBalance?.value, "无限额")

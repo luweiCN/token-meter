@@ -7,37 +7,33 @@ extension ClaudeCreditAmount {
     }
 }
 
+struct AccountBalanceDisplay {
+    let label: String
+    let compact: String
+    let full: String
+    var help: String { "\(label) \(full)" }
+}
+
 extension AccountCredits {
-    var balanceLabel: String {
+    var displayBalance: AccountBalanceDisplay? {
         switch self {
-        case .codex: return "账户余额"
-        case .claude: return "预付余额"
-        }
-    }
-
-    var balanceText: String { formattedBalance(precision: .fractionLength(0...38)) }
-
-    var compactBalanceText: String {
-        switch self {
-        case .codex(.amount(let amount)) where amount != 0 && abs(amount) < 0.01:
-            return formattedBalance(precision: .significantDigits(1...2))
-        case .codex(.unlimited): return "积分不限额"
-        case .codex(.unavailable): return "积分暂不可用"
-        case .claude(let prepaid, _):
-            return prepaid.map { "预付 \($0.displayText)" } ?? "预付余额暂不可用"
-        default: return formattedBalance(precision: .fractionLength(0...2))
-        }
-    }
-
-    private func formattedBalance(precision: NumberFormatStyleConfiguration.Precision) -> String {
-        switch self {
-        case .codex(.amount(let number)):
-            return number.formatted(.number.precision(precision).locale(Locale(identifier: "zh_CN"))) + " 积分"
-        case .codex(.unlimited): return "无限额"
-        case .codex(.available): return "有可用积分"
-        case .codex(.noCredits): return "无可用积分"
-        case .codex(.unavailable): return "暂不可用"
-        case .claude(let prepaid, _): return prepaid?.displayText ?? "暂不可用"
+        case .codex(.amount(let amount)) where amount > 0:
+            let style = Decimal.FormatStyle.number.locale(Locale(identifier: "zh_CN"))
+            let precision: NumberFormatStyleConfiguration.Precision = amount < 0.01
+                ? .significantDigits(1...2) : .fractionLength(0...2)
+            return AccountBalanceDisplay(
+                label: "账户余额", compact: amount.formatted(style.precision(precision)) + " 积分",
+                full: amount.formatted(style.precision(.fractionLength(0...38))) + " 积分"
+            )
+        case .codex(.unlimited):
+            return AccountBalanceDisplay(label: "账户余额", compact: "积分不限额", full: "无限额")
+        case .codex(.available):
+            return AccountBalanceDisplay(label: "账户余额", compact: "有可用积分", full: "有可用积分")
+        case .claude(let prepaid?, _) where prepaid.value > 0:
+            let amount = prepaid.displayText
+            return AccountBalanceDisplay(label: "预付余额", compact: "预付 \(amount)", full: amount)
+        case .codex(.amount), .codex(.noCredits), .codex(.unavailable), .claude:
+            return nil
         }
     }
 }

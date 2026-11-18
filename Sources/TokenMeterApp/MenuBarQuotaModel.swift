@@ -269,8 +269,8 @@ enum MenuBarQuotaModel {
         let visiblePeakTiers = appearance.showPeakBadge ? peakTiers : []
         let pinnedBalance = snapshots.first { $0.providerId == appearance.pinnedBalanceProviderId }
             .flatMap { snapshot in
-                snapshot.accountCredits.map {
-                    MenuBarProjection.PinnedBalance(providerId: snapshot.providerId, providerName: snapshot.displayName, value: $0.balanceText)
+                snapshot.accountCredits?.displayBalance.map {
+                    MenuBarProjection.PinnedBalance(providerId: snapshot.providerId, providerName: snapshot.displayName, value: $0.full)
                 }
             }
 

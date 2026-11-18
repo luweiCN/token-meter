@@ -16,7 +16,7 @@ Codex reset cards show the remaining days, hours, or minutes. An opt-in setting 
 
 ### Menu bar
 
-- **Account balances** appear beside the provider name, even when the card is collapsed. Hover over Codex credits to see the full precision. Claude Code shows prepaid funds in the account currency and expands to show reported monthly extra spend and its cap. Unavailable balances are labeled as such.
+- **Account balances** appear beside the provider name when the provider confirms available credits or prepaid funds. Hover over Codex credits to see the full precision. Claude Code shows prepaid funds in the account currency and expands to show reported monthly extra spend and its cap. Hover over a quota warning to see which window is affected, a provider error, or the age of the data.
 
 - **Multi-provider subscription quotas**: remaining % for 5-hour / 7-day windows, with pace-aware alert colors (green = healthy, yellow = burning fast, red = exhausted)
 - **16 switchable styles**: concentric rings, bars, capsules, dot grid, sentinel, stacked deck… swap whenever you're bored

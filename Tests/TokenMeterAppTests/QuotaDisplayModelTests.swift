@@ -6,13 +6,43 @@ import XCTest
 final class QuotaDisplayModelTests: XCTestCase {
     func testCompactBalanceKeepsTheExactValueAndDistinguishesSmallAmountsFromZero() throws {
         let amount = try XCTUnwrap(Decimal(string: "12345.67891234"))
-        let balance = AccountCredits.codex(.amount(amount))
-        XCTAssertEqual(balance.compactBalanceText, "12,345.68 积分")
-        XCTAssertEqual(balance.balanceText, "12,345.67891234 积分")
-        XCTAssertEqual(AccountCredits.codex(.amount(0)).compactBalanceText, "0 积分")
-        XCTAssertEqual(AccountCredits.codex(.amount(0.003)).compactBalanceText, "0.003 积分")
-        XCTAssertEqual(AccountCredits.codex(.unavailable).compactBalanceText, "积分暂不可用")
-        XCTAssertEqual(AccountCredits.claude(prepaid: nil, extraUsage: nil).compactBalanceText, "预付余额暂不可用")
+        let balance = try XCTUnwrap(AccountCredits.codex(.amount(amount)).displayBalance)
+        XCTAssertEqual(balance.compact, "12,345.68 积分")
+        XCTAssertEqual(balance.full, "12,345.67891234 积分")
+        XCTAssertEqual(AccountCredits.codex(.amount(0.003)).displayBalance?.compact, "0.003 积分")
+        XCTAssertEqual(AccountCredits.codex(.unlimited).displayBalance?.compact, "积分不限额")
+        XCTAssertEqual(AccountCredits.codex(.available).displayBalance?.compact, "有可用积分")
+        for absent in [CodexCreditBalance.amount(0), .amount(-1), .unavailable, .noCredits] {
+            XCTAssertNil(AccountCredits.codex(absent).displayBalance)
+        }
+        let zero = ClaudeCreditAmount(minorUnits: 0, currency: "USD")
+        let extra = ClaudeExtraUsage(enabled: true, used: zero, monthlyLimit: zero)
+        XCTAssertNil(AccountCredits.claude(prepaid: zero, extraUsage: extra).displayBalance)
+        XCTAssertNil(AccountCredits.claude(prepaid: nil, extraUsage: extra).displayBalance)
+        let prepaid = try XCTUnwrap(ClaudeCreditAmount(minorUnits: 1234, currency: "USD"))
+        XCTAssertEqual(AccountCredits.claude(prepaid: prepaid, extraUsage: nil).displayBalance?.full, prepaid.displayText)
+    }
+
+    func testWarningHelpMatchesTheWindowOrProviderThatTriggeredIt() {
+        let now = Date()
+        func help(_ used: Double, age: TimeInterval = 0, status: UsageStatus = .ok, message: String? = nil) -> String? {
+            let snapshot = ProviderUsageSnapshot(
+                providerId: "codex", displayName: "GPT", status: status, fetchedAt: now.addingTimeInterval(-age),
+                summary: nil, message: message, groups: [
+                    UsageGroup(id: "codex", title: "GPT", subtitle: nil,
+                               items: [metric(id: "week", used: used, windowMinutes: 10_080)])
+                ]
+            )
+            return QuotaDisplayModel(snapshot: snapshot, now: now).statusHelp
+        }
+        XCTAssertNil(help(0))
+        XCTAssertEqual(help(100), "7d 额度已用尽")
+        XCTAssertEqual(help(99.6), "7d 额度剩余不足 1%")
+        XCTAssertEqual(help(100, status: .warning, message: "  "), "7d 额度已用尽")
+        XCTAssertEqual(help(0, age: 3_600), "当前显示 1 小时前的额度数据")
+        XCTAssertEqual(help(100, age: 3_600, status: .error, message: "未登录 Codex"),
+                       "未登录 Codex\n当前显示 1 小时前的额度数据")
+        XCTAssertEqual(help(0, status: .error), "GPT 额度查询失败")
     }
 
     func testCardWithOnlyABalanceExpandsWhenThereIsAdditionalCreditDetail() {

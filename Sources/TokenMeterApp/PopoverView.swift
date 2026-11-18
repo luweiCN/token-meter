@@ -1278,20 +1278,34 @@ struct QuotaDisplayModel {
                 return (label, metric, isPrimary)
             }
         }
-        let metrics = labeledMetrics.map(\.metric)
         let warnStatuses: [UsageStatus] = [.warning, .error]
-        isWarn = snapshot.status == .warning || snapshot.status == .error
-            || metrics.contains { warnStatuses.contains($0.status) || ($0.usedPercent ?? 0) >= 99.5 }
+        let metricWarnings = labeledMetrics.compactMap { Self.warning(for: $0.metric, label: $0.label) }
+        isWarn = warnStatuses.contains(snapshot.status) || !metricWarnings.isEmpty
         let loginHint = [snapshot.message, snapshot.summary]
             .compactMap { $0?.lowercased() }
             .joined(separator: " ")
         needsLogin = snapshot.status == .error && (
             loginHint.contains("未登录") || loginHint.contains("grok login")
         )
-        statusHelp = needsLogin ? Self.grokLoginHelp : snapshot.message
-
         let staleSeconds = now.timeIntervalSince(snapshot.fetchedAt)
         staleMinutes = staleSeconds >= 600 ? Int(staleSeconds / 60) : nil
+        let message = snapshot.message?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let reason: String?
+        if needsLogin && (snapshot.providerId == "grok" || loginHint.contains("grok login")) {
+            reason = Self.grokLoginHelp
+        } else if warnStatuses.contains(snapshot.status), let message, !message.isEmpty {
+            reason = message
+        } else if !metricWarnings.isEmpty {
+            reason = metricWarnings.joined(separator: "\n")
+        } else if isWarn {
+            let summary = snapshot.summary?.trimmingCharacters(in: .whitespacesAndNewlines)
+            reason = summary.flatMap { $0.isEmpty ? nil : $0 }
+                ?? (snapshot.status == .error ? "\(name) 额度查询失败" : "\(name) 返回了额度告警")
+        } else {
+            reason = nil
+        }
+        let reasons = [reason, staleMinutes.map(Self.staleDataText)].compactMap { $0 }
+        statusHelp = reasons.isEmpty ? nil : reasons.joined(separator: "\n")
 
         // 环＝主组（组名与 provider 同名）里【带窗口时长且 ≤7 天】的 quota，按时长升序
         // 取至多两只（短窗优先当环：5h 排在 7d 前；一行放不下第三只环）。两条硬语义
@@ -1396,6 +1410,29 @@ struct QuotaDisplayModel {
         min(100, max(0, metric.remainingPercent ?? (100 - (metric.usedPercent ?? 0))))
     }
 
+    private static func warning(for metric: UsageMetric, label: String) -> String? {
+        let detail = metric.detail?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if metric.status == .error {
+            return detail.flatMap { $0.isEmpty ? nil : "\(label)：\($0)" } ?? "\(label) 额度读取失败"
+        }
+        let remaining = metric.remainingPercent ?? metric.usedPercent.map { 100 - $0 }
+        if let remaining, remaining <= 0.5 {
+            return remaining <= 0 ? "\(label) 额度已用尽" : "\(label) 额度剩余不足 1%"
+        }
+        guard metric.status == .warning else { return nil }
+        if let detail, !detail.isEmpty { return "\(label)：\(detail)" }
+        if let remaining { return "\(label) 额度告警，剩余 \(UsageFormatter.numberText(remaining))%" }
+        return "\(label) 额度告警"
+    }
+
+    static func staleDataText(minutes: Int) -> String {
+        let age: String
+        if minutes < 60 { age = "\(minutes) 分钟" }
+        else if minutes < 24 * 60 { age = "\(minutes / 60) 小时" }
+        else { age = "\(minutes / (24 * 60)) 天" }
+        return "当前显示 \(age)前的额度数据"
+    }
+
     /// 窗口标签压缩为稿上的「5h / 7d」形态；识别不了就用原 label。
     static func shortWindowLabel(_ metric: UsageMetric) -> String {
         if let minutes = metric.windowDurationMinutes {
@@ -1438,8 +1475,8 @@ private struct QuotaGroupView: View {
                     PanelDivider()
 
                     VStack(alignment: .leading, spacing: 8) {
-                        if let minutes = model.staleMinutes {
-                            StaleCard(minutes: minutes, onRetry: onRetry)
+                        if let minutes = model.staleMinutes, let help = model.statusHelp {
+                            StaleCard(minutes: minutes, help: help, onRetry: onRetry)
                         }
 
                         if let message = model.alertMessage {
@@ -1508,14 +1545,15 @@ private struct QuotaGroupView: View {
                 .frame(width: 22, height: 22)
                 .background(RoundedRectangle(cornerRadius: 6).fill(theme.surface2))
 
-            if let credits = snapshot.accountCredits {
-                let balance = Text(verbatim: credits.compactBalanceText)
+            if let credits = snapshot.accountCredits?.displayBalance {
+                let balance = Text(verbatim: credits.compact)
                     .font(.system(size: 11))
                     .monospacedDigit()
                     .foregroundStyle(theme.fg2)
                     .lineLimit(1)
-                    .help("\(credits.balanceLabel) \(credits.balanceText)")
-                    .accessibilityLabel(Text("\(credits.balanceLabel) \(credits.balanceText)"))
+                    .background(QuotaToolTip(text: credits.help).accessibilityHidden(true))
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(Text(verbatim: credits.help))
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 7) {
                         providerName
@@ -1565,18 +1603,41 @@ private struct QuotaGroupView: View {
                 .foregroundStyle(theme.fg)
                 .lineLimit(1)
 
-            if model.needsLogin {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.danger)
-                    .help(model.statusHelp ?? QuotaDisplayModel.grokLoginHelp)
-                    .accessibilityLabel("需要重新登录")
-            } else if model.isWarn || model.staleMinutes != nil {
-                WarnTriangle()
-                    .frame(width: 14, height: 14)
-                    .help(model.statusHelp ?? "")
+            if let help = model.statusHelp {
+                Group {
+                    if model.needsLogin {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(theme.danger)
+                    } else {
+                        WarnTriangle()
+                    }
+                }
+                .frame(width: 16, height: 18)
+                .background(QuotaToolTip(text: help))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(verbatim: help))
             }
         }
+    }
+}
+
+/// 独立的原生提示区域让同一张可点击卡头里的告警和余额分别响应悬停。
+private struct QuotaToolTip: NSViewRepresentable {
+    let text: String
+
+    final class View: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    func makeNSView(context: Context) -> View {
+        let view = View()
+        view.setAccessibilityElement(false)
+        return view
+    }
+
+    func updateNSView(_ view: View, context: Context) {
+        if view.toolTip != text { view.toolTip = text }
     }
 }
 
@@ -1621,6 +1682,7 @@ private struct AlertCard: View {
             WarnTriangle()
                 .frame(width: 13, height: 13)
                 .padding(.top, 1)
+                .background(QuotaToolTip(text: message))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("额度提醒")
@@ -1649,15 +1711,9 @@ private struct AlertCard: View {
 
 private struct StaleCard: View {
     let minutes: Int
+    let help: String
     let onRetry: () -> Void
     @Environment(\.mbTheme) private var theme
-
-    /// 「11,579 分钟前」没法读——超过一小时换算成时/天。
-    private var ageText: String {
-        if minutes < 60 { return "\(minutes) 分钟" }
-        if minutes < 24 * 60 { return "\(minutes / 60) 小时" }
-        return "\(minutes / (24 * 60)) 天"
-    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
@@ -1665,12 +1721,14 @@ private struct StaleCard: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(theme.danger)
                 .padding(.top, 1)
+                .background(QuotaToolTip(text: help))
+                .accessibilityLabel(Text(verbatim: help))
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("额度刷新失败")
+                Text("额度数据待更新")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(theme.danger)
-                Text("以下为 \(ageText)前的数据")
+                Text(QuotaDisplayModel.staleDataText(minutes: minutes))
                     .font(.system(size: 11.5))
                     .foregroundStyle(theme.fg2)
                     .lineSpacing(2)
