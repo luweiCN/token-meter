@@ -16,6 +16,7 @@ export function formatCount(value: number): string {
 /// dailyScale：单日范围的数字永远不升到 B——十亿级写成「2398.5M」，每涨一百万
 /// 都看得见（1 位小数的 B 会把百万级变化吞掉）。多天聚合（周/月/总计）才用 B。
 export function formatTokens(value: number, dailyScale = false): string {
+  if (!dailyScale && value >= 1_000_000_000_000) return `${(value / 1_000_000_000_000).toFixed(2)}T`;
   if (value >= 1_000_000_000) {
     if (!dailyScale) return `${(value / 1_000_000_000).toFixed(2)}B`;
     return `${(value / 1_000_000).toFixed(1)}M`;

@@ -19,6 +19,7 @@ public struct MenuBarTodaySummary: Equatable {
     }
 
     public struct ModelToday: Equatable {
+        package var cacheUsage = PromptCacheUsage()
         public let model: String
         public let tokens: Int64
         public let costUsdMicros: Int64
@@ -39,6 +40,10 @@ public struct MenuBarTodaySummary: Equatable {
     /// 今日按模型（model_canonical，跨 provider 合并），tokens 降序。
     /// 不带会话数——一个会话可以用多个模型，按模型数会话会重复计（既有裁定）。
     public let perModel: [ModelToday]
+
+    package var cacheUsage: PromptCacheUsage {
+        perModel.reduce(PromptCacheUsage()) { $0 + $1.cacheUsage }
+    }
 
     public init(
         tokens: Int64,
@@ -89,7 +94,7 @@ public enum MenuBarTodaySummaryRepository {
         // 口径与 Electron 热力图日详情（overviewRepository.dayModelBreakdown）一致。
         let modelRows = (try? database.query(
             """
-            SELECT model_canonical AS model,
+            SELECT model_canonical AS model, \(PromptCacheUsage.aggregateColumns),
                    coalesce(sum(tokens_input + tokens_output + tokens_cache_read
                                 + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
                    coalesce(sum(cost_usd_micros), 0) AS cost
@@ -142,7 +147,9 @@ public enum MenuBarTodaySummaryRepository {
 
         let perModel: [MenuBarTodaySummary.ModelToday] = modelRows.compactMap { row in
             guard let model = row.string("model") else { return nil }
-            return .init(model: model, tokens: row.int("tokens") ?? 0, costUsdMicros: row.int("cost") ?? 0)
+            var result = MenuBarTodaySummary.ModelToday(model: model, tokens: row.int("tokens") ?? 0, costUsdMicros: row.int("cost") ?? 0)
+            result.cacheUsage = PromptCacheUsage(row: row)
+            return result
         }
 
         let totalSessions = sessionsByProvider.values.reduce(0, +)

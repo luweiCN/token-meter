@@ -3,6 +3,7 @@ import Foundation
 /// 单个统计桶：token 与花费口径和 Electron 概览页 kpis 完全一致
 /// （tokens 不含 reasoning；成本含 unknown 条数）。
 public struct OverviewStatsBucket: Equatable {
+    package var cacheUsage = PromptCacheUsage()
     public let tokens: Int64
     public let costUsdMicros: Int64
     public let costUnknownEvents: Int64
@@ -54,7 +55,8 @@ public enum OverviewStatsRepository {
         let weekStart = weekStartRow?.string("d") ?? today
 
         let select = """
-            SELECT coalesce(sum(tokens_input + tokens_output + tokens_cache_read
+            SELECT \(PromptCacheUsage.aggregateColumns),
+                   coalesce(sum(tokens_input + tokens_output + tokens_cache_read
                                 + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
                    coalesce(sum(cost_usd_micros), 0) AS cost,
                    coalesce(sum(cost_unknown_events), 0) AS unknown
@@ -63,11 +65,13 @@ public enum OverviewStatsRepository {
 
         func bucket(_ sql: String, _ params: [SQLiteValue]) -> OverviewStatsBucket {
             guard let row = (try? database.query(sql, params))?.first else { return .zero }
-            return OverviewStatsBucket(
+            var result = OverviewStatsBucket(
                 tokens: row.int("tokens") ?? 0,
                 costUsdMicros: row.int("cost") ?? 0,
                 costUnknownEvents: row.int("unknown") ?? 0
             )
+            result.cacheUsage = PromptCacheUsage(row: row)
+            return result
         }
 
         let total = bucket(select, [])

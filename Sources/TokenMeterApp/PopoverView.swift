@@ -276,13 +276,11 @@ struct PopoverView: View {
                     }
 
                     if !store.todaySummary.perModel.isEmpty {
-                        SectionBlock(title: "模型") {
-                            ModelListBlock(
-                                models: store.todaySummary.perModel,
-                                displayCurrency: store.displayCurrency,
-                                usdToCny: store.exchangeRate.usdToCny
-                            )
-                        }
+                        ModelListBlock(
+                            summary: store.todaySummary,
+                            displayCurrency: store.displayCurrency,
+                            usdToCny: store.exchangeRate.usdToCny
+                        )
                         PanelDivider()
                     }
 
@@ -686,6 +684,13 @@ private struct MonthHeatmapView: View {
                     Text("日用量档位 · \(band.rangeLabel)")
                         .font(.system(size: 10))
                         .foregroundStyle(theme.fg2)
+                    Spacer(minLength: 4)
+                    let cache = activity?.cacheUsage ?? PromptCacheUsage()
+                    Text("缓存命中 \(cache.percentText)")
+                        .font(.system(size: 10))
+                        .monospacedDigit()
+                        .foregroundStyle(theme.fg2)
+                        .accessibilityLabel(cache.detail)
                 }
 
                 Rectangle().fill(theme.border).frame(height: 1)
@@ -696,20 +701,30 @@ private struct MonthHeatmapView: View {
                         .foregroundStyle(theme.muted)
                         .padding(.vertical, 4)
                 } else {
-                    VStack(alignment: .leading, spacing: 5) {
+                    Grid(alignment: .trailing, horizontalSpacing: 6, verticalSpacing: 4) {
+                        GridRow {
+                            Text("模型").frame(maxWidth: .infinity, alignment: .leading)
+                            Text("Token")
+                            Text("花费")
+                            Text("命中率")
+                        }
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(theme.muted)
+
                         ForEach(hoveredBreakdown) { row in
-                            HStack(spacing: 8) {
-                                Text(row.model)
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(theme.muted)
+                            GridRow {
+                                Text(verbatim: row.model)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
-                                Spacer(minLength: 8)
-                                Text("\(UsageFormatter.compactTokens(row.tokens)) · \(MenuBarNumberFormat.money(row.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny))")
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(theme.fg2)
-                                    .fixedSize()
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Text(verbatim: UsageFormatter.compactTokens(row.tokens))
+                                Text(MenuBarNumberFormat.money(row.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny))
+                                Text(verbatim: row.cacheUsage.percentText)
+                                    .accessibilityLabel(row.cacheUsage.detail)
                             }
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .monospacedDigit()
+                            .foregroundStyle(theme.fg2)
                         }
                     }
                 }
@@ -813,22 +828,34 @@ private struct OverviewTilesView: View {
         title: String,
         bucket: OverviewStatsBucket
     ) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(theme.muted)
-            Text(UsageFormatter.compactTokensAggregated(bucket.tokens))
+        let amount = PopoverTokenAmount(tokens: bucket.tokens)
+        let cache = bucket.cacheUsage
+        let details = [title, amount.detail, cache.detail].joined(separator: "\n")
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text(title).fontWeight(.semibold)
+                if amount.isPartial {
+                    Text("部分上报").font(.system(size: 9))
+                }
+            }
+            .font(.system(size: 10.5))
+            .foregroundStyle(theme.muted)
+            Text(verbatim: amount.aggregateText)
                 .font(.system(size: 16, weight: .bold, design: .monospaced))
                 .foregroundStyle(theme.fg)
                 .monospacedDigit()
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.85)
             Text(MenuBarNumberFormat.money(bucket.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny))
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundStyle(theme.fg2)
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+            Text("缓存命中 \(cache.percentText)")
+                .font(.system(size: 10))
+                .monospacedDigit()
+                .foregroundStyle(theme.fg2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
@@ -837,6 +864,9 @@ private struct OverviewTilesView: View {
             // 卡片轮廓用 1px 边框而不是阴影：深浅色两种模式下都稳定可见。
             RoundedRectangle(cornerRadius: 8).stroke(theme.fg.opacity(0.12), lineWidth: 1)
         )
+        .background(PopoverToolTip(text: details).accessibilityHidden(true))
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(Text(verbatim: details))
     }
 }
 
@@ -1128,11 +1158,9 @@ private struct ProviderRow: View {
 
 // MARK: - .sec 模型：今日按模型 Top5，可展开全部
 
-/// 今日按模型列表：默认只露用量前 5，超出时尾部一行「展开全部」。
-/// 面板高度在打开期间锁定（见 lockedHeight），展开增高由滚动区内部消化，
-/// 与订阅额度手风琴同款行为。弹窗每次打开重建视图 → 每次都回到收起态。
+/// 表格只折叠明细，合计始终包含当天的全部模型。
 private struct ModelListBlock: View {
-    let models: [MenuBarTodaySummary.ModelToday]
+    let summary: MenuBarTodaySummary
     let displayCurrency: DisplayCurrency
     let usdToCny: Double
     @Environment(\.mbTheme) private var theme
@@ -1141,9 +1169,31 @@ private struct ModelListBlock: View {
     private static let visibleCount = 5
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(expanded ? models : Array(models.prefix(Self.visibleCount)), id: \.model) { row in
-                ModelRow(row: row, displayCurrency: displayCurrency, usdToCny: usdToCny)
+        let models = summary.perModel
+        VStack(spacing: 2) {
+            Grid(alignment: .trailing, horizontalSpacing: 8, verticalSpacing: 8) {
+                GridRow {
+                    Text("今日模型")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text("Token")
+                    Text("花费")
+                    Text("缓存命中")
+                }
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(theme.muted)
+
+                ForEach(expanded ? models : Array(models.prefix(Self.visibleCount)), id: \.model) { row in
+                    modelRow(
+                        row.model, amount: PopoverTokenAmount(tokens: row.tokens),
+                        cost: row.costUsdMicros, cache: row.cacheUsage
+                    )
+                }
+
+                Rectangle().fill(theme.border).frame(height: 1).gridCellUnsizedAxes(.horizontal)
+                modelRow(
+                    "今日合计", amount: PopoverTokenAmount(tokens: summary.tokens),
+                    cost: summary.costUsdMicros, cache: summary.cacheUsage
+                )
             }
 
             if models.count > Self.visibleCount {
@@ -1167,41 +1217,34 @@ private struct ModelListBlock: View {
                 .focusable(false)
             }
         }
+        .padding(EdgeInsets(top: 10, leading: 16, bottom: 12, trailing: 16))
     }
-}
 
-/// 模型一行：mono 模型名（与主窗口热力图日详情同款）+ tokens + 金额。
-/// 不显示会话数——按模型数会话会重复计（一个会话可用多个模型，既有裁定）。
-private struct ModelRow: View {
-    let row: MenuBarTodaySummary.ModelToday
-    let displayCurrency: DisplayCurrency
-    let usdToCny: Double
-    @Environment(\.mbTheme) private var theme
-
-    var body: some View {
-        HStack(spacing: 9) {
-            Text(row.model)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(theme.fg)
-                .lineLimit(1)
-                .truncationMode(.middle)
-
-            Spacer(minLength: 8)
-
-            Text(MenuBarNumberFormat.tokens(row.tokens))
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(theme.fg)
-                .monospacedDigit()
-                .rollingNumber(value: row.tokens)
-
-            Text(MenuBarNumberFormat.money(row.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny))
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(theme.muted)
-                .monospacedDigit()
-                .fixedSize()
-                .rollingNumber(value: row.costUsdMicros)
+    private func modelRow(_ name: String, amount: PopoverTokenAmount, cost: Int64, cache: PromptCacheUsage) -> some View {
+        GridRow {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: name)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if amount.isPartial {
+                    Text("部分上报").font(.system(size: 9)).foregroundStyle(theme.muted)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help(name)
+            Text(verbatim: amount.dailyText)
+                .rollingNumber(value: amount.tokens)
+                .help(amount.detail)
+            Text(MenuBarNumberFormat.money(cost, currency: displayCurrency, usdToCny: usdToCny))
+                .foregroundStyle(theme.fg2)
+                .rollingNumber(value: cost)
+            Text(verbatim: cache.percentText)
+                .help(cache.detail)
+                .accessibilityLabel(Text(verbatim: cache.detail))
         }
-        .padding(.vertical, 5)
+        .font(.system(size: 11, design: .monospaced))
+        .monospacedDigit()
+        .foregroundStyle(theme.fg)
     }
 }
 
@@ -1551,7 +1594,7 @@ private struct QuotaGroupView: View {
                     .monospacedDigit()
                     .foregroundStyle(theme.fg2)
                     .lineLimit(1)
-                    .background(QuotaToolTip(text: credits.help).accessibilityHidden(true))
+                    .background(PopoverToolTip(text: credits.help).accessibilityHidden(true))
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(Text(verbatim: credits.help))
                 ViewThatFits(in: .horizontal) {
@@ -1614,7 +1657,7 @@ private struct QuotaGroupView: View {
                     }
                 }
                 .frame(width: 16, height: 18)
-                .background(QuotaToolTip(text: help))
+                .background(PopoverToolTip(text: help))
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(verbatim: help))
             }
@@ -1622,8 +1665,8 @@ private struct QuotaGroupView: View {
     }
 }
 
-/// 独立的原生提示区域让同一张可点击卡头里的告警和余额分别响应悬停。
-private struct QuotaToolTip: NSViewRepresentable {
+/// 原生提示区域可在菜单栏弹窗的按钮和统计卡内分别命中。
+private struct PopoverToolTip: NSViewRepresentable {
     let text: String
 
     final class View: NSView {
@@ -1682,7 +1725,7 @@ private struct AlertCard: View {
             WarnTriangle()
                 .frame(width: 13, height: 13)
                 .padding(.top, 1)
-                .background(QuotaToolTip(text: message))
+                .background(PopoverToolTip(text: message))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("额度提醒")
@@ -1721,7 +1764,7 @@ private struct StaleCard: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(theme.danger)
                 .padding(.top, 1)
-                .background(QuotaToolTip(text: help))
+                .background(PopoverToolTip(text: help))
                 .accessibilityLabel(Text(verbatim: help))
 
             VStack(alignment: .leading, spacing: 2) {

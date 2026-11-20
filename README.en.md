@@ -19,6 +19,7 @@ Codex reset cards show the remaining days, hours, or minutes. An opt-in setting 
 - **Account balances** appear beside the provider name when the provider confirms available credits or prepaid funds. The macOS menu bar shows Codex plan quota first, then available credits when a primary window runs out, and 0 when both are exhausted. Hover over Codex credits to see the full precision. Claude Code shows prepaid funds in the account currency and expands to show reported monthly extra spend and its cap. Hover over a quota warning to see which window is affected, a provider error, or the age of the data.
 
 - **Multi-provider subscription quotas**: remaining % for 5-hour / 7-day windows, with pace-aware alert colors (green = healthy, yellow = burning fast, red = exhausted)
+- **Prompt cache hit rate** is shown for each summary period, for today’s models and in calendar day details. Hover over a summary card to see exact token counts. [Metric definition](docs/month-heatmap.md)
 - **16 switchable styles**: concentric rings, bars, capsules, dot grid, sentinel, stacked deck… swap whenever you're bored
 - **Deep customization**: toggle brand name / glyph / numbers independently, per-provider window selection, today-usage tail (tokens / cost / off)
 - **Quota alerts**: system notification when usage crosses your threshold

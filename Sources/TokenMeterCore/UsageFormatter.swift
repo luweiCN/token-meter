@@ -23,6 +23,7 @@ public enum UsageFormatter {
     /// ≥10 亿用 B（两位小数），百万级保留两位小数——总 token 上百亿时不再挂一大串 M。
     public static func compactTokensAggregated(_ value: Int64) -> String {
         let v = Double(value)
+        if v >= 1_000_000_000_000 { return String(format: "%.2fT", v / 1_000_000_000_000) }
         if v >= 1_000_000_000 { return String(format: "%.2fB", v / 1_000_000_000) }
         if v >= 1_000_000 { return String(format: "%.2fM", v / 1_000_000) }
         if v >= 1_000 { return String(format: "%.2fK", v / 1_000) }

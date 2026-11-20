@@ -4,6 +4,7 @@ import { formatTokens, formatUsdMicros, setMoneyDisplay } from './format.js';
 
 describe('formatTokens', () => {
   it('uses K/M/B for aggregated (multi-day) values', () => {
+    expect(formatTokens(1_111_111_111_111)).toBe('1.11T');
     expect(formatTokens(775)).toBe('775');
     expect(formatTokens(3_400)).toBe('3.40K');
     expect(formatTokens(521_319_916)).toBe('521.32M');

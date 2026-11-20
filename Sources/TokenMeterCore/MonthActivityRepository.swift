@@ -2,6 +2,7 @@ import Foundation
 
 /// 一天的用量聚合（本地时区日）。弹窗头部当月热力图用。
 public struct DayActivity: Equatable, Identifiable {
+    package var cacheUsage = PromptCacheUsage()
     /// "YYYY-MM-DD"（与 daily_rollup.usage_date 同口径：SQLite localtime）。
     public let date: String
     public let tokens: Int64
@@ -34,7 +35,7 @@ public enum MonthActivityRepository {
 
         let rows = (try? database.query(
             """
-            SELECT usage_date,
+            SELECT usage_date, \(PromptCacheUsage.aggregateColumns),
                    sum(tokens_input + tokens_output +
                        tokens_cache_read + tokens_cache_write_5m + tokens_cache_write_1h) AS tokens_total,
                    sum(cost_usd_micros) AS cost_total,
@@ -49,13 +50,15 @@ public enum MonthActivityRepository {
         )) ?? []
 
         return rows.map { row in
-            DayActivity(
+            var activity = DayActivity(
                 date: row.string("usage_date") ?? "",
                 tokens: row.int("tokens_total") ?? 0,
                 costUsdMicros: row.int("cost_total") ?? 0,
                 sessions: Int(row.int("sessions_total") ?? 0),
                 events: Int(row.int("events_total") ?? 0)
             )
+            activity.cacheUsage = PromptCacheUsage(row: row)
+            return activity
         }
     }
 
@@ -71,6 +74,7 @@ public enum MonthActivityRepository {
 
 /// 某一天的模型用量明细（主界面热力图详情同款）。按 token 降序。
 public struct DayModelUsage: Equatable, Identifiable {
+    package var cacheUsage = PromptCacheUsage()
     public let model: String
     public let tokens: Int64
     public let costUsdMicros: Int64
@@ -93,7 +97,7 @@ public enum DayModelBreakdownRepository {
     ) -> [DayModelUsage] {
         let rows = (try? database.query(
             """
-            SELECT model_canonical AS model,
+            SELECT model_canonical AS model, \(PromptCacheUsage.aggregateColumns),
                    coalesce(sum(tokens_input + tokens_output + tokens_cache_read
                                 + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
                    coalesce(sum(cost_usd_micros), 0) AS cost
@@ -107,11 +111,13 @@ public enum DayModelBreakdownRepository {
         )) ?? []
 
         return rows.map { row in
-            DayModelUsage(
+            var model = DayModelUsage(
                 model: row.string("model") ?? "",
                 tokens: row.int("tokens") ?? 0,
                 costUsdMicros: row.int("cost") ?? 0
             )
+            model.cacheUsage = PromptCacheUsage(row: row)
+            return model
         }
     }
 }
