@@ -36,9 +36,10 @@ function finish(code, value) {
   if (finished) return;
   finished = true;
   clearTimeout(timer);
-  if (value !== undefined) process.stdout.write(JSON.stringify(value));
   child?.kill('SIGTERM');
-  process.exit(code);
+  if (value === undefined) process.exit(code);
+  // Pipe writes can be asynchronous. Swift must receive the entire JSON before exit.
+  process.stdout.write(JSON.stringify(value), error => process.exit(error ? 1 : code));
 }
 process.on('SIGTERM', () => finish(1));
 process.on('SIGINT', () => finish(1));

@@ -23,6 +23,16 @@ final class CodexAccountClientTests: XCTestCase {
         XCTAssertEqual(requests.first?["idempotencyKey"] as? String, "same-attempt")
     }
 
+    func testReadReceivesCompleteLargeRateLimitResponse() async throws {
+        let fixture = try AccountBridgeFixture()
+        defer { fixture.remove() }
+        try "large".write(to: fixture.root.appendingPathComponent("mode"), atomically: true, encoding: .utf8)
+
+        let account = try await fixture.client.read()
+        XCTAssertEqual(account.credits?.count, 4096)
+        XCTAssertEqual(account.credits?.last?.id, "test-credit-4095")
+    }
+
     func testChangedAccountCannotConsume() async throws {
         let fixture = try AccountBridgeFixture()
         defer { fixture.remove() }
@@ -127,6 +137,11 @@ private struct AccountBridgeFixture {
       if (m.method === 'account/read') reply({ account: { type: 'chatgpt' } });
       if (m.method === 'account/rateLimits/read') {
         const result = { rateLimits: {}, rateLimitResetCredits: { availableCount: 3, credits: [{ id: 'test-credit', resetType: 'codexRateLimits', status: mode === 'unavailable' ? 'consumed' : 'available', grantedAt: 1700000000, expiresAt: Math.floor(Date.now() / 1000) + (mode === 'expired' ? -1 : 1800) }] } };
+        if (mode === 'large') {
+          const credit = result.rateLimitResetCredits.credits[0];
+          result.rateLimitResetCredits.credits = Array.from({ length: 4096 }, (_, i) => ({ ...credit, id: 'test-credit-' + i }));
+          result.rateLimitResetCredits.availableCount = result.rateLimitResetCredits.credits.length;
+        }
         if (mode === 'slow') { fs.writeFileSync(path.join(home, 'waiting'), 'yes'); setTimeout(() => reply(result), 3000); }
         else reply(result);
       }
