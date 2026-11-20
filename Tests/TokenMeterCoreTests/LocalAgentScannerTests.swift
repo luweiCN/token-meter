@@ -2,6 +2,37 @@ import XCTest
 @testable import TokenMeterCore
 
 final class LocalAgentScannerTests: XCTestCase {
+    func testBatchProjectsSuccessfulRootsOnceAndReportsTheFailedRoot() async throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let first = home.appendingPathComponent("first")
+        let second = home.appendingPathComponent("second")
+        let broken = home.appendingPathComponent("broken")
+        for url in [first, second, broken] {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        try writeJSONL(codexJSONL(inputTokens: 7, outputTokens: 1, sessionId: "one"), to: first.appendingPathComponent("one.jsonl"))
+        try writeJSONL(codexJSONL(inputTokens: 13, outputTokens: 1, sessionId: "two"), to: second.appendingPathComponent("two.jsonl"))
+        try Data(#"{"message":{"role":"assistant","usage":{"input_tokens":1}}}"#.utf8)
+            .write(to: broken.appendingPathComponent("broken.jsonl"))
+        let db = try migratedDatabase(rootKind: .codexJSONL, rootPath: first.path)
+        for (id, kind, url) in [(2, "codex_jsonl", second), (3, "claude_jsonl", broken)] {
+            try db.execute("""
+                INSERT INTO scan_roots(id, kind, root_path, display_name, stable_source_key)
+                VALUES (?, ?, ?, ?, ?)
+                """, [.int(Int64(id)), .text(kind), .text(url.path), .text(kind), .text(url.path)])
+        }
+        try db.execute("CREATE TEMP TABLE projections(n INTEGER)")
+        try db.execute("CREATE TEMP TRIGGER count_projection AFTER INSERT ON daily_rollup BEGIN INSERT INTO projections VALUES(1); END")
+        let scanner = LocalAgentScanner(database: db)
+        let failures = try await scanner.scanRoots(ids: [1, 3, 2])
+        XCTAssertEqual(Set(failures.keys), [3])
+        XCTAssertEqual(try scalarInt(db, "SELECT count(*) AS value FROM agent_sessions WHERE source_kind='codex_jsonl'"), 2)
+        let finalRows = try scalarInt(db, "SELECT count(*) AS value FROM daily_rollup")
+        XCTAssertGreaterThan(finalRows, 0)
+        XCTAssertEqual(try scalarInt(db, "SELECT count(*) AS value FROM projections"), finalRows)
+    }
+
     func testOmpSubagentGetsRootSessionKeyFromPath() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }

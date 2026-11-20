@@ -34,20 +34,79 @@ public struct SQLiteRow: Equatable {
 
 public final class SQLiteDatabase {
     private var handle: OpaquePointer?
+    private var snapshotDirectory: URL?
 
-    public init(path: String) throws {
-        if sqlite3_open_v2(path, &handle, SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, nil) != SQLITE_OK {
-            let message = handle.map { String(cString: sqlite3_errmsg($0)) } ?? "sqlite open failed"
-            throw SQLiteDatabaseError.openFailed(message)
+    public convenience init(path: String) throws {
+        try self.init(path: path, readOnly: false)
+    }
+
+    package init(path: String, readOnly: Bool) throws {
+        let flags = (readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE) | SQLITE_OPEN_FULLMUTEX
+        try open(path, flags: flags)
+        try execute("PRAGMA busy_timeout = 5000")
+        if readOnly {
+            do {
+                try execute("PRAGMA schema_version")
+            } catch {
+                let code = sqlite3_errcode(handle)
+                guard code == SQLITE_CANTOPEN || code == SQLITE_READONLY else { throw error }
+                try openCheckpointedCopy(of: URL(fileURLWithPath: path), originalError: error)
+            }
         }
         try execute("PRAGMA foreign_keys = ON")
-        try execute("PRAGMA busy_timeout = 5000")
+    }
+
+    private func open(_ path: String, flags: Int32) throws {
+        guard sqlite3_open_v2(path, &handle, flags, nil) == SQLITE_OK else {
+            let message = errorMessage
+            sqlite3_close(handle)
+            handle = nil
+            throw SQLiteDatabaseError.openFailed(message)
+        }
+    }
+
+    // macOS 的只读 SQLite 打不开已完成 checkpoint 且没有 WAL 旁文件的数据库。
+    // 只对稳定的私有副本使用 immutable。活动 WAL 必须由 SQLite 自行读取。
+    private func openCheckpointedCopy(of source: URL, originalError: Error) throws {
+        let files = FileManager.default
+        func hasJournal() -> Bool {
+            files.fileExists(atPath: source.path + "-wal") || files.fileExists(atPath: source.path + "-journal")
+        }
+        guard !hasJournal() else { throw originalError }
+        let sourceFile = try FileHandle(forReadingFrom: source)
+        defer { try? sourceFile.close() }
+        guard let header = try sourceFile.read(upToCount: 20), header.count == 20,
+              header.prefix(16) == Data("SQLite format 3\0".utf8), header[18] == 2, header[19] == 2 else {
+            throw originalError
+        }
+        let before = try files.attributesOfItem(atPath: source.path)
+        let directory = files.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try files.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        defer {
+            if snapshotDirectory != directory { try? files.removeItem(at: directory) }
+        }
+        let copy = directory.appendingPathComponent("snapshot.sqlite")
+        try files.copyItem(at: source, to: copy)
+        let after = try files.attributesOfItem(atPath: source.path)
+        let identity: [FileAttributeKey] = [.systemFileNumber, .size, .modificationDate]
+        guard !hasJournal(), identity.allSatisfy({ key in
+            (before[key] as? NSObject)?.isEqual(after[key]) == true
+        }) else {
+            // 有写入方接手时重新读 live 连接，避免把旧的主文件当成最新账本。
+            try execute("PRAGMA schema_version")
+            return
+        }
+        try close()
+        try open(copy.absoluteString + "?immutable=1", flags: SQLITE_OPEN_READONLY | SQLITE_OPEN_URI | SQLITE_OPEN_FULLMUTEX)
+        try execute("PRAGMA schema_version")
+        snapshotDirectory = directory
     }
 
     deinit {
         if let handle {
             sqlite3_close(handle)
         }
+        if let snapshotDirectory { try? FileManager.default.removeItem(at: snapshotDirectory) }
     }
 
     public func close() throws {
@@ -57,6 +116,10 @@ public final class SQLiteDatabase {
             throw SQLiteDatabaseError.closeFailed(errorMessage)
         }
         self.handle = nil
+        if let snapshotDirectory {
+            try? FileManager.default.removeItem(at: snapshotDirectory)
+            self.snapshotDirectory = nil
+        }
     }
 
     public func execute(_ sql: String, _ parameters: [SQLiteValue] = []) throws {
@@ -77,6 +140,21 @@ public final class SQLiteDatabase {
             guard result == SQLITE_ROW else {
                 throw SQLiteDatabaseError.stepFailed(errorMessage)
             }
+        }
+    }
+
+    func executeBatch(_ sql: String, rows: some Sequence<[SQLiteValue]>) throws {
+        let statement = try prepare(sql, [])
+        defer { sqlite3_finalize(statement) }
+        for row in rows {
+            guard row.count == Int(sqlite3_bind_parameter_count(statement)) else {
+                throw SQLiteDatabaseError.bindFailed("parameter count mismatch")
+            }
+            try bind(row, to: statement)
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw SQLiteDatabaseError.stepFailed(errorMessage)
+            }
+            sqlite3_reset(statement)
         }
     }
 
@@ -115,14 +193,18 @@ public final class SQLiteDatabase {
             throw SQLiteDatabaseError.prepareFailed(errorMessage)
         }
         do {
-            for (offset, parameter) in parameters.enumerated() {
-                try bind(parameter, to: Int32(offset + 1), statement: statement)
-            }
+            try bind(parameters, to: statement)
         } catch {
             sqlite3_finalize(statement)
             throw error
         }
         return statement
+    }
+
+    private func bind(_ parameters: [SQLiteValue], to statement: OpaquePointer?) throws {
+        for (offset, parameter) in parameters.enumerated() {
+            try bind(parameter, to: Int32(offset + 1), statement: statement)
+        }
     }
 
     private func bind(_ value: SQLiteValue, to index: Int32, statement: OpaquePointer?) throws {

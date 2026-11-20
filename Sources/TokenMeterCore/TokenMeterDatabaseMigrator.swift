@@ -1,6 +1,14 @@
 import Foundation
 
 public enum TokenMeterDatabaseMigrator {
+    package static func configureWriter(_ database: SQLiteDatabase) throws {
+        try database.execute("PRAGMA journal_mode = WAL")
+        try database.execute("PRAGMA synchronous = NORMAL")
+        try database.execute("PRAGMA foreign_keys = ON")
+        try database.execute("PRAGMA temp_store = MEMORY")
+        try database.execute("PRAGMA busy_timeout = 5000")
+    }
+
     /// 配置与不可重建的消费记录必须保留，不能卷入统计数据重建。
     static let configTableNames: Set<String> = ["settings", "provider_config_overrides", "scan_roots", "codex_reset_redemptions"]
 
@@ -13,11 +21,7 @@ public enum TokenMeterDatabaseMigrator {
     /// 于是「降级」也是安全的——数据的真相在会话文件里，任意方向的重建都等价且无损，
     /// 不再需要「更高版本 = 报错拒绝」这种防御。
     public static func migrate(_ database: SQLiteDatabase) throws {
-        try database.execute("PRAGMA journal_mode = WAL")
-        try database.execute("PRAGMA synchronous = NORMAL")
-        try database.execute("PRAGMA foreign_keys = ON")
-        try database.execute("PRAGMA temp_store = MEMORY")
-        try database.execute("PRAGMA busy_timeout = 5000")
+        try configureWriter(database)
 
         try database.execute(TokenMeterDatabaseSchema.configTables)
         // 配置表不参与版本重建，新增列走幂等 additive 迁移（必须每次跑，不受版本短路影响）。

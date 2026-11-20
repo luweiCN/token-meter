@@ -45,6 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, !Task.isCancelled,
                   let store = self.store,
                   let ipcServer = self.ipcServer else { return }
+            await store.reloadTodaySummary()
+            guard !Task.isCancelled else { return }
+            self.statusBarController?.preparePopover()
             await store.refreshNotificationAuthorizationState()
             guard !Task.isCancelled else { return }
             await store.refresh()
@@ -65,6 +68,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         scheduleRefreshTimer(interval: refreshInterval(for: store.settingsSnapshot))
         scheduleExchangeRateTimer()
+        NotificationCenter.default.publisher(for: .NSCalendarDayChanged)
+            .sink { [weak store] _ in
+                Task { @MainActor in await store?.reloadTodaySummary() }
+            }
+            .store(in: &cancellables)
         bindSettingsTimer(to: store)
         bindCodexResetAutomation(to: store)
         bindHooksInstaller(to: store)

@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import Foundation
+import TokenMeterCore
 import UserNotifications
 
 /// 一键自动更新：下载 Release 资产 → sha256 校验 → 解压验证 → 原子替换自身 → 重启。
@@ -33,7 +34,7 @@ enum UpdateInstaller {
         while let chunk = try handle.read(upToCount: 4 << 20), !chunk.isEmpty {
             hasher.update(data: chunk)
         }
-        return SHA256.Digest.hexString(hasher.finalize())
+        return hasher.finalize().lowercaseHex
     }
 
     /// 解压出的 app 必须与 release tag 同版本（防错包/搬运错误）。
@@ -147,11 +148,5 @@ enum UpdateInstaller {
     private static func httpOK(_ response: URLResponse) -> Bool {
         guard let http = response as? HTTPURLResponse else { return true }
         return http.statusCode == 200
-    }
-}
-
-extension SHA256.Digest {
-    static func hexString(_ digest: SHA256.Digest) -> String {
-        digest.map { String(format: "%02x", $0) }.joined()
     }
 }

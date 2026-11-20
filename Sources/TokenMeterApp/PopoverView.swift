@@ -347,7 +347,6 @@ struct PopoverView: View {
         .environment(\.mbTheme, theme)
         .environment(\.colorScheme, themeName == "light" ? .light : .dark)
         .onAppear {
-            store.reloadTodaySummary()
             onPreferredHeightChange(panelHeight)
         }
         .onChange(of: themeName) { _ in
@@ -832,14 +831,9 @@ private struct OverviewTilesView: View {
         let cache = bucket.cacheUsage
         let details = [title, amount.detail, cache.detail].joined(separator: "\n")
         return VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 4) {
-                Text(title).fontWeight(.semibold)
-                if amount.isPartial {
-                    Text("部分上报").font(.system(size: 9))
-                }
-            }
-            .font(.system(size: 10.5))
-            .foregroundStyle(theme.muted)
+            Text(title)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(theme.muted)
             Text(verbatim: amount.aggregateText)
                 .font(.system(size: 16, weight: .bold, design: .monospaced))
                 .foregroundStyle(theme.fg)
@@ -1222,16 +1216,11 @@ private struct ModelListBlock: View {
 
     private func modelRow(_ name: String, amount: PopoverTokenAmount, cost: Int64, cache: PromptCacheUsage) -> some View {
         GridRow {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(verbatim: name)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if amount.isPartial {
-                    Text("部分上报").font(.system(size: 9)).foregroundStyle(theme.muted)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .help(name)
+            Text(verbatim: name)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .help(name)
             Text(verbatim: amount.dailyText)
                 .rollingNumber(value: amount.tokens)
                 .help(amount.detail)

@@ -5,8 +5,6 @@ public final class LocalAgentScanner {
     private let database: SQLiteDatabase
     private let writer: UsageEventWriter
     private let rollupBuilder: RollupBuilder
-    /// 当前生效的计价器（在线缓存/随包快照 + 用户覆盖）。价格输入变化时整体换新。
-    private var costCalculator: CostCalculator
     private let customPricingURL: URL
     private let cachedPricingURL: URL
     /// 在线快照缓存的文件指纹；原子替换后下一轮扫描即可见。
@@ -31,16 +29,8 @@ public final class LocalAgentScanner {
         self.database = database
         self.customPricingURL = customPricingURL
         self.cachedPricingURL = cachedPricingURL
-        // 定价 = 已校验的在线缓存（缺失时随包快照）+ 用户覆盖；全部缺失时退化为空表
-        // （成本按 unknown 记，仍能正确落 usage_events）。
-        let overrides = (try? CustomPricingOverrides.load(url: customPricingURL)) ?? .empty
-        let snapshot = (try? PricingSnapshot.loadEffective(cachedURL: cachedPricingURL))
-            ?? PricingSnapshot(snapshotVersion: "unavailable", source: "builtin", models: [:])
-        cachedPricingFileFingerprint = Self.fileFingerprint(at: cachedPricingURL)
-        customPricingFingerprint = overrides.fingerprint
-        let calculator = Self.makeCostCalculator(snapshot: snapshot, overrides: overrides)
-        costCalculator = calculator
-        self.writer = UsageEventWriter(database: database, costCalculator: calculator)
+        // 每个扫描入口先对账价格，在后台首次扫描前无需解码和归一化整个模型目录。
+        self.writer = UsageEventWriter(database: database, costCalculator: CostCalculator(canonicalModels: [:]))
         self.rollupBuilder = RollupBuilder(database: database)
     }
 
@@ -66,10 +56,27 @@ public final class LocalAgentScanner {
     }
 
     public func scanRoot(id rootId: Int64) async throws {
-        try withExclusiveScan {
+        if let error = try await scanRoots(ids: [rootId])[rootId] { throw error }
+    }
+
+    package func scanRoots(ids: [Int64]) async throws -> [Int64: Error] {
+        guard !ids.isEmpty else { return [:] }
+        return try withExclusiveScan {
             try refreshPricingIfNeeded()
-            try scan(rootId: rootId, reporter: nil)
+            return try scanBatch(ids, reporter: nil)
         }
+    }
+
+    private func scanBatch(_ ids: [Int64], reporter: FullRescanProgress?) throws -> [Int64: Error] {
+        var failures: [Int64: Error] = [:]
+        for id in ids {
+            do { try scan(rootId: id, reporter: reporter) }
+            catch { failures[id] = error }
+        }
+        // 部分失败也可能已写入有效事件。每批统一投影，下一次扫描可修复中断的汇总。
+        try writer.flattenRootSessionKeys()
+        try rollupBuilder.rebuildAll()
+        return failures
     }
 
     /// 用户显式触发的数据库重建。保留配置，清空所有会话派生数据，再逐根重读原始日志。
@@ -102,8 +109,8 @@ public final class LocalAgentScanner {
         let (resolved, dropped) = overrides.resolvedModels(bundled: snapshot)
         let merged = snapshot.merging(userOverrides: resolved)
         let ignoredReported = overrides.ignoredReportedKeys.subtracting(dropped)
-        let calculator = CostCalculator(snapshot: merged, ignoreReportedModels: ignoredReported)
         let canonicalModels = CostCalculator.canonicalModels(from: merged)
+        let calculator = CostCalculator(canonicalModels: canonicalModels, ignoreReportedModels: ignoredReported)
         let effectiveOverrideKeys = overrides.canonicalKeys.subtracting(dropped)
         var fingerprints: [String: String] = [:]
         fingerprints.reserveCapacity(canonicalModels.count)
@@ -118,7 +125,6 @@ public final class LocalAgentScanner {
         let allKeys = Set(persisted.keys).union(fingerprints.keys)
         let affected = Set(allKeys.filter { persisted[$0] != fingerprints[$0] })
 
-        costCalculator = calculator
         writer.updateCostCalculator(calculator)
 
         let usedKeys = try usedPricingKeys()
@@ -148,16 +154,6 @@ public final class LocalAgentScanner {
         pricingStateReconciled = true
     }
 
-    /// 内置快照 + 用户条目 → 计价器。缺基础价或规则非法的条目被丢弃，
-    /// 其 ignoreReported 一并不生效；缓存缺价由计价器按实际用量处理。
-    private static func makeCostCalculator(snapshot: PricingSnapshot, overrides: CustomPricingOverrides) -> CostCalculator {
-        let (resolved, dropped) = overrides.resolvedModels(bundled: snapshot)
-        return CostCalculator(
-            snapshot: snapshot.merging(userOverrides: resolved),
-            ignoreReportedModels: overrides.ignoredReportedKeys.subtracting(dropped)
-        )
-    }
-
     private struct PricingFingerprintPayload: Encodable {
         let pricing: ModelPricing
         let ignoreReported: Bool
@@ -177,7 +173,7 @@ public final class LocalAgentScanner {
             ignoreReported: ignoreReported,
             isUserOverride: isUserOverride
         ))
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return SHA256.hash(data: data).lowercaseHex
     }
 
     private static func fileFingerprint(at url: URL) -> String? {
@@ -216,29 +212,30 @@ public final class LocalAgentScanner {
         try database.execute("BEGIN IMMEDIATE")
         do {
             try database.execute("DELETE FROM model_pricing")
-            for key in models.keys.sorted() {
-                guard let pricing = models[key], let fingerprint = fingerprints[key] else { continue }
-                try database.execute(
-                    """
-                    INSERT INTO model_pricing(
-                      model_key, input_per_mtok_micros, output_per_mtok_micros,
-                      cache_read_per_mtok_micros, cache_write_5m_per_mtok_micros,
-                      cache_write_1h_per_mtok_micros, source, snapshot_version, pricing_fingerprint
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [
-                        .text(key),
-                        .int(Self.priceMicros(pricing.inputPerMTok)),
-                        .int(Self.priceMicros(pricing.outputPerMTok)),
-                        pricing.cacheReadPerMTok.map { .int(Self.priceMicros($0)) } ?? .null,
-                        pricing.cacheWrite5mPerMTok.map { .int(Self.priceMicros($0)) } ?? .null,
-                        pricing.cacheWrite1hPerMTok.map { .int(Self.priceMicros($0)) } ?? .null,
-                        .text(overrideKeys.contains(key) ? "user" : baseSource),
-                        .text(snapshotVersion),
-                        .text(fingerprint),
-                    ]
-                )
+            let rows = models.lazy.compactMap { key, pricing -> [SQLiteValue]? in
+                guard let fingerprint = fingerprints[key] else { return nil }
+                return [
+                    .text(key),
+                    .int(Self.priceMicros(pricing.inputPerMTok)),
+                    .int(Self.priceMicros(pricing.outputPerMTok)),
+                    pricing.cacheReadPerMTok.map { .int(Self.priceMicros($0)) } ?? .null,
+                    pricing.cacheWrite5mPerMTok.map { .int(Self.priceMicros($0)) } ?? .null,
+                    pricing.cacheWrite1hPerMTok.map { .int(Self.priceMicros($0)) } ?? .null,
+                    .text(overrideKeys.contains(key) ? "user" : baseSource),
+                    .text(snapshotVersion),
+                    .text(fingerprint),
+                ]
             }
+            try database.executeBatch(
+                """
+                INSERT INTO model_pricing(
+                  model_key, input_per_mtok_micros, output_per_mtok_micros,
+                  cache_read_per_mtok_micros, cache_write_5m_per_mtok_micros,
+                  cache_write_1h_per_mtok_micros, source, snapshot_version, pricing_fingerprint
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows: rows
+            )
             try database.execute("COMMIT")
         } catch {
             try? database.execute("ROLLBACK")
@@ -359,9 +356,7 @@ public final class LocalAgentScanner {
         let reporter = FullRescanProgress(filesTotal: totals.files, bytesTotal: totals.bytes, onProgress: onProgress)
 
         // 单根解析失败按 scan_runs 记为 partial（与增量路径一致），不因一根出错而中止整轮重扫。
-        for rootId in rootIds {
-            try? scan(rootId: rootId, reporter: reporter)
-        }
+        _ = try scanBatch(rootIds, reporter: reporter)
         // 末尾一条必发，否则 UI 停在 99.x%。
         reporter.finish()
     }
@@ -418,11 +413,6 @@ public final class LocalAgentScanner {
             )
             throw error
         }
-
-        // 两张汇总表是 usage_events 的纯函数投影，扫完整体重建即可。全量重建是幂等的，
-        // 多根扫描时每根扫完各重建一次会收敛到同一结果（Task 15 再把它提到"整轮一次"）。
-        try writer.flattenRootSessionKeys()
-        try rollupBuilder.rebuildAll()
     }
 
     private func loadEnabledRoot(id rootId: Int64) throws -> ScanRoot? {
@@ -1518,7 +1508,7 @@ public final class LocalAgentScanner {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         let data = length > 0 ? ((try? handle.read(upToCount: length)) ?? Data()) : Data()
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return SHA256.hash(data: data).lowercaseHex
     }
 
     private func parseFingerprint(_ fingerprint: String) -> (length: Int, hash: String)? {

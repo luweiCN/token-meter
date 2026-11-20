@@ -133,6 +133,19 @@ final class StatusBarControllerTests: XCTestCase {
         XCTAssertTrue(didQuit)
     }
 
+    func testReopeningOnTheSameScreenReusesThePopoverController() throws {
+        let store = ProviderStore(config: TokenMeterConfig(menuBar: MenuBarConfig(primaryProviderId: nil), providers: []), notificationCenter: nil, databaseURL: nil)
+        let popover = SpyPopover()
+        let controller = StatusBarController(store: store, popover: popover)
+        controller.preparePopover()
+        let first = try XCTUnwrap(popover.contentViewController)
+        XCTAssertFalse(popover.isShown)
+        controller.showPopoverForTesting()
+        controller.showPopoverForTesting()
+        controller.showPopoverForTesting()
+        XCTAssertTrue(popover.contentViewController === first)
+    }
+
     func testPopoverClosesWhenAppResignsActive() throws {
         // TokenMeter 是 LSUIElement，实测 popover 的 .transient 不总能在切到
         // 另一个 App（比如仪表盘的 Electron 窗口）时自动收起。显式监听失活

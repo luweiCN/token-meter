@@ -162,14 +162,18 @@ final class TokenMeterIPCServer {
         }
 
         let scanQueue = DispatchQueue(label: "TokenMeterIPCServer.fullRescan", qos: .utility)
-        scanQueue.async {
+        scanQueue.async { [weak self] in
             do {
                 try scanner.fullRescan { event in
                     if let payload = encodeProgressLine(event) {
                         writer.sendProgress(payload)
                     }
                 }
-                writer.finish(encodeFinishedLine(status: "ok", error: nil))
+                Task { @MainActor [weak self] in
+                    await self?.store.reloadTodaySummary()
+                    self?.broadcastDataChanged()
+                    writer.finish(encodeFinishedLine(status: "ok", error: nil))
+                }
             } catch {
                 writer.finish(encodeFinishedLine(status: "failed", error: "full rescan failed"))
             }

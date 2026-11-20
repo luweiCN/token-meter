@@ -5,16 +5,13 @@ struct PopoverTokenAmount {
     let tokens: Int64
     var unreportedEvents: Int64 = 0
 
-    var isPartial: Bool { unreportedEvents > 0 && tokens > 0 }
     private var isUnreported: Bool { unreportedEvents > 0 && tokens == 0 }
 
-    var aggregateText: String { isUnreported ? "未上报" : UsageFormatter.compactTokensAggregated(tokens) }
-    var dailyText: String { isUnreported ? "未上报" : UsageFormatter.compactTokens(tokens) }
+    var aggregateText: String { isUnreported ? "—" : UsageFormatter.compactTokensAggregated(tokens) }
+    var dailyText: String { isUnreported ? "—" : UsageFormatter.compactTokens(tokens) }
 
     var detail: String {
-        var text = "已上报 \(tokens.formatted(.number.locale(Locale(identifier: "zh_CN")))) Token"
-        if unreportedEvents > 0 { text += "\n\(unreportedEvents) 条记录未上报 Token" }
-        return text
+        isUnreported ? "—" : "\(tokens.formatted(.number.locale(Locale(identifier: "zh_CN")))) Token"
     }
 }
 

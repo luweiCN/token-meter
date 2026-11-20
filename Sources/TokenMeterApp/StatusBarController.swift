@@ -275,6 +275,7 @@ final class StatusBarController: NSObject {
     private var cancellables: Set<AnyCancellable> = []
     private var titleHosting: NSHostingView<StatusBarContentView>?
     private var globalClickMonitor: Any?
+    private var configuredMaxHeight: CGFloat?
     private var currentTitle = "TokenMeter"
     private var projection = MenuBarQuotaModel.MenuBarProjection(
         style: .rings, showName: true, showGlyph: true, showNumber: true,
@@ -373,7 +374,7 @@ final class StatusBarController: NSObject {
 
     private func configurePopover() {
         popover.behavior = .transient
-        updatePopoverContent(relativeTo: statusItem.button)
+        configurePopoverChrome()
 
         // `.transient` 理论上会在应用失去激活状态时自动关闭，但 TokenMeter 是
         // LSUIElement（无 Dock 图标的常驻程序）——这类「accessory」应用与常规
@@ -439,7 +440,7 @@ final class StatusBarController: NSObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _, _, _, _ in
                 guard let self else { return }
-                self.projection = MenuBarQuotaModel.projection(
+                let next = MenuBarQuotaModel.projection(
                     snapshots: self.store.displayProviderSnapshots,
                     settings: self.store.settingsSnapshot,
                     todaySummary: self.store.todaySummary,
@@ -453,7 +454,9 @@ final class StatusBarController: NSObject {
                     displayCurrency: self.store.displayCurrency,
                     usdToCny: self.store.exchangeRate.usdToCny
                 )
-                self.updateTitle(self.projection.accessibilityTitle)
+                guard next != self.projection else { return }
+                self.projection = next
+                self.updateTitle(next.accessibilityTitle)
             }
             .store(in: &cancellables)
     }
@@ -577,10 +580,22 @@ final class StatusBarController: NSObject {
         quitApplication()
     }
 
+    /// 启动时用已有统计预排一次版，首次点击即可沿用。窗口仍由菜单按钮打开。
+    func preparePopover() {
+        guard popover.contentViewController == nil, let button = statusItem.button else { return }
+        updatePopoverContent(relativeTo: button)
+        guard let view = popover.contentViewController?.view else { return }
+        view.setFrameSize(popover.contentSize)
+        view.layoutSubtreeIfNeeded()
+    }
+
     private func updatePopoverContent(relativeTo button: NSStatusBarButton?) {
-        let size = preferredPopoverSize(relativeTo: button)
+        let screenHeight = button?.window?.screen?.visibleFrame.height ?? NSScreen.main?.visibleFrame.height ?? 820
+        let maxHeight = max(360, screenHeight - 96)
+        guard configuredMaxHeight != maxHeight else { return }
+        configuredMaxHeight = maxHeight
+        let size = (width: CGFloat(378), initialHeight: min(maxHeight, estimatedCollapsedContentHeight()), maxHeight: maxHeight)
         popover.contentSize = NSSize(width: size.width, height: size.initialHeight)
-        configurePopoverChrome()
         let hosting = NSHostingController(
             rootView: PopoverView(
                 store: store,
@@ -615,17 +630,6 @@ final class StatusBarController: NSObject {
     private func applyPopoverAppearance() {
         let isLight = UserDefaults.standard.string(forKey: "menubarTheme") == "light"
         popover.appearance = NSAppearance(named: isLight ? .aqua : .darkAqua)
-    }
-
-    private func preferredPopoverSize(relativeTo button: NSStatusBarButton?) -> (width: CGFloat, initialHeight: CGFloat, maxHeight: CGFloat) {
-        let screenHeight = button?.window?.screen?.visibleFrame.height
-            ?? NSScreen.main?.visibleFrame.height
-            ?? 820
-        // 上限只受屏幕可用高度约束（曾有 760 硬顶——默认内容变多后被顶住，
-        // 出了滚动条；用户裁定：默认内容完整展示，展开时继续长高到屏幕边界）。
-        let maxHeight = max(360, screenHeight - 96)
-        let estimatedHeight = estimatedCollapsedContentHeight()
-        return (width: 378, initialHeight: min(maxHeight, estimatedHeight), maxHeight: maxHeight)
     }
 
     private func updatePopoverHeight(_ height: CGFloat) {

@@ -53,6 +53,8 @@ final class ProviderStore: ObservableObject {
     private let snapshotCacheURL: URL
     private weak var notificationCenter: UsageNotificationDelivering?
     private let database: SQLiteDatabase?
+    private let databaseURL: URL?
+    private var summaryGeneration = 0
     private let settingsStore: SettingsStore?
     private let scanner: LocalAgentScanner?
     private let liveSessions: LiveSessionStore?
@@ -101,9 +103,15 @@ final class ProviderStore: ObservableObject {
             openedDatabase = try? SQLiteDatabase(path: databaseURL.path)
         }
 
+        self.databaseURL = openedDatabase == nil ? nil : databaseURL
         self.database = openedDatabase
         self.settingsStore = openedDatabase.map(SettingsStore.init(database:))
-        self.scanner = openedDatabase.map { LocalAgentScanner(database: $0) }
+        // 写入扫描和前台操作使用独立连接，避免等待同一 sqlite3 句柄的互斥锁。
+        self.scanner = self.databaseURL.flatMap { url in
+            guard let writer = try? SQLiteDatabase(path: url.path),
+                  (try? TokenMeterDatabaseMigrator.configureWriter(writer)) != nil else { return nil }
+            return LocalAgentScanner(database: writer)
+        }
         self.liveSessions = openedDatabase.map(LiveSessionStore.init(database:))
         self.tieredPricingEntries = ProviderStore.loadTieredPricingEntries()
         self.exchangeRate = ExchangeRateProvider.cachedOrFallback()
@@ -351,11 +359,22 @@ final class ProviderStore: ObservableObject {
     /// 避免几分钟的扫描占住 MainActor 冻结菜单栏。
     var localAgentScanner: LocalAgentScanner? { scanner }
 
-    func reloadTodaySummary() {
-        guard let database else { return }
-        todaySummary = MenuBarTodaySummaryRepository.load(from: database)
-        monthActivity = MonthActivityRepository.load(from: database)
-        overviewStats = OverviewStatsRepository.load(from: database)
+    func reloadTodaySummary() async {
+        guard let databaseURL else { return }
+        summaryGeneration += 1
+        let generation = summaryGeneration
+        let snapshot = await Task.detached(priority: .utility) { () -> (MenuBarTodaySummary, [DayActivity], OverviewStats)? in
+            guard let reader = try? SQLiteDatabase(path: databaseURL.path, readOnly: true) else { return nil }
+            guard (try? reader.execute("BEGIN")) != nil else { return nil }
+            defer { try? reader.execute("ROLLBACK") }
+            let now = Date()
+            return (MenuBarTodaySummaryRepository.load(from: reader, now: now), MonthActivityRepository.load(from: reader, now: now),
+                    OverviewStatsRepository.load(from: reader, now: now))
+        }.value
+        guard generation == summaryGeneration, let (today, month, overview) = snapshot else { return }
+        if todaySummary != today { todaySummary = today }
+        if monthActivity != month { monthActivity = month }
+        if overviewStats != overview { overviewStats = overview }
     }
 
     /// 热力图悬浮详情的当天模型明细（同步查库，行数 ≤6，悬浮时调用一次）。
@@ -386,7 +405,7 @@ final class ProviderStore: ObservableObject {
         let roots: [SQLiteRow]
         do {
             roots = try database.query(
-                "SELECT id, kind FROM scan_roots WHERE enabled = 1 AND scan_mode != 'disabled' ORDER BY display_name ASC"
+                "SELECT id, kind, display_name FROM scan_roots WHERE enabled = 1 AND scan_mode != 'disabled' ORDER BY display_name ASC"
             )
         } catch {
             localIndexStatusText = "本地会话索引不可用"
@@ -394,27 +413,29 @@ final class ProviderStore: ObservableObject {
         }
 
         let enabledKinds = enabledSourceKinds()
-        var scanned = 0
-        var failures = 0
-        for row in roots {
-            guard let id = row.int("id"),
-                  let kindText = row.string("kind"),
-                  let kind = SourceKind(rawValue: kindText),
-                  enabledKinds.contains(kind) else { continue }
-            do {
-                try await scanner.scanRoot(id: id)
-                scanned += 1
-            } catch {
-                failures += 1
-            }
+        let enabledRoots = roots.filter { row in
+            row.string("kind").flatMap(SourceKind.init(rawValue:)).map(enabledKinds.contains) == true
         }
+        let ids = enabledRoots.compactMap { $0.int("id") }
+        let failedIDs: Set<Int64>
+        do {
+            failedIDs = Set(try await scanner.scanRoots(ids: ids).keys)
+        } catch {
+            failedIDs = Set(ids)
+        }
+        let failures = failedIDs.count
+        let scanned = ids.count - failures
+        let failedNames = enabledRoots.compactMap { row -> String? in
+            guard let id = row.int("id"), failedIDs.contains(id) else { return nil }
+            return row.string("display_name")
+        }.joined(separator: "、")
 
         let status: LocalIndexRefreshStatus
         if failures > 0, scanned > 0 {
-            localIndexStatusText = "本地会话索引部分失败"
+            localIndexStatusText = "\(failedNames) 索引失败"
             status = .partial
         } else if failures > 0 {
-            localIndexStatusText = "本地会话索引更新失败"
+            localIndexStatusText = "\(failedNames) 索引失败"
             status = .failed
         } else if scanned > 0 {
             localIndexStatusText = "已更新 \(scanned) 个本地数据源"
@@ -427,7 +448,7 @@ final class ProviderStore: ObservableObject {
         if scanned > 0 {
             localIndexUpdatedAt = Date()
         }
-        reloadTodaySummary()
+        await reloadTodaySummary()
 
         return LocalIndexRefreshResult(scanned: scanned, failures: failures, status: status, message: localIndexStatusText)
     }

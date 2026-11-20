@@ -50,7 +50,11 @@ public struct CostCalculator {
     }
 
     public init(snapshot: PricingSnapshot, ignoreReportedModels: Set<String> = []) {
-        canonicalIndex = Self.canonicalModels(from: snapshot).filter {
+        self.init(canonicalModels: Self.canonicalModels(from: snapshot), ignoreReportedModels: ignoreReportedModels)
+    }
+
+    init(canonicalModels: [String: ModelPricing], ignoreReportedModels: Set<String> = []) {
+        canonicalIndex = canonicalModels.filter {
             (try? $0.value.validate(allowFree: true)) != nil
         }
         self.ignoreReportedModels = ignoreReportedModels
