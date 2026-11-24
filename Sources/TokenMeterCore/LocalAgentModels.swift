@@ -8,9 +8,14 @@ public enum LocalAgentKind: String, Codable, Equatable, CaseIterable {
     case reasonix
     case dsh
     case grok
+    case qwenCode
+    case qoder
+    case workbuddy
+    case antigravityCLI
+    case geminiCLI
 }
 
-public enum SourceKind: String, Codable, Equatable {
+public enum SourceKind: String, Codable, Equatable, CaseIterable {
     case claudeJSONL = "claude_jsonl"
     case codexJSONL = "codex_jsonl"
     case ompJSONL = "omp_jsonl"
@@ -18,6 +23,28 @@ public enum SourceKind: String, Codable, Equatable {
     case reasonixStats = "reasonix_stats"
     case dshJSONL = "dsh_jsonl"
     case grokJSONL = "grok_jsonl"
+    case qwenJSONL = "qwen_jsonl"
+    case qoderJSONL = "qoder_jsonl"
+    case workbuddyJSONL = "workbuddy_jsonl"
+    case antigravitySQLite = "antigravity_sqlite"
+    case geminiChat = "gemini_chat"
+
+    public var defaultProviderId: String {
+        switch self {
+        case .claudeJSONL: "claude-code"
+        case .codexJSONL: "codex"
+        case .ompJSONL: "omp"
+        case .opencodeSQLite: "opencode"
+        case .reasonixStats: "reasonix"
+        case .dshJSONL: "dsh"
+        case .grokJSONL: "grok"
+        case .qwenJSONL: "qwen-code"
+        case .qoderJSONL: "qoder-cli"
+        case .workbuddyJSONL: "workbuddy"
+        case .antigravitySQLite: "antigravity-cli"
+        case .geminiChat: "gemini-cli"
+        }
+    }
 }
 
 public struct SourceFileFingerprint: Codable, Equatable {
@@ -41,4 +68,3 @@ public struct SourceFileFingerprint: Codable, Equatable {
         self.tailHash = tailHash
     }
 }
-

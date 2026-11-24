@@ -29,8 +29,11 @@ export interface SessionItem {
   firstEventEpochMs: number;
   lastEventEpochMs: number;
   tokensTotal: number;
+  tokenUnreportedEvents: number;
   costUsdMicros: number;
   costUnknownEvents: number;
+  creditsPicos: string;
+  creditEvents: number;
   /// 主会话自己的 usage 事件数（不含子代理会话的）。
   eventsCount: number;
   subagentCount: number;
@@ -54,7 +57,10 @@ export interface SessionTrendRow {
   bucket: string;
   providerId: string;
   tokens: number;
+  tokenUnreportedEvents: number;
   costUsdMicros: number;
+  creditsPicos: string;
+  creditEvents: number;
   sessions: number;
 }
 
@@ -78,7 +84,11 @@ const SUB_JOINS = `
     LEFT JOIN (
            SELECT cs.source_kind AS sk, cs.root_session_key AS rk,
                   sum(csr.tokens_total) AS tokens,
+                  sum(csr.token_unreported_events) AS token_unreported,
                   sum(csr.cost_usd_micros) AS cost,
+                  sum(csr.cost_unknown_events) AS cost_unknown,
+                  sum(csr.credits_picos) AS credits,
+                  sum(csr.credit_events) AS credit_events,
                   max(csr.last_event_epoch_ms) AS last_event,
                   count(*) AS cnt
              FROM agent_sessions cs
@@ -142,8 +152,11 @@ export class SessionsRepository {
                 sr.first_event_epoch_ms AS firstEventEpochMs,
                 max(sr.last_event_epoch_ms, coalesce(sub.last_event, 0)) AS lastEventEpochMs,
                 sr.tokens_total + coalesce(sub.tokens, 0) AS tokensTotal,
+                sr.token_unreported_events + coalesce(sub.token_unreported, 0) AS tokenUnreportedEvents,
                 coalesce(sr.cost_usd_micros, 0) + coalesce(sub.cost, 0) AS costUsdMicros,
-                sr.cost_unknown_events AS costUnknownEvents,
+                sr.cost_unknown_events + coalesce(sub.cost_unknown, 0) AS costUnknownEvents,
+                CAST(sr.credits_picos + coalesce(sub.credits, 0) AS TEXT) AS creditsPicos,
+                sr.credit_events + coalesce(sub.credit_events, 0) AS creditEvents,
                 sr.events_count AS eventsCount,
                 coalesce(sub.cnt, 0) + coalesce(sc.cnt, 0) AS subagentCount
          FROM agent_sessions s
@@ -215,7 +228,10 @@ export class SessionsRepository {
          SELECT date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime') AS bucket,
                 m.pid AS providerId,
                 coalesce(sum(e.tokens_total), 0) AS tokens,
+                sum(CASE WHEN e.tokens_reported = 0 THEN 1 ELSE 0 END) AS tokenUnreportedEvents,
                 coalesce(sum(e.cost_usd_micros), 0) AS costUsdMicros,
+                CAST(coalesce(sum(e.credits_picos), 0) AS TEXT) AS creditsPicos,
+                count(e.credits_picos) AS creditEvents,
                 count(DISTINCT mem.main_id) AS sessions
            FROM usage_events e
            JOIN members mem ON mem.session_id = e.session_id

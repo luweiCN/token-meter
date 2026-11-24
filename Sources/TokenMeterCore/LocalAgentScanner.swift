@@ -15,23 +15,48 @@ public final class LocalAgentScanner {
     private var pricingStateReconciled = false
     private let isoFormatter = ISO8601DateFormatter()
     private let scanLock = NSLock()
+    private let qoderModelCatalogLoader: (URL) throws -> [QoderModelCatalogEntry]
 
     /// 测试用 seam：在事件写入（step 2）之后、游标推进（step 3）之前调用。
     /// 让测试能模拟"事件已落库、游标尚未推进"的硬崩溃——抛错即中止，跳过 step 3。
     /// 生产环境永远为 nil。
     var testHookAfterEventWrite: ((Int64) throws -> Void)?
 
-    public init(
+    public convenience init(
         database: SQLiteDatabase,
         customPricingURL: URL = TokenMeterPaths.customPricingURL(),
         cachedPricingURL: URL = TokenMeterPaths.pricingSnapshotURL()
     ) {
+        self.init(
+            database: database,
+            customPricingURL: customPricingURL,
+            cachedPricingURL: cachedPricingURL,
+            qoderModelCatalogLoader: Self.loadQoderModelCatalog
+        )
+    }
+
+    init(
+        database: SQLiteDatabase,
+        customPricingURL: URL = TokenMeterPaths.customPricingURL(),
+        cachedPricingURL: URL = TokenMeterPaths.pricingSnapshotURL(),
+        qoderModelCatalogLoader: @escaping (URL) throws -> [QoderModelCatalogEntry]
+    ) {
         self.database = database
         self.customPricingURL = customPricingURL
         self.cachedPricingURL = cachedPricingURL
+        self.qoderModelCatalogLoader = qoderModelCatalogLoader
         // 每个扫描入口先对账价格，在后台首次扫描前无需解码和归一化整个模型目录。
         self.writer = UsageEventWriter(database: database, costCalculator: CostCalculator(canonicalModels: [:]))
         self.rollupBuilder = RollupBuilder(database: database)
+    }
+
+    private static func loadQoderModelCatalog(homeDirectory: URL) throws -> [QoderModelCatalogEntry] {
+        guard let executable = QoderUsageProvider.resolveExecutable(homeDirectory: homeDirectory) else {
+            return []
+        }
+        return try QoderModelCatalogParser.parse(
+            data: QoderUsageProvider.fetchModelCatalogData(executable: executable)
+        )
     }
 
     public static func seedDefaultScanRoots(
@@ -42,12 +67,18 @@ public final class LocalAgentScanner {
         for root in TokenMeterPaths.defaultScanRoots(homeDirectory: homeDirectory, environment: environment) {
             try database.execute(
                 """
-                INSERT OR IGNORE INTO scan_roots(kind, root_path, display_name, stable_source_key)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO scan_roots(kind, root_path, auxiliary_path, display_name, stable_source_key)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(kind, root_path) DO UPDATE SET
+                    auxiliary_path = CASE
+                        WHEN excluded.kind = 'qwen_jsonl' THEN excluded.auxiliary_path
+                        ELSE scan_roots.auxiliary_path
+                    END
                 """,
                 [
                     .text(root.kind.rawValue),
                     .text(root.rootURL.path),
+                    root.auxiliaryURL.map { .text($0.path) } ?? .null,
                     .text(root.displayName),
                     .text(root.stableSourceKey)
                 ]
@@ -264,7 +295,7 @@ public final class LocalAgentScanner {
             """
             SELECT id, observed_epoch_ms, model_name, cost_usd_micros, cost_source, reported_cost_usd_micros,
                    tokens_input, tokens_output,
-                   tokens_cache_read, tokens_cache_write_5m, tokens_cache_write_1h
+                   tokens_cache_read, tokens_cache_write_5m, tokens_cache_write_1h, tokens_reported
             FROM usage_events
             WHERE model_canonical = ?
               AND (? = 1 OR cost_source != 'reported' OR reported_cost_usd_micros IS NOT NULL)
@@ -294,6 +325,7 @@ public final class LocalAgentScanner {
                     cacheWrite5mTokens: row.int("tokens_cache_write_5m") ?? 0,
                     cacheWrite1hTokens: row.int("tokens_cache_write_1h") ?? 0,
                     reportedCostUSDMicros: reported,
+                    tokensReported: (row.int("tokens_reported") ?? 1) == 1,
                     sourceOffset: 0
                 )
                 let (micros, source) = calculator.cost(for: event)
@@ -380,14 +412,25 @@ public final class LocalAgentScanner {
 
         do {
             switch root.kind {
-            case .claudeJSONL, .codexJSONL, .ompJSONL, .reasonixStats, .grokJSONL:
+            case .claudeJSONL, .codexJSONL, .ompJSONL, .reasonixStats, .grokJSONL,
+                 .qoderJSONL, .workbuddyJSONL:
                 try scanJSONLRoot(root, runId: runId, progress: progress, reporter: reporter)
+
+            case .qwenJSONL:
+                try scanQwenRoot(root, runId: runId, progress: progress, reporter: reporter)
+            case .antigravitySQLite, .geminiChat:
+                try scanGoogleCLIRoot(root, runId: runId, progress: progress, reporter: reporter)
 
             case .dshJSONL:
                 try scanDshRoot(root, runId: runId, progress: progress, reporter: reporter)
 
             case .opencodeSQLite:
                 try scanOpenCodeRoot(root, runId: runId, progress: progress, reporter: reporter)
+            }
+
+            if root.kind == .qoderJSONL {
+                // 模型目录失败不能让本地会话扫描失败；旧目录仍可用，首次失败则诚实显示原始 ID。
+                try? refreshQoderModelCatalogIfNeeded(projectsRoot: root.rootURL)
             }
 
             try finishRun(
@@ -415,10 +458,86 @@ public final class LocalAgentScanner {
         }
     }
 
+    private func refreshQoderModelCatalogIfNeeded(
+        projectsRoot: URL,
+        now: Date = Date()
+    ) throws {
+        let nowMilliseconds = Int64((now.timeIntervalSince1970 * 1_000).rounded())
+        let freshnessCutoff = nowMilliseconds - 6 * 60 * 60 * 1_000
+        let lastFetch = try database.query(
+            "SELECT max(fetched_epoch_ms) AS value FROM model_catalog WHERE provider_id IN ('qoder-cli', 'qoder-desktop')"
+        ).first?.int("value")
+        guard lastFetch == nil || lastFetch! < freshnessCutoff else { return }
+
+        let homeDirectory = projectsRoot
+            .deletingLastPathComponent() // .qoder-cn
+            .deletingLastPathComponent() // home
+        let entries = try qoderModelCatalogLoader(homeDirectory)
+        guard !entries.isEmpty else { return }
+
+        struct Alias {
+            let sourceModelId: String
+            let displayName: String
+            let source: String
+            let isEnabled: Bool?
+        }
+        var aliases: [String: Alias] = [:]
+        var conflicts: Set<String> = []
+        for entry in entries {
+            for sourceModelId in entry.sourceModelIds {
+                let canonical = ModelNameNormalizer.canonical(sourceModelId)
+                guard canonical != ModelNameNormalizer.unknown else { continue }
+                if let existing = aliases[canonical], existing.displayName != entry.displayName {
+                    conflicts.insert(canonical)
+                    continue
+                }
+                aliases[canonical] = Alias(
+                    sourceModelId: sourceModelId,
+                    displayName: entry.displayName,
+                    source: entry.source ?? "qoder-initialize",
+                    isEnabled: entry.isEnabled
+                )
+            }
+        }
+        for conflict in conflicts { aliases.removeValue(forKey: conflict) }
+        guard !aliases.isEmpty else { return }
+
+        try database.execute("BEGIN IMMEDIATE")
+        do {
+            try database.execute("DELETE FROM model_catalog WHERE provider_id IN ('qoder-cli', 'qoder-desktop')")
+            for providerId in ["qoder-cli", "qoder-desktop"] {
+                for (canonical, alias) in aliases.sorted(by: { $0.key < $1.key }) {
+                    try database.execute(
+                        """
+                        INSERT INTO model_catalog(
+                          provider_id, model_canonical, source_model_id, display_name,
+                          catalog_source, is_enabled, fetched_epoch_ms
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            .text(providerId),
+                            .text(canonical),
+                            .text(alias.sourceModelId),
+                            .text(alias.displayName),
+                            .text(alias.source),
+                            alias.isEnabled.map { .int($0 ? 1 : 0) } ?? .null,
+                            .int(nowMilliseconds),
+                        ]
+                    )
+                }
+            }
+            try database.execute("COMMIT")
+        } catch {
+            try? database.execute("ROLLBACK")
+            throw error
+        }
+    }
+
     private func loadEnabledRoot(id rootId: Int64) throws -> ScanRoot? {
         let rows = try database.query(
             """
-            SELECT id, kind, root_path, source_db_path, scan_mode, last_successful_cursor, display_name
+            SELECT id, kind, root_path, source_db_path, auxiliary_path,
+                   scan_mode, last_successful_cursor, display_name
             FROM scan_roots
             WHERE id = ? AND enabled = 1 AND scan_mode != 'disabled'
             """,
@@ -438,6 +557,7 @@ public final class LocalAgentScanner {
             kind: kind,
             rootURL: URL(fileURLWithPath: rootPath, isDirectory: kind != .opencodeSQLite),
             sourceDatabaseURL: row.string("source_db_path").map { URL(fileURLWithPath: $0) },
+            auxiliaryURL: row.string("auxiliary_path").map { URL(fileURLWithPath: $0, isDirectory: true) },
             runKind: runKind,
             lastSuccessfulCursor: row.string("last_successful_cursor"),
             displayName: row.string("display_name") ?? kind.rawValue
@@ -458,8 +578,21 @@ public final class LocalAgentScanner {
         for rootId in rootIds {
             guard let root = try loadEnabledRoot(id: rootId) else { continue }
             switch root.kind {
-            case .claudeJSONL, .codexJSONL, .ompJSONL, .reasonixStats:
+            case .claudeJSONL, .codexJSONL, .ompJSONL, .reasonixStats, .qoderJSONL, .workbuddyJSONL:
                 for file in try jsonlFiles(under: root.rootURL) {
+                    files += 1
+                    bytes += (try? fileMetadata(for: file).sizeBytes) ?? 0
+                }
+            case .antigravitySQLite, .geminiChat:
+                for file in try googleCLIFiles(root) {
+                    files += 1
+                    bytes += (try? fileMetadata(for: file).sizeBytes) ?? 0
+                }
+            case .qwenJSONL:
+                for file in try QwenUsageSnapshotAdapter(
+                    rootURL: root.rootURL,
+                    usageHistoryRootURL: root.auxiliaryURL
+                ).sourceFiles() {
                     files += 1
                     bytes += (try? fileMetadata(for: file).sizeBytes) ?? 0
                 }
@@ -486,6 +619,31 @@ public final class LocalAgentScanner {
 
     private func scanJSONLRoot(_ root: ScanRoot, runId: Int64, progress: ScanProgress, reporter: FullRescanProgress?) throws {
         var failureCount = 0
+        let qoderDesktopSessionIDs = root.kind == .qoderJSONL
+            ? try qoderDesktopSessionIDs(for: root.rootURL)
+            : []
+        let workBuddyCredits = root.kind == .workbuddyJSONL
+            ? try workBuddyCreditsBySession(for: root.rootURL)
+            : [:]
+        let auxiliaryStorageRevision: String?
+        switch root.kind {
+        case .qoderJSONL:
+            auxiliaryStorageRevision = auxiliaryRevision(
+                qoderDesktopSessionIDs.sorted().map { "desktop:\($0)" }
+            )
+        case .workbuddyJSONL:
+            auxiliaryStorageRevision = auxiliaryRevision(
+                workBuddyCredits.keys.sorted().flatMap { sessionID in
+                    (workBuddyCredits[sessionID] ?? [:]).keys.sorted().compactMap { requestID in
+                        guard let value = workBuddyCredits[sessionID]?[requestID] else { return nil }
+                        let observedAt = value.observedAt?.timeIntervalSince1970.bitPattern ?? 0
+                        return "credit:\(sessionID):\(requestID):\(value.amount.bitPattern):\(observedAt)"
+                    }
+                }
+            )
+        default:
+            auxiliaryStorageRevision = nil
+        }
         let files = root.kind == .grokJSONL
             ? try GrokPaths.updatesFiles(under: root.rootURL)
             : try jsonlFiles(under: root.rootURL)
@@ -496,7 +654,15 @@ public final class LocalAgentScanner {
                 // autoreleased 的 Foundation 对象，一个大 root（Codex 近 2 万文件、单文件 25 万行）
                 // 若不逐文件排干，临时对象会堆到数 GB。
                 let hadIssue = try autoreleasepool {
-                    try scanJSONLFile(file, root: root, runId: runId, progress: progress)
+                    try scanJSONLFile(
+                        file,
+                        root: root,
+                        runId: runId,
+                        progress: progress,
+                        qoderDesktopSessionIDs: qoderDesktopSessionIDs,
+                        workBuddyCredits: workBuddyCredits,
+                        auxiliaryStorageRevision: auxiliaryStorageRevision
+                    )
                 }
                 if hadIssue {
                     failureCount += 1
@@ -517,7 +683,15 @@ public final class LocalAgentScanner {
     }
 
     /// 返回 true 表示该文件解析有问题（残行/失败），调用方据此把整根标记为 partial。
-    private func scanJSONLFile(_ file: URL, root: ScanRoot, runId: Int64, progress: ScanProgress) throws -> Bool {
+    private func scanJSONLFile(
+        _ file: URL,
+        root: ScanRoot,
+        runId: Int64,
+        progress: ScanProgress,
+        qoderDesktopSessionIDs: Set<String> = [],
+        workBuddyCredits: [String: [String: WorkBuddyCreditFallback]] = [:],
+        auxiliaryStorageRevision: String? = nil
+    ) throws -> Bool {
         let metadata = try fileMetadata(for: file)
         let relativePath = relativePath(for: file, rootURL: root.rootURL)
         let existing = try existingSourceFile(rootId: root.id, relativePath: relativePath)
@@ -536,6 +710,7 @@ public final class LocalAgentScanner {
            existing.parseStatus == "ok",
            existing.sizeBytes == metadata.sizeBytes,
            existing.mtimeNanoseconds == metadata.mtimeNanoseconds,
+           existing.parserState?.auxiliaryStorageRevision == auxiliaryStorageRevision,
            existing.parserState != nil {
             try markSourceFileSeen(sourceFileId: existing.id, runId: runId)
             return false
@@ -547,7 +722,7 @@ public final class LocalAgentScanner {
         // 一个 session 横跨父 jsonl 与多个 subagent jsonl，各文件偏移互不相干。
         // 绝不能用 max(source_offset)+1：source_offset 是行首字节，加一落在行内——今天靠半行
         // JSON 解析失败侥幸不重复，但以空白开头的行残片仍是合法 JSON，会被重复消费并造成重复计数。
-        let planResume = shouldResume(existing: existing, metadata: metadata, file: file)
+        let planResume = shouldResume(existing: existing, metadata: metadata, file: file, kind: root.kind)
         var startOffset: Int64 = planResume ? (existing?.parserState?.resumeOffset ?? 0) : 0
         // 只有真正续读（startOffset>0）才把上次的 parser_state 传给 parser；否则全量重读、状态清零。
         var resumeState = startOffset > 0 ? existing?.parserState : nil
@@ -556,7 +731,13 @@ public final class LocalAgentScanner {
             try deleteEvents(sourceFileId: existingId)
         }
 
-        let parser = try makeParser(for: root.kind, resuming: resumeState)
+        let parser = try makeParser(
+            for: root.kind,
+            resuming: resumeState,
+            sourceURL: file,
+            qoderDesktopSessionIDs: qoderDesktopSessionIDs,
+            workBuddyCredits: workBuddyCredits
+        )
         var sawLine = false
 
         var readResult: JSONLReadResult
@@ -619,7 +800,11 @@ public final class LocalAgentScanner {
                 parsed: true,
                 parseStatus: "ok",
                 parseError: nil,
-                parserState: resumed(resumeState ?? ParserState(), stoppedAt: readResult.nextOffset)
+                parserState: resumed(
+                    resumeState ?? ParserState(),
+                    stoppedAt: readResult.nextOffset,
+                    auxiliaryStorageRevision: auxiliaryStorageRevision
+                )
             )
             return false
         }
@@ -652,7 +837,13 @@ public final class LocalAgentScanner {
             try deleteEvents(sourceFileId: existingId)
             startOffset = 0
             resumeState = nil
-            let replayParser = try makeParser(for: root.kind, resuming: nil)
+            let replayParser = try makeParser(
+                for: root.kind,
+                resuming: nil,
+                sourceURL: file,
+                qoderDesktopSessionIDs: qoderDesktopSessionIDs,
+                workBuddyCredits: workBuddyCredits
+            )
             sawLine = false
             do {
                 readResult = try JSONLStreamReader.readLines(
@@ -694,7 +885,11 @@ public final class LocalAgentScanner {
                 parsed: true,
                 parseStatus: "ok",
                 parseError: nil,
-                parserState: resumed(outcome.state, stoppedAt: readResult.nextOffset)
+                parserState: resumed(
+                    outcome.state,
+                    stoppedAt: readResult.nextOffset,
+                    auxiliaryStorageRevision: auxiliaryStorageRevision
+                )
             )
             return false
         }
@@ -723,9 +918,10 @@ public final class LocalAgentScanner {
             try writer.write(session, scanRootId: root.id, sourceFileId: fileId, runId: runId,
                              rootSessionKeyOverride: ompAttribution.rootSessionKey,
                              subagentLabelOverride: ompAttribution.label)
-            // Claude 子代理不改解析归属（事件仍归父会话、标 is_sidechain），只把边车里的
-            // agentType 名字记到本文件的 source_files.subagent_label，供下钻展示。
-            if let label = claudeSubagentLabel(for: file, relativePath: relativePath, kind: root.kind) {
+            // 子代理不改父会话的 agent_sessions 归属；只把标签记到当前 source_file，
+            // 供下钻按边车文件展示。Claude 优先采用 .meta.json 的 agentType，其余产品
+            // 使用稳定的子代理文件名。
+            if let label = sourceFileSubagentLabel(for: file, relativePath: relativePath, kind: root.kind) {
                 try setSourceFileSubagentLabel(fileId: fileId, label: label)
             }
         } catch {
@@ -754,10 +950,166 @@ public final class LocalAgentScanner {
             metadata: metadata,
             parseStatus: hasResidual ? "partial" : "ok",
             parseError: hasResidual ? "parse partial: incomplete line" : nil,
-            parserState: resumed(outcome.state, stoppedAt: readResult.nextOffset),
+            parserState: resumed(
+                outcome.state,
+                stoppedAt: readResult.nextOffset,
+                auxiliaryStorageRevision: auxiliaryStorageRevision
+            ),
             runId: runId
         )
         return hasResidual
+    }
+
+    private func googleCLIFiles(_ root: ScanRoot) throws -> [URL] {
+        if root.kind == .geminiChat { return try GeminiCLIUsage.files(under: root.rootURL) }
+        guard FileManager.default.fileExists(atPath: root.rootURL.path) else { return [] }
+        return try FileManager.default.contentsOfDirectory(at: root.rootURL, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "db" && UUID(uuidString: $0.deletingPathExtension().lastPathComponent) != nil }
+            .sorted { $0.path < $1.path }
+    }
+
+    private func scanGoogleCLIRoot(_ root: ScanRoot, runId: Int64, progress: ScanProgress, reporter: FullRescanProgress?) throws {
+        let isSQLite = root.kind == .antigravitySQLite
+        let fileType = isSQLite ? "sqlite_db" : "jsonl_session"
+        var failures = 0
+        for file in try googleCLIFiles(root) {
+            progress.filesSeen += 1
+            do {
+                try autoreleasepool {
+                    let meta = try fileMetadata(for: file)
+                    defer { reporter?.advance(bytes: meta.sizeBytes) }
+                    let relative = relativePath(for: file, rootURL: root.rootURL)
+                    let existing = try existingSourceFile(rootId: root.id, relativePath: relative)
+                    let revision = isSQLite ? sqliteStorageRevision(for: file) : nil
+                    if let existing, existing.parseStatus == "ok", existing.sizeBytes == meta.sizeBytes,
+                       existing.inode == meta.inode, existing.mtimeNanoseconds == meta.mtimeNanoseconds,
+                       existing.parserState?.auxiliaryStorageRevision == revision {
+                        try markSourceFileSeen(sourceFileId: existing.id, runId: runId)
+                        return
+                    }
+                    progress.filesChanged += 1
+                    let id = try beginSourceFile(rootId: root.id, relativePath: relative, canonicalPath: meta.canonicalPath,
+                                                 fileType: fileType, metadata: meta, runId: runId)
+                    do {
+                        let session = isSQLite ? try AntigravityCLIUsage.session(at: file) : try GeminiCLIUsage.session(at: file)
+                        if let session {
+                            try writer.write(session, scanRootId: root.id, sourceFileId: id, runId: runId, replacingFileEvents: true)
+                        } else {
+                            try deleteEvents(sourceFileId: id)
+                        }
+                        try finishSourceFile(fileId: id, file: file, metadata: meta, parseStatus: "ok", parseError: nil,
+                                             parserState: ParserState(auxiliaryStorageRevision: revision), runId: runId)
+                        progress.bytesRead += meta.sizeBytes
+                    } catch {
+                        try finishSourceFile(fileId: id, file: file, metadata: meta, parseStatus: "failed",
+                                             parseError: sanitizedError(error), parserState: nil, runId: runId)
+                        throw error
+                    }
+                }
+            } catch { failures += 1 }
+        }
+        if failures > 0 { throw JSONLRootPartialError(failureCount: failures) }
+    }
+
+    private func scanQwenRoot(_ root: ScanRoot, runId: Int64, progress: ScanProgress, reporter: FullRescanProgress?) throws {
+        var isDirectory: ObjCBool = false
+        let metadataURL: URL
+        if FileManager.default.fileExists(atPath: root.rootURL.path, isDirectory: &isDirectory),
+           isDirectory.boolValue {
+            metadataURL = root.rootURL
+        } else if let auxiliaryURL = root.auxiliaryURL,
+                  FileManager.default.fileExists(atPath: auxiliaryURL.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue {
+            metadataURL = auxiliaryURL
+        } else {
+            return
+        }
+
+        let adapter = QwenUsageSnapshotAdapter(
+            rootURL: root.rootURL,
+            usageHistoryRootURL: root.auxiliaryURL
+        )
+        // 先只算内容版本；未变化时不再解析整套 JSONL。内容哈希仍保证等长、保留
+        // mtime 的改写不会被漏掉，变化时把同一份文件清单交给 snapshot，避免重复枚举。
+        let storage = try adapter.storageState()
+        progress.filesSeen = Int64(storage.files.count)
+        for file in storage.files {
+            reporter?.advance(bytes: (try? fileMetadata(for: file).sizeBytes) ?? 0)
+        }
+
+        let rootMetadata = try fileMetadata(for: metadataURL)
+        let sentinelMetadata = FileMetadata(
+            canonicalPath: rootMetadata.canonicalPath + "#qwen-snapshot",
+            sizeBytes: storage.sourceBytes,
+            mtimeNanoseconds: rootMetadata.mtimeNanoseconds,
+            inode: rootMetadata.inode,
+            dev: rootMetadata.dev
+        )
+        let relativePath = "__qwen_snapshot__"
+        let existing = try existingSourceFile(rootId: root.id, relativePath: relativePath)
+        guard existing?.parseStatus != "ok"
+                || existing?.parserState?.qwenStorageRevision != storage.revision else {
+            if let existing { try markSourceFileSeen(sourceFileId: existing.id, runId: runId) }
+            progress.cursorAfter = root.lastSuccessfulCursor
+            return
+        }
+
+        let snapshot = try adapter.snapshot(using: storage)
+        progress.filesChanged = Int64(storage.files.count)
+        progress.bytesRead = storage.sourceBytes
+        do {
+            let sentinelID = try beginSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: sentinelMetadata.canonicalPath,
+                fileType: "jsonl_session",
+                metadata: sentinelMetadata,
+                runId: runId
+            )
+            try deleteEvents(scanRootId: root.id)
+            try database.execute(
+                "UPDATE agent_sessions SET status = 'deleted', deleted_at = CURRENT_TIMESTAMP WHERE scan_root_id = ?",
+                [.int(root.id)]
+            )
+
+            for session in snapshot.sessions {
+                let sessionFileID = try upsertSnapshotSessionFile(
+                    rootId: root.id,
+                    sourceName: "qwen",
+                    sessionKey: session.sessionKey,
+                    rootCanonicalPath: rootMetadata.canonicalPath,
+                    metadata: sentinelMetadata,
+                    runId: runId
+                )
+                try writer.write(session, scanRootId: root.id, sourceFileId: sessionFileID, runId: runId)
+            }
+
+            try testHookAfterEventWrite?(sentinelID)
+            try finishSourceFile(
+                fileId: sentinelID,
+                file: metadataURL,
+                metadata: sentinelMetadata,
+                parseStatus: "ok",
+                parseError: nil,
+                parserState: ParserState(qwenStorageRevision: snapshot.storageRevision),
+                runId: runId
+            )
+            progress.cursorAfter = latestCursor(in: snapshot.sessions) ?? root.lastSuccessfulCursor
+        } catch {
+            _ = try? upsertSourceFile(
+                rootId: root.id,
+                relativePath: relativePath,
+                canonicalPath: sentinelMetadata.canonicalPath,
+                fileType: "jsonl_session",
+                metadata: sentinelMetadata,
+                runId: runId,
+                parsed: false,
+                parseStatus: "failed",
+                parseError: sanitizedError(error),
+                parserState: nil
+            )
+            throw error
+        }
     }
 
     private func scanOpenCodeRoot(_ root: ScanRoot, runId: Int64, progress: ScanProgress, reporter: FullRescanProgress?) throws {
@@ -767,7 +1119,7 @@ public final class LocalAgentScanner {
         progress.filesSeen = 1
 
         let metadata = try fileMetadata(for: databaseURL)
-        let storageRevision = openCodeStorageRevision(for: databaseURL)
+        let storageRevision = sqliteStorageRevision(for: databaseURL)
         reporter?.advance(bytes: metadata.sizeBytes)
         let relativePath = databaseURL.lastPathComponent.isEmpty ? databaseURL.path : databaseURL.lastPathComponent
         let existing = try existingSourceFile(rootId: root.id, relativePath: relativePath)
@@ -775,7 +1127,9 @@ public final class LocalAgentScanner {
             || existing?.mtimeNanoseconds != metadata.mtimeNanoseconds
 
         do {
-            let sourceDatabase = try SQLiteDatabase(path: databaseURL.path)
+            // 来源库只读打开：扫描器不拥有 OpenCode 的数据库，不能创建文件、写 WAL
+            // 或改变其连接级持久状态。
+            let sourceDatabase = try SQLiteDatabase(path: databaseURL.path, readOnly: true)
             defer { try? sourceDatabase.close() }
             let adapter = OpenCodeUsageEventAdapter(sourceDatabase: sourceDatabase)
             // OpenCode 使用 WAL：主 .db 的 stat 不变时，消息仍可能已新增、更新或删除。
@@ -1074,7 +1428,77 @@ public final class LocalAgentScanner {
         return files.sorted { $0.path < $1.path }
     }
 
-    private func makeParser(for kind: SourceKind, resuming state: ParserState?) throws -> UsageEventParser {
+    /// Qoder Desktop 与 CLI 共用 `~/.qoder-cn/projects`。Desktop 的 `chat_sessions`
+    /// 是唯一可靠的入口归属表。库不存在表示没有可见 Desktop 归属；库已经存在却读失败时
+    /// 必须让本轮扫描失败并保留旧数据，不能把“未知”猜成 CLI。
+    private func qoderDesktopSessionIDs(for projectsRoot: URL) throws -> Set<String> {
+        let homeDirectory = projectsRoot.deletingLastPathComponent().deletingLastPathComponent()
+        let databaseURL = TokenMeterPaths.qoderDesktopDatabaseURL(homeDirectory: homeDirectory)
+        guard fileExists(at: databaseURL) else { return [] }
+        let source = try SQLiteDatabase(path: databaseURL.path, readOnly: true)
+        defer { try? source.close() }
+        let table = try source.query(
+            "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'chat_sessions' LIMIT 1"
+        )
+        guard !table.isEmpty else { return [] }
+        return Set(try source.query("SELECT session_id FROM chat_sessions").compactMap {
+            $0.string("session_id")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty })
+    }
+
+    /// WorkBuddy SQLite 只用 `session_usage.credit_json`；`used/size` 是当前上下文快照，
+    /// 不是可相加的历史 Token。JSONL 已有实际 Credit 时 parser 会优先采用 JSONL。
+    private func workBuddyCreditsBySession(for projectsRoot: URL) throws -> [String: [String: WorkBuddyCreditFallback]] {
+        let databaseURL = projectsRoot.deletingLastPathComponent().appendingPathComponent("workbuddy.db")
+        guard fileExists(at: databaseURL) else { return [:] }
+        let source = try SQLiteDatabase(path: databaseURL.path, readOnly: true)
+        defer { try? source.close() }
+        let table = try source.query(
+            "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'session_usage' LIMIT 1"
+        )
+        guard !table.isEmpty else { return [:] }
+        var result: [String: [String: WorkBuddyCreditFallback]] = [:]
+        for row in try source.query("SELECT session_id, updated_at, credit_json FROM session_usage") {
+            guard let sessionID = row.string("session_id"), !sessionID.isEmpty,
+                  let json = row.string("credit_json") else { continue }
+            let trimmed = json.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, trimmed != "null" else { continue }
+            guard let object = try? JSONSerialization.jsonObject(with: Data(trimmed.utf8)) as? [String: Any] else {
+                throw LocalAgentParserError.unsupportedFormat
+            }
+            let observedAt = row.double("updated_at").flatMap { value -> Date? in
+                guard value.isFinite, value > 0 else { return nil }
+                return Date(timeIntervalSince1970: value > 100_000_000_000 ? value / 1_000 : value)
+            }
+            var credits: [String: WorkBuddyCreditFallback] = [:]
+            for (requestID, raw) in object {
+                guard !requestID.isEmpty else { continue }
+                if raw is NSNull { continue }
+                guard let value = JSONDictionary.double(raw), value.isFinite, value >= 0 else {
+                    throw LocalAgentParserError.unsupportedFormat
+                }
+                credits[requestID] = WorkBuddyCreditFallback(amount: value, observedAt: observedAt)
+            }
+            if !credits.isEmpty { result[sessionID] = credits }
+        }
+        return result
+    }
+
+    private func workBuddySessionKey(from sourceURL: URL) -> String? {
+        if sourceURL.pathComponents.contains("subagents") {
+            return sourceURL.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent
+        }
+        let value = sourceURL.deletingPathExtension().lastPathComponent
+        return value.isEmpty ? nil : value
+    }
+
+    private func makeParser(
+        for kind: SourceKind,
+        resuming state: ParserState?,
+        sourceURL: URL? = nil,
+        qoderDesktopSessionIDs: Set<String> = [],
+        workBuddyCredits: [String: [String: WorkBuddyCreditFallback]] = [:]
+    ) throws -> UsageEventParser {
         switch kind {
         case .claudeJSONL:
             return ClaudeCodeUsageEventParser(resuming: state)
@@ -1088,7 +1512,19 @@ public final class LocalAgentScanner {
             return DshUsageEventParser(resuming: state)
         case .grokJSONL:
             return GrokUsageEventParser(resuming: state)
-        case .opencodeSQLite:
+        case .qoderJSONL:
+            return QoderUsageEventParser(
+                resuming: state,
+                desktopSessionIDs: qoderDesktopSessionIDs,
+                isSubagentSource: sourceURL?.pathComponents.contains("subagents") == true
+            )
+        case .workbuddyJSONL:
+            let sessionKey = sourceURL.flatMap(workBuddySessionKey(from:))
+            return WorkBuddyUsageEventParser(
+                resuming: state,
+                fallbackCredits: sessionKey.flatMap { workBuddyCredits[$0] } ?? [:]
+            )
+        case .qwenJSONL, .opencodeSQLite, .antigravitySQLite, .geminiChat:
             throw LocalAgentParserError.unsupportedFormat
         }
     }
@@ -1101,7 +1537,8 @@ public final class LocalAgentScanner {
         switch kind {
         case .codexJSONL:
             return ["token_count", "session_meta", "turn_context", "task_started", "thread_settings_applied"]
-        case .claudeJSONL, .ompJSONL, .opencodeSQLite, .reasonixStats, .dshJSONL, .grokJSONL:
+        case .claudeJSONL, .ompJSONL, .opencodeSQLite, .reasonixStats, .dshJSONL, .grokJSONL,
+             .qwenJSONL, .qoderJSONL, .workbuddyJSONL, .antigravitySQLite, .geminiChat:
             return nil
         }
     }
@@ -1112,7 +1549,15 @@ public final class LocalAgentScanner {
     /// （Data.write 非原子，改写保留 inode）。少了它，改写会被误当追加：新的开头永不被解析、
     /// 旧内容的事件也不会被 deleteEvents 清掉、parser 还带着旧会话身份续读，全乱套。
     /// oldPrefixIntact 拿【旧】len 去读【新】文件比 hash：不变 = 追加 → 续读；变了 = 改写 → 全量重读。
-    private func shouldResume(existing: ExistingSourceFile?, metadata: FileMetadata, file: URL) -> Bool {
+    private func shouldResume(
+        existing: ExistingSourceFile?,
+        metadata: FileMetadata,
+        file: URL,
+        kind: SourceKind
+    ) -> Bool {
+        // WorkBuddy 的一条 Request 可由多个阶段帧组成，且 Token 采用「最后快照胜出」、
+        // Credit 采用「阶段求和」。只读追加片段无法与文件前半段正确合并，变化时整文件重放。
+        guard kind != .workbuddyJSONL else { return false }
         guard let existing,
               existing.parseStatus == "ok",
               existing.parserState?.requiresFullReplay != true,
@@ -1269,6 +1714,28 @@ public final class LocalAgentScanner {
             relativePath: "\(dbRelativePath)#\(sessionKey)",
             canonicalPath: "\(dbCanonicalPath)#\(sessionKey)",
             fileType: "sqlite_db",
+            metadata: metadata,
+            runId: runId,
+            parsed: true,
+            parseStatus: "ok",
+            parseError: nil,
+            parserState: nil
+        )
+    }
+
+    private func upsertSnapshotSessionFile(
+        rootId: Int64,
+        sourceName: String,
+        sessionKey: String,
+        rootCanonicalPath: String,
+        metadata: FileMetadata,
+        runId: Int64
+    ) throws -> Int64 {
+        try upsertSourceFile(
+            rootId: rootId,
+            relativePath: "__\(sourceName)_sessions__/\(sessionKey)",
+            canonicalPath: "\(rootCanonicalPath)#\(sourceName)-session/\(sessionKey)",
+            fileType: "jsonl_session",
             metadata: metadata,
             runId: runId,
             parsed: true,
@@ -1441,10 +1908,20 @@ public final class LocalAgentScanner {
     }
 
     /// 把这次 readLines 停下的字节位置写进要保存的 parser_state，作为下次续读起点。
-    private func resumed(_ state: ParserState, stoppedAt offset: Int64) -> ParserState {
+    private func resumed(
+        _ state: ParserState,
+        stoppedAt offset: Int64,
+        auxiliaryStorageRevision: String? = nil
+    ) -> ParserState {
         var next = state
         next.resumeOffset = offset
+        next.auxiliaryStorageRevision = auxiliaryStorageRevision
         return next
+    }
+
+    private func auxiliaryRevision(_ rows: [String]) -> String {
+        SHA256.hash(data: Data(rows.joined(separator: "\n").utf8))
+            .lowercaseHex
     }
 
     private func decodeParserState(_ json: String?) -> ParserState? {
@@ -1476,7 +1953,7 @@ public final class LocalAgentScanner {
 
     /// 不读取消息内容，只记录 SQLite 主库和 WAL 的存储版本。OpenCode 的正常写入若尚未
     /// checkpoint，只会改变 `-wal`；只看主库 stat 会把删除/更新误判为“无变化”。
-    private func openCodeStorageRevision(for databaseURL: URL) -> String {
+    private func sqliteStorageRevision(for databaseURL: URL) -> String {
         [databaseURL, URL(fileURLWithPath: databaseURL.path + "-wal")]
             .map { url in
                 guard let metadata = try? fileMetadata(for: url) else { return "missing" }
@@ -1556,6 +2033,17 @@ public final class LocalAgentScanner {
         return JSONDictionary.string(object, "agentType")
     }
 
+    private func sourceFileSubagentLabel(for file: URL, relativePath: String, kind: SourceKind) -> String? {
+        if let label = claudeSubagentLabel(for: file, relativePath: relativePath, kind: kind) {
+            return label
+        }
+        guard relativePath.contains("/subagents/"),
+              kind == .qoderJSONL || kind == .workbuddyJSONL else { return nil }
+        let label = file.deletingPathExtension().lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return label.isEmpty ? nil : label
+    }
+
     private func setSourceFileSubagentLabel(fileId: Int64, label: String) throws {
         try database.execute(
             "UPDATE source_files SET subagent_label = ? WHERE id = ?",
@@ -1624,6 +2112,7 @@ private struct ScanRoot {
     let kind: SourceKind
     let rootURL: URL
     let sourceDatabaseURL: URL?
+    let auxiliaryURL: URL?
     let runKind: String
     let lastSuccessfulCursor: String?
     let displayName: String

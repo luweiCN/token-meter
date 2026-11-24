@@ -33,6 +33,281 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(try scalarInt(db, "SELECT count(*) AS value FROM projections"), finalRows)
     }
 
+    func testQwenSnapshotScanWritesProviderAndDoesNotAddOverlappingLedgers() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let chats = root.appendingPathComponent("projects/repo/chats", isDirectory: true)
+        let usage = root.appendingPathComponent("usage", isDirectory: true)
+        try FileManager.default.createDirectory(at: chats, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: usage, withIntermediateDirectories: true)
+        try writeJSONL(
+            #"{"type":"system","subtype":"ui_telemetry","sessionId":"qwen-session","cwd":"/repo","timestamp":"2026-09-20T10:00:00Z","systemPayload":{"uiEvent":{"event.name":"qwen-code.api_response","event.timestamp":"2026-09-20T10:00:00Z","response_id":"response-1","model":"qwen3-coder","input_token_count":100,"output_token_count":20,"cached_content_token_count":30,"total_token_count":120}}}"# + "\n",
+            to: chats.appendingPathComponent("qwen-session.jsonl")
+        )
+        try writeJSONL(
+            #"{"id":"overlap","sessionId":"qwen-session","timestamp":"2026-09-20T10:00:00Z","model":"qwen3-coder","inputTokens":9000,"outputTokens":9000,"totalTokens":18000}"# + "\n",
+            to: usage.appendingPathComponent("token-usage-2026-09.jsonl")
+        )
+        let database = try migratedDatabase(rootKind: .qwenJSONL, rootPath: root.path)
+
+        let scanner = LocalAgentScanner(database: database)
+        try await scanner.scanRoot(id: 1)
+        try await scanner.scanRoot(id: 1)
+
+        let session = try XCTUnwrap(database.query(
+            "SELECT provider_id, source_session_key FROM agent_sessions"
+        ).first)
+        XCTAssertEqual(session.string("provider_id"), "qwen-code")
+        XCTAssertEqual(session.string("source_session_key"), "qwen-session")
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT tokens_total AS value FROM usage_events"), 120)
+        XCTAssertEqual(try scalarInt(database, "SELECT files_changed AS value FROM scan_runs ORDER BY id DESC LIMIT 1"), 0)
+    }
+
+    func testQoderScanUsesDesktopDatabaseForProviderAttribution() async throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let projects = home.appendingPathComponent(".qoder-cn/projects", isDirectory: true)
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        try writeJSONL(
+            #"{"type":"assistant","sessionId":"desktop-session","cwd":"/repo","timestamp":"2026-09-20T10:00:00Z","message":{"id":"message-1","model":"qwen3-coder","usage":{"input_tokens":10,"output_tokens":2,"credits":0.25,"request_id":"request-1"}}}"# + "\n",
+            to: projects.appendingPathComponent("desktop-session.jsonl")
+        )
+
+        let desktopDirectory = home.appendingPathComponent(
+            "Library/Application Support/com.qodercn.app.stable",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: desktopDirectory, withIntermediateDirectories: true)
+        let desktopDatabase = try SQLiteDatabase(path: desktopDirectory.appendingPathComponent("main.sqlite").path)
+        try desktopDatabase.execute("CREATE TABLE chat_sessions(session_id TEXT PRIMARY KEY)")
+        try desktopDatabase.execute("INSERT INTO chat_sessions(session_id) VALUES ('desktop-session')")
+        try desktopDatabase.close()
+
+        let database = try migratedDatabase(rootKind: .qoderJSONL, rootPath: projects.path)
+        try await LocalAgentScanner(database: database).scanRoot(id: 1)
+
+        XCTAssertEqual(
+            try database.query("SELECT provider_id FROM agent_sessions").first?.string("provider_id"),
+            "qoder-desktop"
+        )
+        let event = try XCTUnwrap(database.query(
+            "SELECT tokens_total, tokens_reported, credits_picos FROM usage_events"
+        ).first)
+        XCTAssertEqual(event.int("tokens_total"), 12)
+        XCTAssertEqual(event.int("tokens_reported"), 1)
+        XCTAssertEqual(event.int("credits_picos"), 250_000_000_000)
+    }
+
+    func testQoderScanPersistsOfficialModelCatalogForCliAndDesktop() async throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let projects = home.appendingPathComponent(".qoder-cn/projects", isDirectory: true)
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        try writeJSONL(
+            #"{"type":"assistant","sessionId":"catalog-session","timestamp":"2026-09-20T10:00:00Z","message":{"model":"qmodel_38max","usage":{"input_tokens":0,"output_tokens":0,"credits":0.25,"request_id":"request-1"}}}"# + "\n",
+            to: projects.appendingPathComponent("catalog-session.jsonl")
+        )
+        let database = try migratedDatabase(rootKind: .qoderJSONL, rootPath: projects.path)
+        var loadedHomes: [URL] = []
+        let scanner = LocalAgentScanner(database: database, qoderModelCatalogLoader: { resolvedHome in
+            loadedHomes.append(resolvedHome.standardizedFileURL)
+            return [QoderModelCatalogEntry(
+                value: "qmodel_38max",
+                modelId: "qmodel_38max",
+                displayName: "Qwen3.8-Max",
+                source: "system",
+                isEnabled: true
+            )]
+        })
+
+        try await scanner.scanRoot(id: 1)
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(loadedHomes, [home.standardizedFileURL], "六小时内的重复扫描应复用目录缓存")
+        let rows = try database.query(
+            "SELECT provider_id, model_canonical, source_model_id, display_name FROM model_catalog ORDER BY provider_id"
+        )
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows.map { $0.string("provider_id") }, ["qoder-cli", "qoder-desktop"])
+        XCTAssertTrue(rows.allSatisfy { $0.string("model_canonical") == "qmodel_38max" })
+        XCTAssertTrue(rows.allSatisfy { $0.string("source_model_id") == "qmodel_38max" })
+        XCTAssertTrue(rows.allSatisfy { $0.string("display_name") == "Qwen3.8-Max" })
+    }
+
+    func testQoderDesktopAttributionRefreshesWhenOnlyItsDatabaseChanges() async throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let projects = home.appendingPathComponent(".qoder-cn/projects", isDirectory: true)
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        try writeJSONL(
+            #"{"type":"assistant","sessionId":"shared-session","timestamp":"2026-09-20T10:00:00Z","message":{"id":"message-1","model":"qwen3-coder","usage":{"input_tokens":10,"output_tokens":2,"request_id":"request-1"}}}"# + "\n",
+            to: projects.appendingPathComponent("shared-session.jsonl")
+        )
+        let database = try migratedDatabase(rootKind: .qoderJSONL, rootPath: projects.path)
+        let scanner = LocalAgentScanner(database: database)
+
+        try await scanner.scanRoot(id: 1)
+        XCTAssertEqual(
+            try database.query("SELECT provider_id FROM agent_sessions").first?.string("provider_id"),
+            "qoder-cli"
+        )
+
+        // 会话 JSONL 完全不变；Desktop 之后接管同一 session，归属也必须刷新。
+        let desktopDirectory = home.appendingPathComponent(
+            "Library/Application Support/com.qodercn.app.stable",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: desktopDirectory, withIntermediateDirectories: true)
+        let desktopDatabase = try SQLiteDatabase(path: desktopDirectory.appendingPathComponent("main.sqlite").path)
+        try desktopDatabase.execute("CREATE TABLE chat_sessions(session_id TEXT PRIMARY KEY)")
+        try desktopDatabase.execute("INSERT INTO chat_sessions(session_id) VALUES ('shared-session')")
+        try desktopDatabase.close()
+
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(
+            try database.query("SELECT provider_id FROM agent_sessions").first?.string("provider_id"),
+            "qoder-desktop"
+        )
+        XCTAssertEqual(
+            try scalarInt(database, "SELECT files_changed AS value FROM scan_runs ORDER BY id DESC LIMIT 1"),
+            1
+        )
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1)
+    }
+
+    func testUnreadableExistingQoderDesktopDatabaseDoesNotGuessCLIAttribution() async throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let projects = home.appendingPathComponent(".qoder-cn/projects", isDirectory: true)
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        try writeJSONL(
+            #"{"type":"assistant","sessionId":"unknown-owner","timestamp":"2026-09-20T10:00:00Z","message":{"usage":{"input_tokens":1}}}"# + "\n",
+            to: projects.appendingPathComponent("unknown-owner.jsonl")
+        )
+        let desktopDirectory = home.appendingPathComponent(
+            "Library/Application Support/com.qodercn.app.stable",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: desktopDirectory, withIntermediateDirectories: true)
+        try Data("not a sqlite database".utf8).write(to: desktopDirectory.appendingPathComponent("main.sqlite"))
+        let database = try migratedDatabase(rootKind: .qoderJSONL, rootPath: projects.path)
+
+        do {
+            try await LocalAgentScanner(database: database).scanRoot(id: 1)
+            XCTFail("已存在但不可读的归属库必须阻止猜测 provider")
+        } catch {}
+
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM agent_sessions"), 0)
+        XCTAssertEqual(
+            try database.query("SELECT status FROM scan_runs ORDER BY id DESC LIMIT 1").first?.string("status"),
+            "partial"
+        )
+    }
+
+    func testWorkBuddyScanUsesDatabaseCreditsOnlyAsPerRequestFallback() async throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let storage = home.appendingPathComponent(".workbuddy", isDirectory: true)
+        let projects = storage.appendingPathComponent("projects", isDirectory: true)
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        try writeJSONL(
+            #"{"sessionId":"wb-session","timestamp":1789898400000,"update":{"id":"token-stage","_meta":{"requestId":"request-with-tokens"},"usage":{"details":{"promptTokens":20,"completionTokens":4,"promptCacheHitTokens":5}}}}"# + "\n",
+            to: projects.appendingPathComponent("wb-session.jsonl")
+        )
+
+        let workBuddyDatabase = try SQLiteDatabase(path: storage.appendingPathComponent("workbuddy.db").path)
+        try workBuddyDatabase.execute(
+            "CREATE TABLE session_usage(session_id TEXT PRIMARY KEY, used INTEGER, size INTEGER, updated_at INTEGER, credit_json TEXT)"
+        )
+        try workBuddyDatabase.execute(
+            "INSERT INTO session_usage(session_id, used, size, updated_at, credit_json) VALUES (?,?,?,?,?)",
+            [.text("wb-session"), .int(9999), .int(10000), .int(1789898400000),
+             .text(#"{"request-with-tokens":0.1,"request-credit-only":0.2,"req-123":9}"#)]
+        )
+        try workBuddyDatabase.close()
+
+        let database = try migratedDatabase(rootKind: .workbuddyJSONL, rootPath: projects.path)
+        try await LocalAgentScanner(database: database).scanRoot(id: 1)
+
+        XCTAssertEqual(
+            try database.query("SELECT provider_id FROM agent_sessions").first?.string("provider_id"),
+            "workbuddy"
+        )
+        let events = try database.query(
+            "SELECT tokens_total, tokens_reported, credits_picos FROM usage_events ORDER BY dedupe_key"
+        )
+        XCTAssertEqual(events.count, 2, "数据库 used/size 不能生成 Token 事件，req-123 不能生成 Credit 事件")
+        XCTAssertEqual(events.compactMap { $0.int("credits_picos") }.reduce(0, +), 300_000_000_000)
+        XCTAssertEqual(events.filter { $0.int("tokens_reported") == 0 }.count, 1)
+        XCTAssertEqual(events.filter { $0.int("tokens_reported") == 1 }.first?.int("tokens_total"), 24)
+    }
+
+    func testWorkBuddyCreditFallbackRefreshesWhenOnlyItsDatabaseChanges() async throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let storage = home.appendingPathComponent(".workbuddy", isDirectory: true)
+        let projects = storage.appendingPathComponent("projects", isDirectory: true)
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        try writeJSONL(
+            #"{"sessionId":"wb-session","timestamp":1789898400000,"update":{"id":"token-stage","_meta":{"requestId":"request-1"},"usage":{"details":{"promptTokens":20,"completionTokens":4}}}}"# + "\n",
+            to: projects.appendingPathComponent("wb-session.jsonl")
+        )
+        let sourceDatabaseURL = storage.appendingPathComponent("workbuddy.db")
+        let sourceDatabase = try SQLiteDatabase(path: sourceDatabaseURL.path)
+        try sourceDatabase.execute(
+            "CREATE TABLE session_usage(session_id TEXT PRIMARY KEY, used INTEGER, size INTEGER, updated_at INTEGER, credit_json TEXT)"
+        )
+        try sourceDatabase.close()
+
+        let database = try migratedDatabase(rootKind: .workbuddyJSONL, rootPath: projects.path)
+        let scanner = LocalAgentScanner(database: database)
+        try await scanner.scanRoot(id: 1)
+        XCTAssertEqual(try scalarInt(database, "SELECT coalesce(sum(credits_picos), 0) AS value FROM usage_events"), 0)
+
+        // JSONL 不变，仅 session_usage 的最终实际 Credit 到达。
+        let updatedSourceDatabase = try SQLiteDatabase(path: sourceDatabaseURL.path)
+        try updatedSourceDatabase.execute(
+            "INSERT INTO session_usage(session_id, used, size, updated_at, credit_json) VALUES (?,?,?,?,?)",
+            [.text("wb-session"), .int(24), .int(10_000), .int(1789898400001), .text(#"{"request-1":0.4}"#)]
+        )
+        try updatedSourceDatabase.close()
+
+        try await scanner.scanRoot(id: 1)
+
+        XCTAssertEqual(
+            try scalarInt(database, "SELECT coalesce(sum(credits_picos), 0) AS value FROM usage_events"),
+            400_000_000_000
+        )
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 1)
+    }
+
+    func testUnreadableExistingWorkBuddyDatabaseDoesNotSilentlyDropFallbackCredits() async throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let storage = home.appendingPathComponent(".workbuddy", isDirectory: true)
+        let projects = storage.appendingPathComponent("projects", isDirectory: true)
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        try writeJSONL(
+            #"{"sessionId":"wb-session","timestamp":1789898400000,"update":{"_meta":{"requestId":"request-1"},"usage":{"details":{"promptTokens":1}}}}"# + "\n",
+            to: projects.appendingPathComponent("wb-session.jsonl")
+        )
+        try Data("not a sqlite database".utf8).write(to: storage.appendingPathComponent("workbuddy.db"))
+        let database = try migratedDatabase(rootKind: .workbuddyJSONL, rootPath: projects.path)
+
+        do {
+            try await LocalAgentScanner(database: database).scanRoot(id: 1)
+            XCTFail("已存在但不可读的 Credit 库必须使扫描显式失败")
+        } catch {}
+
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM usage_events"), 0)
+        XCTAssertEqual(
+            try database.query("SELECT status FROM scan_runs ORDER BY id DESC LIMIT 1").first?.string("status"),
+            "partial"
+        )
+    }
+
     func testOmpSubagentGetsRootSessionKeyFromPath() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1006,12 +1281,84 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertNotEqual(sourceFile.int("last_parsed_run_id"), 123)
     }
 
+    func testAntigravityScansCommittedWALAndDeduplicatesModelResponses() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent(UUID().uuidString + ".db")
+        let source = try SQLiteDatabase(path: file.path)
+        try source.execute("PRAGMA journal_mode=WAL")
+        try source.execute("PRAGMA wal_autocheckpoint=0")
+        try source.execute("CREATE TABLE gen_metadata(idx INTEGER PRIMARY KEY,data BLOB); CREATE TABLE steps(idx INTEGER PRIMARY KEY,step_type INTEGER,metadata BLOB)")
+        // Timestamp 1700000000, response id "a". 字段 1 的模型枚举 1000 不属于用量。
+        let step = "0a060880e2cfaa064a035a0161"
+        let generation = "0a1d221008e807106418282850480a501e5a01619a010867656d696e692d78"
+        try source.execute("INSERT INTO steps VALUES(3,15,X'\(step)')")
+        try source.execute("INSERT INTO gen_metadata VALUES(0,X'\(generation)'), (1,X'\(generation)'), (2,X'0a05220308e807')")
+        let db = try migratedDatabase(rootKind: .antigravitySQLite, rootPath: root.path)
+        let scanner = LocalAgentScanner(database: db)
+        try await scanner.scanRoot(id: 1)
+        let row = try XCTUnwrap(db.query("SELECT * FROM usage_events").first)
+        XCTAssertEqual(row.int("tokens_total"), 220)
+        XCTAssertEqual(row.int("tokens_reasoning"), 10)
+        XCTAssertEqual(row.int("tokens_cache_read"), 80)
+        XCTAssertEqual(row.int("observed_epoch_ms"), 1_700_000_000_000)
+        XCTAssertEqual(row.string("model_name"), "gemini-x")
+        XCTAssertEqual(try scalarInt(db, "SELECT count(*) AS value FROM usage_events"), 1)
+        let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize
+        try source.execute("UPDATE gen_metadata SET data = X'\(generation.replacingOccurrences(of: "1064", with: "1065"))' WHERE idx IN (0,1)")
+        XCTAssertEqual(try file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size)
+        try await scanner.scanRoot(id: 1)
+        try await scanner.scanRoot(id: 1)
+        XCTAssertEqual(try scalarInt(db, "SELECT sum(tokens_total) AS value FROM usage_events"), 221)
+        try source.execute("UPDATE gen_metadata SET data = X'0affff' WHERE idx = 0")
+        do { try await scanner.scanRoot(id: 1); XCTFail("损坏的增量必须保留上次完整的账目") } catch {}
+        XCTAssertEqual(try scalarInt(db, "SELECT sum(tokens_total) AS value FROM usage_events"), 221)
+    }
+
+    func testAntigravityPricingIdentityRequiresMatchingModelLabel() {
+        XCTAssertEqual(AntigravityCLIUsage.modelName(id: "gemini-3.8-flash-n", label: "Gemini 3.8 Flash (High)"), "gemini-3.8-flash")
+        XCTAssertEqual(AntigravityCLIUsage.modelName(id: "gemini-4-hydrogen-tiered-high", label: "Gemini 4 Hydrogen (High)"), "gemini-4-hydrogen")
+        XCTAssertEqual(AntigravityCLIUsage.modelName(id: "gemini-preview-n", label: "Gemini 4 Hydrogen (High)"), "gemini-preview-n")
+        XCTAssertEqual(AntigravityCLIUsage.modelName(id: "gemini-4-hydrogen-fast", label: "Gemini 4 Hydrogen (High)"), "gemini-4-hydrogen-fast")
+    }
+
+    func testGeminiScansBothChatFormatsWithCacheReasoningAndRepeatedMessages() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let chats = root.appendingPathComponent("project/chats")
+        let child = chats.appendingPathComponent("parent")
+        try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let header = #"{"sessionId":"parent","startTime":"2026-05-20T23:59:00Z"}"#
+        let reply = #"{"type":"gemini","id":"m","model":"gemini-test","timestamp":"2026-05-21T00:00:00.123Z","tokens":{"input":40,"output":10,"thoughts":4,"tool":2,"cached":12,"total":56}}"#
+        let file = chats.appendingPathComponent("session-main.jsonl")
+        try (header + "\n" + reply + "\n" + reply + "\n").write(to: file, atomically: true, encoding: .utf8)
+        try (#"{"sessionId":"legacy","messages":["# + reply + "]}").write(to: chats.appendingPathComponent("session-legacy.json"), atomically: true, encoding: .utf8)
+        try (#"{"sessionId":"child","kind":"subagent"}"# + "\n" + reply + "\n").write(to: child.appendingPathComponent("child.jsonl"), atomically: true, encoding: .utf8)
+        let db = try migratedDatabase(rootKind: .geminiChat, rootPath: root.path)
+        let scanner = LocalAgentScanner(database: db)
+        try await scanner.scanRoot(id: 1)
+        XCTAssertEqual(try scalarInt(db, "SELECT sum(tokens_total) AS value FROM usage_events"), 168)
+        let row = try XCTUnwrap(db.query("SELECT * FROM usage_events LIMIT 1").first)
+        XCTAssertEqual(row.int("tokens_input"), 30)
+        XCTAssertEqual(row.int("tokens_output"), 14)
+        XCTAssertEqual(row.int("tokens_cache_read"), 12)
+        XCTAssertEqual(row.int("tokens_reasoning"), 4)
+        XCTAssertEqual(try db.query("SELECT root_session_key FROM agent_sessions WHERE source_session_key='child'").first?.string("root_session_key"), "parent")
+        let correction = reply.replacingOccurrences(of: #""input":40"#, with: #""input":36"#).replacingOccurrences(of: #""total":56"#, with: #""total":52"#)
+        try (header + "\n" + reply + "\n" + correction + "\n").write(to: file, atomically: true, encoding: .utf8)
+        try await scanner.scanRoot(id: 1)
+        try await scanner.scanRoot(id: 1)
+        XCTAssertEqual(try scalarInt(db, "SELECT sum(tokens_total) AS value FROM usage_events"), 164)
+    }
+
     func testSeedsDefaultScanRootsFromHomeDirectory() throws {
         let homeDirectory = URL(fileURLWithPath: "/tmp/token-meter-home", isDirectory: true)
         let roots = TokenMeterPaths.defaultScanRoots(homeDirectory: homeDirectory, environment: [:])
 
         XCTAssertEqual(roots.map(\.kind), [
-            .claudeJSONL, .codexJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL, .reasonixStats, .dshJSONL, .grokJSONL
+            .claudeJSONL, .codexJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL, .reasonixStats, .dshJSONL, .grokJSONL,
+            .qwenJSONL, .qoderJSONL, .workbuddyJSONL, .antigravitySQLite, .geminiChat
         ])
         XCTAssertEqual(roots.map { $0.rootURL.path }, [
             "/tmp/token-meter-home/.claude/projects",
@@ -1021,14 +1368,28 @@ final class LocalAgentScannerTests: XCTestCase {
             "/tmp/token-meter-home/.omp/agent/sessions",
             "/tmp/token-meter-home/.reasonix/stats",
             "/tmp/token-meter-home/.dsh/sessions",
-            "/tmp/token-meter-home/.grok/sessions"
+            "/tmp/token-meter-home/.grok/sessions",
+            "/tmp/token-meter-home/.qwen",
+            "/tmp/token-meter-home/.qoder-cn/projects",
+            "/tmp/token-meter-home/.workbuddy/projects",
+            "/tmp/token-meter-home/.gemini/antigravity-cli/conversations",
+            "/tmp/token-meter-home/.gemini/tmp"
         ])
+        XCTAssertEqual(
+            roots.first(where: { $0.kind == .qwenJSONL })?.auxiliaryURL?.path,
+            "/tmp/token-meter-home/.qwen"
+        )
 
         let database = try SQLiteDatabase(path: ":memory:")
         try TokenMeterDatabaseMigrator.migrate(database)
         try LocalAgentScanner.seedDefaultScanRoots(database: database, homeDirectory: homeDirectory, environment: [:])
 
-        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM scan_roots"), 8)
+        XCTAssertEqual(try scalarInt(database, "SELECT count(*) AS value FROM scan_roots"), 13)
+        XCTAssertEqual(
+            try database.query("SELECT auxiliary_path FROM scan_roots WHERE kind = ?", [.text(SourceKind.qwenJSONL.rawValue)])
+                .first?.string("auxiliary_path"),
+            "/tmp/token-meter-home/.qwen"
+        )
         // 两个 codex root 的 stable_source_key 靠 path 区分，不撞 UNIQUE(stable_source_key)。
         XCTAssertEqual(
             try database.query("SELECT stable_source_key FROM scan_roots WHERE kind = ? ORDER BY root_path", [.text(SourceKind.codexJSONL.rawValue)])
@@ -1049,6 +1410,21 @@ final class LocalAgentScannerTests: XCTestCase {
         let grok = roots.first(where: { $0.kind == .grokJSONL })
         XCTAssertEqual(grok?.rootURL.path, "/opt/custom-grok/sessions")
         XCTAssertEqual(grok?.displayName, "Grok Build")
+    }
+
+    func testQwenHomeAndRuntimeOverridesDefaultRoots() {
+        let home = URL(fileURLWithPath: "/tmp/token-meter-home", isDirectory: true)
+        let roots = TokenMeterPaths.defaultScanRoots(
+            homeDirectory: home,
+            environment: [
+                "QWEN_HOME": "/opt/qwen-config",
+                "QWEN_RUNTIME_DIR": "/var/tmp/qwen-runtime",
+            ]
+        )
+
+        let qwen = roots.first(where: { $0.kind == .qwenJSONL })
+        XCTAssertEqual(qwen?.rootURL.path, "/var/tmp/qwen-runtime")
+        XCTAssertEqual(qwen?.auxiliaryURL?.path, "/opt/qwen-config")
     }
 
     func testGrokUpdatesFilesIgnoresSiblingJsonl() throws {

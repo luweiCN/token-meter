@@ -11,7 +11,8 @@ final class ProviderRegistryTests: XCTestCase {
             "opencode-go",
             "command-code",
             "zhipu",
-            "grok"
+            "grok",
+            "qoder"
         ])
     }
 

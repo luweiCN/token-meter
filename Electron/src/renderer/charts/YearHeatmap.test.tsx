@@ -5,18 +5,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { YearHeatmap } from './YearHeatmap.js';
 
 const days = [
-  { date: '2026-07-10', tokens: 1_000_000_000, costUsdMicros: 5_000_000, sessions: 3, events: 40 }, // 10 亿 → 黄色档
-  { date: '2026-07-09', tokens: 0, costUsdMicros: 0, sessions: 0, events: 0 }               // 零值 → level 0
+  { date: '2026-07-10', tokens: 1_000_000_000, tokenUnreportedEvents: 0, costUsdMicros: 5_000_000, sessions: 3, events: 40 }, // 10 亿 → 黄色档
+  { date: '2026-07-09', tokens: 0, tokenUnreportedEvents: 0, costUsdMicros: 0, sessions: 0, events: 0 }               // 零值 → level 0
 ];
 
 const breakdown = [
-  { model: 'claude-fable-5', tokens: 320_690_000, costUsdMicros: 3_000_000, sessions: 5, events: 120 },
-  { model: 'gpt-5.5', tokens: 100_220_000, costUsdMicros: 2_000_000, sessions: 2, events: 30 }
+  { model: 'claude-fable-5', tokens: 320_690_000, tokenUnreportedEvents: 0, costUsdMicros: 3_000_000, sessions: 5, events: 120 },
+  { model: 'gpt-5.5', tokens: 100_220_000, tokenUnreportedEvents: 0, costUsdMicros: 2_000_000, sessions: 2, events: 30 }
 ];
 
 const projectBreakdown = [
-  { project: 'token-meter', tokens: 200_000_000, costUsdMicros: 2_500_000, sessions: 4, events: 90 },
-  { project: 'herdr', tokens: 120_000_000, costUsdMicros: 1_500_000, sessions: 3, events: 60 }
+  { project: 'token-meter', tokens: 200_000_000, tokenUnreportedEvents: 0, costUsdMicros: 2_500_000, sessions: 4, events: 90 },
+  { project: 'herdr', tokens: 120_000_000, tokenUnreportedEvents: 0, costUsdMicros: 1_500_000, sessions: 3, events: 60 }
 ];
 
 beforeEach(() => {

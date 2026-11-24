@@ -165,6 +165,47 @@ final class ProviderSnapshotCacheTests: XCTestCase {
         XCTAssertEqual(merged[0].groups, previous.groups)
     }
 
+    func testFreshWarningWithUsableQuotaIsNotMistakenForRefreshFailure() {
+        let previous = ProviderUsageSnapshot(
+            providerId: "qoder",
+            displayName: "Qoder",
+            status: .ok,
+            fetchedAt: Date(timeIntervalSince1970: 100),
+            summary: "套餐剩余 10 / 300 Credits",
+            message: nil,
+            groups: [UsageGroup(id: "qoder", title: "Qoder", subtitle: "Credits", items: [
+                UsageMetric(
+                    id: "qoder-plan", label: "套餐", kind: .quota,
+                    usedPercent: 96.7, remainingPercent: 3.3, resetText: nil,
+                    status: .ok, detail: "剩余 10 · 总额 300 Credits"
+                )
+            ])]
+        )
+        let refreshed = ProviderUsageSnapshot(
+            providerId: "qoder",
+            displayName: "Qoder",
+            status: .warning,
+            fetchedAt: Date(timeIntervalSince1970: 200),
+            summary: "套餐剩余 0 / 300 Credits",
+            message: "Credits 额度已用尽",
+            groups: [UsageGroup(id: "qoder", title: "Qoder", subtitle: "Credits", items: [
+                UsageMetric(
+                    id: "qoder-plan", label: "套餐", kind: .quota,
+                    usedPercent: 100, remainingPercent: 0, resetText: nil,
+                    status: .ok, detail: "已用 300 · 剩余 0 · 总额 300 Credits"
+                )
+            ])]
+        )
+
+        let merged = ProviderSnapshotCache.merge(previous: [previous], refreshed: [refreshed])
+
+        XCTAssertEqual(merged.first?.status, .warning)
+        XCTAssertEqual(merged.first?.fetchedAt, refreshed.fetchedAt)
+        XCTAssertEqual(merged.first?.summary, refreshed.summary)
+        XCTAssertEqual(merged.first?.groups, refreshed.groups)
+        XCTAssertEqual(merged.first?.message, "Credits 额度已用尽")
+    }
+
     func testKeepsPreviousRemainingWhenFailedRefreshUsesDummyErrorGroup() {
         // 生产路径 providerErrorSnapshot 会塞一条无百分比的「状态」组，不是空 groups。
         // 菜单栏环只认 usedPercent；若合并把这条当成新数据，12% 会从菜单栏消失。

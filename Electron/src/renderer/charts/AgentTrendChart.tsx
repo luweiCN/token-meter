@@ -1,19 +1,14 @@
 import { useMemo, useState, type MouseEvent } from 'react';
 
 import type { AgentTrendSeries } from '../api.js';
-import { formatCount, formatTokens, formatUsdMicros } from '../format.js';
+import { formatCount, formatReportedTokens, formatUsdMicros } from '../format.js';
 import { chartAnimationDelay } from './chartMotion.js';
+import { PROVIDERS } from '../providers.js';
 
 export type AgentTrendMetric = 'tokens' | 'costUsdMicros' | 'sessions';
 
 /// agent → 系列色（设计稿 s1-s4）与显示名。名单外的 provider 归到「其他」（muted 灰）。
-const KNOWN_PROVIDERS: Array<{ id: string; label: string; cssVar: string }> = [
-  { id: 'claude-code', label: 'Claude Code', cssVar: 'var(--s1)' },
-  { id: 'codex', label: 'Codex CLI', cssVar: 'var(--s2)' },
-  { id: 'omp', label: 'OMP', cssVar: 'var(--s3)' },
-  { id: 'opencode', label: 'OpenCode', cssVar: 'var(--s4)' },
-  { id: 'grok', label: 'Grok Build', cssVar: 'var(--s6)' }
-];
+const KNOWN_PROVIDERS = PROVIDERS.map((provider) => ({ ...provider, cssVar: provider.color }));
 const OTHER = { id: '__other', label: '其他', cssVar: 'var(--muted)' };
 
 function metricValue(row: { tokens: number; costUsdMicros: number; sessions: number }, metric: AgentTrendMetric): number {
@@ -21,8 +16,8 @@ function metricValue(row: { tokens: number; costUsdMicros: number; sessions: num
 }
 
 /// dailyScale：day 粒度的桶是单日数字，token 锁 M 单位（不升 B）。
-function formatMetric(value: number, metric: AgentTrendMetric, dailyScale = false): string {
-  if (metric === 'tokens') return formatTokens(value, dailyScale);
+function formatMetric(value: number, metric: AgentTrendMetric, dailyScale = false, unreportedEvents = 0): string {
+  if (metric === 'tokens') return formatReportedTokens(value, unreportedEvents, dailyScale);
   if (metric === 'costUsdMicros') return formatUsdMicros(value);
   return formatCount(value);
 }
@@ -50,7 +45,12 @@ export function AgentTrendChart({
   // day 粒度的桶与 tooltip 都是单日数字 → token 锁 M 单位；图例合计是范围总和，仍可用 B。
   const dailyBuckets = data.granularity === 'day';
   const byBucket = useMemo(() => {
-    const m = new Map<string, Map<string, { tokens: number; costUsdMicros: number; sessions: number }>>();
+    const m = new Map<string, Map<string, {
+      tokens: number;
+      tokenUnreportedEvents: number;
+      costUsdMicros: number;
+      sessions: number;
+    }>>();
     for (const row of data.rows) {
       let inner = m.get(row.bucket);
       if (!inner) {
@@ -72,20 +72,27 @@ export function AgentTrendChart({
     return hasOther ? [...known, OTHER] : known;
   }, [data.rows, providerNames]);
 
-  const stackOf = (bucket: string): Array<{ def: typeof OTHER; value: number }> => {
+  const stackOf = (bucket: string): Array<{ def: typeof OTHER; value: number; unreportedEvents: number }> => {
     const inner = byBucket.get(bucket);
     if (!inner) return [];
     return seriesDefs.map(def => {
       let value = 0;
+      let unreportedEvents = 0;
       if (def.id === OTHER.id) {
         for (const [pid, row] of inner) {
-          if (!KNOWN_PROVIDERS.some(p => p.id === pid)) value += metricValue(row, metric);
+          if (!KNOWN_PROVIDERS.some(p => p.id === pid)) {
+            value += metricValue(row, metric);
+            unreportedEvents += row.tokenUnreportedEvents;
+          }
         }
       } else {
         const row = inner.get(def.id);
-        if (row) value = metricValue(row, metric);
+        if (row) {
+          value = metricValue(row, metric);
+          unreportedEvents = row.tokenUnreportedEvents;
+        }
       }
-      return { def, value };
+      return { def, value, unreportedEvents };
     }).filter(s => s.value > 0);
   };
 
@@ -93,7 +100,13 @@ export function AgentTrendChart({
   const max = Math.max(1, ...totals);
   const seriesTotals = seriesDefs.map(def => ({
     def,
-    total: buckets.reduce((sum, b) => sum + (stackOf(b).find(s => s.def.id === def.id)?.value ?? 0), 0)
+    total: buckets.reduce((sum, b) => sum + (stackOf(b).find(s => s.def.id === def.id)?.value ?? 0), 0),
+    unreportedEvents: data.rows.reduce((sum, row) => {
+      const belongs = def.id === OTHER.id
+        ? !KNOWN_PROVIDERS.some(provider => provider.id === row.providerId)
+        : row.providerId === def.id;
+      return sum + (belongs ? row.tokenUnreportedEvents : 0);
+    }, 0)
   }));
 
   // 画布几何：viewBox 固定，柱宽按桶数均分（间隙 38%）。
@@ -110,8 +123,9 @@ export function AgentTrendChart({
 
   const tipStack = tip ? stackOf(tip.bucket) : [];
   const tipTotal = tipStack.reduce((sum, s) => sum + s.value, 0);
+  const tipUnreported = tipStack.reduce((sum, s) => sum + s.unreportedEvents, 0);
   const motionKey = `${data.granularity}:${metric}:${data.rows
-    .map((row) => `${row.bucket}/${row.providerId}/${metricValue(row, metric)}`)
+    .map((row) => `${row.bucket}/${row.providerId}/${metricValue(row, metric)}/${row.tokenUnreportedEvents}`)
     .join('|')}`;
 
   return (
@@ -160,10 +174,10 @@ export function AgentTrendChart({
       </div>
 
       <div className="legend">
-        {seriesTotals.map(({ def, total }) => (
+        {seriesTotals.map(({ def, total, unreportedEvents }) => (
           <span className="it" key={def.id}>
             <i style={{ background: def.cssVar }} />
-            {def.label} <span className="num">{formatMetric(total, metric)}</span>
+            {def.label} <span className="num">{formatMetric(total, metric, false, unreportedEvents)}</span>
           </span>
         ))}
       </div>
@@ -184,15 +198,15 @@ export function AgentTrendChart({
           }}
         >
           <b>{tip.bucket}</b>
-          {tipStack.map(({ def, value }) => (
+          {tipStack.map(({ def, value, unreportedEvents }) => (
             <div className="row" key={def.id}>
               <span><i style={{ background: def.cssVar }} />{def.label}</span>
-              <span className="num">{formatMetric(value, metric, dailyBuckets)}</span>
+              <span className="num">{formatMetric(value, metric, dailyBuckets, unreportedEvents)}</span>
             </div>
           ))}
           <div className="row total">
             <span>合计</span>
-            <span className="num">{formatMetric(tipTotal, metric, dailyBuckets)}</span>
+            <span className="num">{formatMetric(tipTotal, metric, dailyBuckets, tipUnreported)}</span>
           </div>
         </div>
         );

@@ -126,9 +126,9 @@ final class UsageEventWriterTests: XCTestCase {
     }
 
     func testDedupeKeyCollisionBreaksFullTieByLowestEventSeq() throws {
-        // 总量并列、观测时间并列，只 eventSeq 不同：全靠比较器的第三级决胜（更小 seq 胜）。
+        // 总量、Token 可用性、观测时间并列，只 eventSeq 不同：全靠比较器的第四级决胜（更小 seq 胜）。
         // 先写大 seq 的那条，再写小 seq 的候选——候选必须替换掉它，留下 event_seq=2。
-        // 删掉第三级后候选会因「并列不胜」被丢弃，先写入的 seq=5 留下，本断言变红。
+        // 删掉第四级后候选会因「并列不胜」被丢弃，先写入的 seq=5 留下，本断言变红。
         let database = try makeDatabase()
         let writer = UsageEventWriter(database: database, costCalculator: calculator())
 
@@ -163,6 +163,65 @@ final class UsageEventWriterTests: XCTestCase {
         let rows = try database.query("SELECT tokens_output FROM usage_events")
         XCTAssertEqual(rows.count, 1)
         XCTAssertEqual(rows[0].int("tokens_output"), 559, "更完整（tokensTotal 更大）的帧必须留下，即便它观测时间更晚")
+    }
+
+    func testCrossFileDedupePreservesCreditsFromTheLosingFrameInEitherWriteOrder() throws {
+        for creditFirst in [true, false] {
+            let database = try makeDatabase()
+            let writer = UsageEventWriter(database: database, costCalculator: calculator())
+            let token = UsageEvent(
+                eventSeq: 1, observedAt: Date(timeIntervalSince1970: 200), modelName: "claude-fable-5",
+                messageId: "request-1", dedupeKey: "request:request-1", dedupeScopeKey: "workbuddy",
+                inputTokens: 10, sourceOffset: 20
+            )
+            let credit = UsageEvent(
+                eventSeq: 1, observedAt: Date(timeIntervalSince1970: 100), modelName: nil,
+                messageId: "request-1", dedupeKey: "request:request-1", dedupeScopeKey: "workbuddy",
+                tokensReported: false,
+                creditUsage: ProviderCreditUsage(actualPicos: 400_000_000_000),
+                sourceOffset: 10
+            )
+
+            let writes = creditFirst ? [(credit, Int64(1)), (token, Int64(2))] : [(token, Int64(1)), (credit, Int64(2))]
+            for (candidate, sourceFileID) in writes {
+                try writer.write(session([candidate]), scanRootId: 1, sourceFileId: sourceFileID, runId: nil)
+            }
+
+            let row = try database.query(
+                "SELECT tokens_input, tokens_reported, credits_picos FROM usage_events"
+            )[0]
+            XCTAssertEqual(row.int("tokens_input"), 10, "write order: \(creditFirst)")
+            XCTAssertEqual(row.int("tokens_reported"), 1, "write order: \(creditFirst)")
+            XCTAssertEqual(row.int("credits_picos"), 400_000_000_000, "write order: \(creditFirst)")
+        }
+    }
+
+    func testLateCreditsTurnComputedZeroCostIntoUnknown() throws {
+        let database = try makeDatabase()
+        let writer = UsageEventWriter(database: database, costCalculator: calculator())
+        let reportedZero = UsageEvent(
+            eventSeq: 1, observedAt: Date(timeIntervalSince1970: 200), modelName: "claude-fable-5",
+            messageId: "request-1", dedupeKey: "request:request-1", dedupeScopeKey: "workbuddy",
+            inputTokens: 0, tokensReported: true, sourceOffset: 20
+        )
+        let lateCredit = UsageEvent(
+            eventSeq: 1, observedAt: Date(timeIntervalSince1970: 100), modelName: nil,
+            messageId: "request-1", dedupeKey: "request:request-1", dedupeScopeKey: "workbuddy",
+            tokensReported: false,
+            creditUsage: ProviderCreditUsage(actualPicos: 100_000_000_000),
+            sourceOffset: 10
+        )
+
+        try writer.write(session([reportedZero]), scanRootId: 1, sourceFileId: 1, runId: nil)
+        try writer.write(session([lateCredit]), scanRootId: 1, sourceFileId: 2, runId: nil)
+
+        let row = try database.query(
+            "SELECT tokens_reported, credits_picos, cost_usd_micros, cost_source FROM usage_events"
+        )[0]
+        XCTAssertEqual(row.int("tokens_reported"), 1)
+        XCTAssertEqual(row.int("credits_picos"), 100_000_000_000)
+        XCTAssertNil(row.int("cost_usd_micros"))
+        XCTAssertEqual(row.string("cost_source"), "unknown")
     }
 
     func testResumeOffsetIsPerSourceFile() throws {

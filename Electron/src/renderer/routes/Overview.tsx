@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { ModelRank, OverviewKpis, OverviewPayload, ScanProgress } from '../api.js';
+import type { ModelRank, OverviewKpis, OverviewPayload, ProviderCreditSummary, ScanProgress } from '../api.js';
 import { AgentTrendChart, type AgentTrendMetric } from '../charts/AgentTrendChart.js';
 import { YearHeatmap, type HeatmapMetric } from '../charts/YearHeatmap.js';
 import { SessionRail } from '../components/SessionRail.js';
-import { formatCount, formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
+import {
+  formatCount, formatCredits, formatReportedTokens, formatTokens,
+  formatUnknownCostNote, formatUsdMicros
+} from '../format.js';
 import { useAnimatedNumber } from '../hooks/useAnimatedNumber.js';
 import { useAutoRefresh } from '../hooks/useAutoRefresh.js';
+import { providerLabel } from '../providers.js';
 
 type OverviewState =
   | { kind: 'loading' }
@@ -39,21 +43,6 @@ const HEATMAP_METRICS: Array<{ metric: HeatmapMetric; label: string }> = [
   { metric: 'sessions', label: '会话' },
   { metric: 'events', label: '事件' }
 ];
-
-/// 服务商显示名（菜单栏与趋势图例同款）。设置里的供应商别名优先，名单外回落到原始 id。
-const PROVIDER_LABEL: Record<string, string> = {
-  'claude-code': 'Claude Code',
-  codex: 'Codex CLI',
-  omp: 'OMP',
-  opencode: 'OpenCode',
-  reasonix: 'Reasonix',
-  grok: 'Grok Build'
-};
-
-function providerLabel(id: string | null, names: Record<string, string>): string {
-  if (id === null) return '混合';
-  return names[id] ?? PROVIDER_LABEL[id] ?? id;
-}
 
 /// 模型排行展示前 8 名，其余聚合成一行「其他 N 个模型」。
 const MODEL_RANK_LIMIT = 8;
@@ -186,6 +175,10 @@ export function Overview({ intervalMs = 60_000 }: { intervalMs?: number }) {
         <div className="ov-body">
           <StatTiles kpis={ready.kpis} />
 
+          {ready.providerCredits.length > 0 ? (
+            <ProviderCreditsCard rows={ready.providerCredits} providerNames={providerNames} />
+          ) : null}
+
           <div className="card" aria-label="实时会话">
             <div className="chead">
               <div>
@@ -299,7 +292,9 @@ function StatTiles({ kpis }: { kpis: OverviewKpis }) {
     <div className="stats" aria-label="累计指标">
       <div className="stat">
         <div className="lb">总计 Token</div>
-        <div className="v"><AnimatedNumber value={kpis.totalTokens} format={formatTokens} /></div>
+        <div className="v">
+          <AnimatedNumber value={kpis.totalTokens} format={(n) => formatReportedTokens(n, kpis.totalTokenUnreportedEvents)} />
+        </div>
         <div className={kpis.totalCostUnknownEvents > 0 ? 'sb unk' : 'sb'}>
           {formatCount(kpis.totalSessions)} 会话 · {formatUsdMicros(kpis.totalCostUsdMicros)}
           {kpis.totalCostUnknownEvents > 0 ? '†' : ''}
@@ -307,7 +302,9 @@ function StatTiles({ kpis }: { kpis: OverviewKpis }) {
       </div>
       <div className="stat">
         <div className="lb">当月</div>
-        <div className="v"><AnimatedNumber value={kpis.monthTokens} format={formatTokens} /></div>
+        <div className="v">
+          <AnimatedNumber value={kpis.monthTokens} format={(n) => formatReportedTokens(n, kpis.monthTokenUnreportedEvents)} />
+        </div>
         <div className={kpis.monthCostUnknownEvents > 0 ? 'sb unk' : 'sb'}>
           {formatUsdMicros(kpis.monthCostUsdMicros)}
           {kpis.monthCostUnknownEvents > 0 ? ` · ${formatCount(kpis.monthCostUnknownEvents)} 条未知` : ''}
@@ -315,7 +312,9 @@ function StatTiles({ kpis }: { kpis: OverviewKpis }) {
       </div>
       <div className="stat">
         <div className="lb">本周</div>
-        <div className="v"><AnimatedNumber value={kpis.weekTokens} format={formatTokens} /></div>
+        <div className="v">
+          <AnimatedNumber value={kpis.weekTokens} format={(n) => formatReportedTokens(n, kpis.weekTokenUnreportedEvents)} />
+        </div>
         <div className={kpis.weekCostUnknownEvents > 0 ? 'sb unk' : 'sb'}>
           {formatUsdMicros(kpis.weekCostUsdMicros)}
           {kpis.weekCostUnknownEvents > 0 ? ` · ${formatCount(kpis.weekCostUnknownEvents)} 条未知` : ''}
@@ -324,11 +323,50 @@ function StatTiles({ kpis }: { kpis: OverviewKpis }) {
       <div className="stat">
         <div className="lb">今日</div>
         {/* 单日数字锁在 M 单位（不升 B），百万级变化才看得见。 */}
-        <div className="v"><AnimatedNumber value={kpis.todayTokens} format={(n) => formatTokens(n, true)} /></div>
+        <div className="v">
+          <AnimatedNumber value={kpis.todayTokens} format={(n) => formatReportedTokens(n, kpis.todayTokenUnreportedEvents, true)} />
+        </div>
         <div className={kpis.todayCostUnknownEvents > 0 ? 'sb unk' : 'sb'}>
           {formatUsdMicros(kpis.todayCostUsdMicros)} · {formatCount(kpis.todaySessions)} 会话
           {kpis.todayCostUnknownEvents > 0 ? ` · ${formatCount(kpis.todayCostUnknownEvents)} 条未知` : ''}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ProviderCreditsCard({
+  rows,
+  providerNames
+}: {
+  rows: ProviderCreditSummary[];
+  providerNames: Record<string, string>;
+}) {
+  return (
+    <div className="card" aria-label="供应商 Credits">
+      <div className="chead">
+        <div>
+          <h2>Credits</h2>
+          <div className="desc">供应商原始额度单位 · 不跨供应商合计，也不换算为 USD</div>
+        </div>
+      </div>
+      <div className="hscroll">
+        <table>
+          <thead>
+            <tr><th>供应商</th><th className="r">今日</th><th className="r">本周</th><th className="r">本月</th><th className="r">总计</th></tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.providerId}>
+                <td>{providerLabel(row.providerId, providerNames)}</td>
+                <td className="r num">{formatCredits(row.todayPicos)}</td>
+                <td className="r num">{formatCredits(row.weekPicos)}</td>
+                <td className="r num">{formatCredits(row.monthPicos)}</td>
+                <td className="r num">{formatCredits(row.totalPicos)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -395,9 +433,13 @@ function ModelRankingTable({ rows, providerNames }: { rows: ModelRank[]; provide
           ...acc,
           tokens: acc.tokens + r.tokens,
           costUsdMicros: acc.costUsdMicros + r.costUsdMicros,
-          costUnknownEvents: acc.costUnknownEvents + r.costUnknownEvents
+          costUnknownEvents: acc.costUnknownEvents + r.costUnknownEvents,
+          tokenUnreportedEvents: acc.tokenUnreportedEvents + r.tokenUnreportedEvents
         }),
-        { model: `其他 ${rest.length} 个模型`, tokens: 0, costUsdMicros: 0, costUnknownEvents: 0, providerId: null }
+        {
+          model: `其他 ${rest.length} 个模型`, tokens: 0, costUsdMicros: 0,
+          costUnknownEvents: 0, tokenUnreportedEvents: 0, providerId: null
+        }
       )
     : null;
   const maxTokens = Math.max(1, ...top.map(r => r.tokens));
@@ -412,7 +454,9 @@ function ModelRankingTable({ rows, providerNames }: { rows: ModelRank[]; provide
         <td>
           <div className="mbar">
             <div className="bar"><i style={{ width: `${Math.round((r.tokens / maxTokens) * 100)}%` }} /></div>
-            <span className="num">{formatTokens(r.tokens)}</span>
+            <span className="num">
+              {formatReportedTokens(r.tokens, r.tokenUnreportedEvents)}
+            </span>
           </div>
         </td>
         <td className="r num">{totalTokens > 0 ? `${((r.tokens / totalTokens) * 100).toFixed(1)}%` : '0%'}</td>

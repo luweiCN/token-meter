@@ -23,6 +23,7 @@ public enum TokenMeterDatabaseMigrator {
     public static func migrate(_ database: SQLiteDatabase) throws {
         try configureWriter(database)
 
+        try recoverInterruptedScanRootsSwap(database)
         try database.execute(TokenMeterDatabaseSchema.configTables)
         // 配置表不参与版本重建，新增列走幂等 additive 迁移（必须每次跑，不受版本短路影响）。
         try ensureConfigColumns(database)
@@ -37,6 +38,19 @@ public enum TokenMeterDatabaseMigrator {
         // 运行时表必须在派生表重建之后建：rebuildDerivedTables 的「非配置表全删」
         // 网兜会把它一并 DROP，先建后删就丢表了。
         try database.execute(TokenMeterDatabaseSchema.runtimeTables)
+    }
+
+    /// 旧实现的表交换不是事务性的：若进程恰好在 DROP 与 RENAME 之间退出，会只剩
+    /// `scan_roots_new`。必须在 `configTables` 创建空主表之前恢复，否则会丢掉唯一一份配置。
+    private static func recoverInterruptedScanRootsSwap(_ database: SQLiteDatabase) throws {
+        let tables = Set(
+            try database.query(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('scan_roots', 'scan_roots_new')"
+            ).compactMap { $0.string("name") }
+        )
+        if !tables.contains("scan_roots"), tables.contains("scan_roots_new") {
+            try database.execute("ALTER TABLE scan_roots_new RENAME TO scan_roots")
+        }
     }
 
     /// 配置表（settings / provider_config_overrides）里的新列：缺列才 ALTER，
@@ -64,6 +78,11 @@ public enum TokenMeterDatabaseMigrator {
                 "ALTER TABLE provider_config_overrides ADD COLUMN menubar_number_windows TEXT"
             )
         }
+        let scanRootColumns = try database.query("PRAGMA table_info(scan_roots)")
+            .compactMap { $0.string("name") }
+        if !scanRootColumns.contains("auxiliary_path") {
+            try database.execute("ALTER TABLE scan_roots ADD COLUMN auxiliary_path TEXT")
+        }
     }
 
     /// scan_roots.kind 的 CHECK 约束无法 ALTER：新增 kind（如 reasonix_stats）时旧库
@@ -75,55 +94,89 @@ public enum TokenMeterDatabaseMigrator {
         let createSQL = try database.query(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'scan_roots'"
         )[0].string("sql") ?? ""
-        guard !createSQL.contains("grok_jsonl") else { return }
+        guard !SourceKind.allCases.allSatisfy({ createSQL.contains("'\($0.rawValue)'") }) else {
+            // 旧的非事务实现可能在更早一次尝试中留下同名临时表。
+            try database.execute("DROP TABLE IF EXISTS scan_roots_new")
+            return
+        }
 
         try database.execute("PRAGMA foreign_keys = OFF")
         defer { try? database.execute("PRAGMA foreign_keys = ON") }
-        try database.execute(
-            """
-            CREATE TABLE scan_roots_new (
-              id INTEGER PRIMARY KEY,
-              kind TEXT NOT NULL CHECK (kind IN ('claude_jsonl', 'codex_jsonl', 'omp_jsonl', 'opencode_sqlite', 'reasonix_stats', 'dsh_jsonl', 'grok_jsonl')),
-              root_path TEXT NOT NULL,
-              display_name TEXT NOT NULL,
-              enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
-              scan_mode TEXT NOT NULL DEFAULT 'incremental' CHECK (scan_mode IN ('incremental', 'full', 'disabled')),
-              file_glob TEXT,
-              source_db_path TEXT,
-              stable_source_key TEXT NOT NULL,
-              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-              last_scan_started_at TEXT,
-              last_scan_finished_at TEXT,
-              last_successful_cursor TEXT,
-              last_error TEXT,
-              UNIQUE(kind, root_path),
-              UNIQUE(stable_source_key)
+        try database.execute("BEGIN IMMEDIATE")
+        do {
+            try database.execute("DROP TABLE IF EXISTS scan_roots_new")
+            try database.execute(
+                """
+                CREATE TABLE scan_roots_new (
+                  id INTEGER PRIMARY KEY,
+                  kind TEXT NOT NULL CHECK (kind IN (\(TokenMeterDatabaseSchema.acceptedScanRootKindsSQL))),
+                  root_path TEXT NOT NULL,
+                  display_name TEXT NOT NULL,
+                  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+                  scan_mode TEXT NOT NULL DEFAULT 'incremental' CHECK (scan_mode IN ('incremental', 'full', 'disabled')),
+                  file_glob TEXT,
+                  source_db_path TEXT,
+                  auxiliary_path TEXT,
+                  stable_source_key TEXT NOT NULL,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  last_scan_started_at TEXT,
+                  last_scan_finished_at TEXT,
+                  last_successful_cursor TEXT,
+                  last_error TEXT,
+                  UNIQUE(kind, root_path),
+                  UNIQUE(stable_source_key)
+                )
+                """
             )
-            """
-        )
-        try database.execute(
-            """
-            INSERT INTO scan_roots_new (
-              id, kind, root_path, display_name, enabled, scan_mode, file_glob, source_db_path,
-              stable_source_key, created_at, updated_at, last_scan_started_at,
-              last_scan_finished_at, last_successful_cursor, last_error
+            try database.execute(
+                """
+                INSERT INTO scan_roots_new (
+                  id, kind, root_path, display_name, enabled, scan_mode, file_glob, source_db_path, auxiliary_path,
+                  stable_source_key, created_at, updated_at, last_scan_started_at,
+                  last_scan_finished_at, last_successful_cursor, last_error
+                )
+                SELECT id, kind, root_path, display_name, enabled, scan_mode, file_glob, source_db_path, auxiliary_path,
+                       stable_source_key, created_at, updated_at, last_scan_started_at,
+                       last_scan_finished_at, last_successful_cursor, last_error
+                FROM scan_roots
+                """
             )
-            SELECT id, kind, root_path, display_name, enabled, scan_mode, file_glob, source_db_path,
-                   stable_source_key, created_at, updated_at, last_scan_started_at,
-                   last_scan_finished_at, last_successful_cursor, last_error
-            FROM scan_roots
-            """
-        )
-        try database.execute("DROP TABLE scan_roots")
-        try database.execute("ALTER TABLE scan_roots_new RENAME TO scan_roots")
+            try database.execute("DROP TABLE scan_roots")
+            try database.execute("ALTER TABLE scan_roots_new RENAME TO scan_roots")
+            try ensureNewAgentDefaults(database, upgradingScanRoots: true)
+            try database.execute("COMMIT")
+        } catch {
+            try? database.execute("ROLLBACK")
+            throw error
+        }
     }
 
     /// 老库的 enabledAgentKinds 是导入时的默认集（不含后来新增的 agent）：
     /// 仅当数组恰好等于旧默认全集（没被用户改过）时，把新 agent（reasonix）补进默认启用列表。
     /// 用户手动调整过（关掉某个 agent、或关掉 reasonix 后又重启）数组就不再等于旧全集，
     /// 不会被反复加回来——这是幂等的关键。
-    private static func ensureNewAgentDefaults(_ database: SQLiteDatabase) throws {
+    private static func ensureNewAgentDefaults(_ database: SQLiteDatabase, upgradingScanRoots: Bool = false) throws {
+        // Zaly 曾短暂出现在默认全集，但当前已没有对应 SourceKind。若继续留在设置中，
+        // Electron 会按强类型契约拒绝整份 enabledAgentKinds；只移除这个退休值，其他
+        // 自定义选择保持原样。旧默认全集随后会自然命中下面的增量默认迁移。
+        if let rows = try? database.query("SELECT value_json FROM settings WHERE key = 'filters.enabledAgentKinds'"),
+           let json = rows.first?.string("value_json"),
+           let data = json.data(using: .utf8),
+           let kinds = try? JSONSerialization.jsonObject(with: data) as? [String] {
+            let supportedKinds = kinds.filter { $0 != "zaly" }
+            if supportedKinds != kinds,
+               let updated = String(
+                   data: try JSONSerialization.data(withJSONObject: supportedKinds),
+                   encoding: .utf8
+               ) {
+                try database.execute(
+                    "UPDATE settings SET value_json = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'filters.enabledAgentKinds'",
+                    [.text(updated)]
+                )
+            }
+        }
+
         // reasonix 迁移
         let legacyDefaults = Set(["claudeCode", "codex", "opencode", "omp"])
         if let rows = try? database.query("SELECT value_json FROM settings WHERE key = 'filters.enabledAgentKinds'"),
@@ -161,6 +214,21 @@ public enum TokenMeterDatabaseMigrator {
            var kinds = try? JSONSerialization.jsonObject(with: data) as? [String],
            Set(kinds) == legacyWithDsh {
             kinds.append("grok")
+            if let updated = String(data: try JSONSerialization.data(withJSONObject: kinds), encoding: .utf8) {
+                try? database.execute(
+                    "UPDATE settings SET value_json = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'filters.enabledAgentKinds'",
+                    [.text(updated)]
+                )
+            }
+        }
+        let legacyWithGrok = Set(["claudeCode", "codex", "opencode", "omp", "reasonix", "dsh", "grok"])
+        let defaultsBeforeGoogle = legacyWithGrok.union(["qwenCode", "qoder", "workbuddy"])
+        if let rows = try? database.query("SELECT value_json FROM settings WHERE key = 'filters.enabledAgentKinds'"),
+           let json = rows.first?.string("value_json"),
+           let data = json.data(using: .utf8),
+           let kinds = try? JSONSerialization.jsonObject(with: data) as? [String],
+           Set(kinds) == legacyWithGrok || (upgradingScanRoots && Set(kinds) == defaultsBeforeGoogle) {
+            let kinds = kinds + LocalAgentKind.allCases.map(\.rawValue).filter { !kinds.contains($0) }
             if let updated = String(data: try JSONSerialization.data(withJSONObject: kinds), encoding: .utf8) {
                 try? database.execute(
                     "UPDATE settings SET value_json = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'filters.enabledAgentKinds'",

@@ -257,6 +257,8 @@ final class TokenMeterDatabaseMigratorTests: XCTestCase {
         let sessionColumns = try database.query("PRAGMA table_info(agent_sessions)").compactMap { $0.string("name") }
         XCTAssertFalse(sessionColumns.contains("model_name"))
         XCTAssertFalse(sessionColumns.contains("source_file_id"))
+        let scanRootColumns = try database.query("PRAGMA table_info(scan_roots)").compactMap { $0.string("name") }
+        XCTAssertTrue(scanRootColumns.contains("auxiliary_path"))
     }
 
     // MARK: - 3. 配置在重建中存活（押身家的那个）
@@ -281,8 +283,8 @@ final class TokenMeterDatabaseMigratorTests: XCTestCase {
         // （扫描状态清零由 testScanCursorsClearedOnRebuild 单独钉）。
         try database.execute(
             """
-            INSERT INTO scan_roots(id, kind, root_path, display_name, enabled, scan_mode, stable_source_key)
-            VALUES (99, 'claude_jsonl', '/custom/path', 'My Custom Root', 1, 'incremental', 'custom-key')
+            INSERT INTO scan_roots(id, kind, root_path, auxiliary_path, display_name, enabled, scan_mode, stable_source_key)
+            VALUES (99, 'claude_jsonl', '/custom/path', '/custom/aux', 'My Custom Root', 1, 'incremental', 'custom-key')
             """
         )
 
@@ -437,6 +439,23 @@ final class TokenMeterDatabaseMigratorTests: XCTestCase {
         XCTAssertTrue(columns.contains("pricing_fingerprint"))
     }
 
+
+    func testModelCatalogUsesProviderScopedIdentityAndKeepsRawModelId() throws {
+        let database = try memoryDatabase()
+        try TokenMeterDatabaseMigrator.migrate(database)
+
+        let columns = try database.query("PRAGMA table_info(model_catalog)").compactMap { $0.string("name") }
+        XCTAssertTrue(columns.contains("provider_id"))
+        XCTAssertTrue(columns.contains("model_canonical"))
+        XCTAssertTrue(columns.contains("source_model_id"))
+        XCTAssertTrue(columns.contains("display_name"))
+        let primaryKeyColumns = try database.query("PRAGMA table_info(model_catalog)")
+            .filter { ($0.int("pk") ?? 0) > 0 }
+            .sorted { ($0.int("pk") ?? 0) < ($1.int("pk") ?? 0) }
+            .compactMap { $0.string("name") }
+        XCTAssertEqual(primaryKeyColumns, ["provider_id", "model_canonical"])
+    }
+
     /// `configTableNames` 是一份【白名单】：重建时凡是不在其中的表一律删除。
     ///
     /// 这个方向是 fail-dangerous 的——将来谁加了一张配置表却忘了写进白名单，
@@ -468,7 +487,54 @@ final class TokenMeterDatabaseMigratorTests: XCTestCase {
         XCTAssertEqual(try rowCount(database, "scan_roots"), 1)
     }
 
-    func testEnsureNewAgentDefaultsAppendsGrokToUntouchedSet() throws {
+    func testEnsureScanRootsKindPreservesUnsupportedLegacyRootAndRecoversInterruptedSwap() throws {
+        let database = try memoryDatabase()
+        try database.execute(TokenMeterDatabaseSchema.configTables)
+        try database.execute("DROP TABLE scan_roots")
+        try database.execute(
+            """
+            CREATE TABLE scan_roots (
+              id INTEGER PRIMARY KEY,
+              kind TEXT NOT NULL CHECK (kind IN ('claude_jsonl', 'codex_jsonl', 'zaly_jsonl', 'omp_jsonl', 'opencode_sqlite', 'reasonix_stats', 'dsh_jsonl', 'grok_jsonl')),
+              root_path TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+              scan_mode TEXT NOT NULL DEFAULT 'incremental' CHECK (scan_mode IN ('incremental', 'full', 'disabled')),
+              file_glob TEXT,
+              source_db_path TEXT,
+              stable_source_key TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              last_scan_started_at TEXT,
+              last_scan_finished_at TEXT,
+              last_successful_cursor TEXT,
+              last_error TEXT,
+              auxiliary_path TEXT,
+              UNIQUE(kind, root_path),
+              UNIQUE(stable_source_key)
+            );
+            INSERT INTO scan_roots(id, kind, root_path, display_name, stable_source_key)
+            VALUES (9, 'zaly_jsonl', '/legacy/zaly', 'Legacy Zaly', 'zaly_jsonl:/legacy/zaly');
+            CREATE TABLE scan_roots_new AS SELECT * FROM scan_roots WHERE 0;
+            PRAGMA user_version = 16;
+            """
+        )
+
+        try TokenMeterDatabaseMigrator.migrate(database)
+
+        XCTAssertEqual(try userVersion(database), TokenMeterDatabaseSchema.derivedVersion)
+        XCTAssertFalse(try tableNames(database).contains("scan_roots_new"))
+        let root = try XCTUnwrap(database.query("SELECT * FROM scan_roots WHERE id = 9").first)
+        XCTAssertEqual(root.string("kind"), "zaly_jsonl", "未知旧类型是用户配置，迁移不得静默删除")
+        XCTAssertEqual(root.string("root_path"), "/legacy/zaly")
+        let createSQL = try XCTUnwrap(
+            database.query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'scan_roots'").first?.string("sql")
+        )
+        XCTAssertTrue(createSQL.contains("workbuddy_jsonl"))
+        XCTAssertNil(SourceKind(rawValue: "zaly_jsonl"), "兼容旧配置不等于重新注册或扫描 Zaly")
+    }
+
+    func testEnsureNewAgentDefaultsAppendsNewKindsToUntouchedSet() throws {
         let database = try memoryDatabase()
         try TokenMeterDatabaseMigrator.migrate(database)
         try database.execute(
@@ -478,7 +544,40 @@ final class TokenMeterDatabaseMigratorTests: XCTestCase {
         try TokenMeterDatabaseMigrator.migrate(database)
         let json = try XCTUnwrap(database.query("SELECT value_json FROM settings WHERE key = 'filters.enabledAgentKinds'").first?.string("value_json"))
         let kinds = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String])
-        XCTAssertEqual(Set(kinds), Set(["claudeCode","codex","opencode","omp","reasonix","dsh","grok"]))
+        XCTAssertEqual(Set(kinds), Set(["claudeCode","codex","opencode","omp","reasonix","dsh","grok","qwenCode","qoder","workbuddy","antigravityCLI","geminiCLI"]))
+    }
+
+    func testEnsureNewAgentDefaultsRecognizesLegacyZalyDefaultSet() throws {
+        let database = try memoryDatabase()
+        try TokenMeterDatabaseMigrator.migrate(database)
+        try database.execute(
+            "INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by) VALUES ('filters.enabledAgentKinds', ?, 'json', 1, 'importer')",
+            [.text("[\"codex\",\"omp\",\"claudeCode\",\"opencode\",\"reasonix\",\"dsh\",\"grok\",\"zaly\"]")]
+        )
+
+        try TokenMeterDatabaseMigrator.migrate(database)
+
+        let json = try XCTUnwrap(database.query("SELECT value_json FROM settings WHERE key = 'filters.enabledAgentKinds'").first?.string("value_json"))
+        let kinds = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String])
+        XCTAssertEqual(
+            Set(kinds),
+            Set(["claudeCode","codex","opencode","omp","reasonix","dsh","grok","qwenCode","qoder","workbuddy","antigravityCLI","geminiCLI"])
+        )
+    }
+
+    func testEnsureNewAgentDefaultsRemovesRetiredZalyWithoutExpandingCustomizedSet() throws {
+        let database = try memoryDatabase()
+        try TokenMeterDatabaseMigrator.migrate(database)
+        try database.execute(
+            "INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by) VALUES ('filters.enabledAgentKinds', ?, 'json', 1, 'electron')",
+            [.text("[\"codex\",\"zaly\"]")]
+        )
+
+        try TokenMeterDatabaseMigrator.migrate(database)
+
+        let json = try XCTUnwrap(database.query("SELECT value_json FROM settings WHERE key = 'filters.enabledAgentKinds'").first?.string("value_json"))
+        let kinds = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String])
+        XCTAssertEqual(kinds, ["codex"])
     }
 
     func testEnsureNewAgentDefaultsDoesNotTouchCustomizedSet() throws {

@@ -36,9 +36,13 @@ export interface ActivityRow {
   /// 主会话自己用过的所有模型（去重，排除子代理），供卡片以 tag 展示。
   models: string[];
   tokensTotal: number;
+  tokenUnreportedEvents: number;
   firstEventEpochMs: number;
   costUsdMicros: number;
   costUnknownEvents: number;
+  /// SQLite Int64 以十进制文本返回，避免 JS Number 在 9,007 Credits 后丢精度。
+  creditsPicos: string;
+  creditEvents: number;
   msSinceLastEvent: number;
   isLive: boolean;
   /// hooks 上报的「阻塞」：agent 停下来等用户（权限确认 / 提问 / 等输入）。
@@ -52,7 +56,10 @@ export interface ActivityRow {
 export interface SubagentRow {
   label: string;
   tokens: number;
+  tokenUnreportedEvents: number;
   costUsdMicros: number;
+  creditsPicos: string;
+  creditEvents: number;
   durationMs: number;
   model: string | null;
   lastEventMs: number;
@@ -67,11 +74,19 @@ const ACTIVITY_SELECT =
           s.source_session_key AS sourceSessionKey,
           coalesce(s.provider_id, s.source_kind) AS providerId,
           coalesce(p.display_name, '未知项目') AS projectName,
-          sr.primary_model AS primaryModel,
+          coalesce((
+            SELECT mc.display_name
+              FROM model_catalog mc
+             WHERE mc.provider_id = coalesce(s.provider_id, s.source_kind)
+               AND mc.model_canonical = sr.primary_model
+          ), sr.primary_model) AS primaryModel,
           sr.tokens_total AS tokensTotal,
+          sr.token_unreported_events AS tokenUnreportedEvents,
           sr.first_event_epoch_ms AS firstEventEpochMs,
           sr.cost_usd_micros AS costUsdMicros,
           sr.cost_unknown_events AS costUnknownEvents,
+          CAST(sr.credits_picos AS TEXT) AS creditsPicos,
+          sr.credit_events AS creditEvents,
           sr.last_event_epoch_ms AS lastEventEpochMs
      FROM session_rollup sr
      JOIN agent_sessions s ON s.id = sr.session_id
@@ -80,19 +95,23 @@ LEFT JOIN projects p ON p.id = s.project_id
 
 export interface OverviewKpis {
   todayTokens: number;
+  todayTokenUnreportedEvents: number;
   yesterdayTokens: number;
   todaySessions: number;
   todayCostUsdMicros: number;
   todayCostUnknownEvents: number;
   monthTokens: number;
+  monthTokenUnreportedEvents: number;
   monthCostUsdMicros: number;
   monthCostUnknownEvents: number;
   /// 本周（周一起，与趋势图的周分桶同一日历）。
   weekTokens: number;
+  weekTokenUnreportedEvents: number;
   weekCostUsdMicros: number;
   weekCostUnknownEvents: number;
   /// 累计指标（OpenDesign 稿的四指标卡与页头副标题）。
   totalTokens: number;
+  totalTokenUnreportedEvents: number;
   totalCostUsdMicros: number;
   totalCostUnknownEvents: number;
   totalEvents: number;
@@ -115,6 +134,7 @@ export interface AgentTrendRow {
   bucket: string;
   providerId: string;
   tokens: number;
+  tokenUnreportedEvents: number;
   costUsdMicros: number;
   sessions: number;
 }
@@ -134,6 +154,7 @@ export interface HeatmapDay {
   costUsdMicros: number;
   sessions: number;
   events: number;
+  tokenUnreportedEvents: number;
 }
 
 export interface DayModelRow {
@@ -142,6 +163,7 @@ export interface DayModelRow {
   costUsdMicros: number;
   sessions: number;
   events: number;
+  tokenUnreportedEvents: number;
 }
 
 export interface DayProjectRow {
@@ -150,6 +172,7 @@ export interface DayProjectRow {
   costUsdMicros: number;
   sessions: number;
   events: number;
+  tokenUnreportedEvents: number;
 }
 
 export interface ModelRank {
@@ -157,8 +180,19 @@ export interface ModelRank {
   tokens: number;
   costUsdMicros: number;
   costUnknownEvents: number;
+  tokenUnreportedEvents: number;
   /// 该模型唯一的服务商 id；跨多个服务商用过时为 null（前端显示「混合」）。
   providerId: string | null;
+}
+
+/// Credits 不同供应商间没有可比汇率，所以只返回逐供应商行，不提供 grand total。
+export interface ProviderCreditSummary {
+  providerId: string;
+  todayPicos: string;
+  weekPicos: string;
+  monthPicos: string;
+  totalPicos: string;
+  creditEvents: number;
 }
 
 /// 概览页默认展示的时间范围。趋势与排行走最近 30 天（30 根 ≤ 120 可读上限，day 粒度合法）；
@@ -185,6 +219,7 @@ export interface OverviewReady {
   heatmapLastDay: string;
   heatmapDays: number;
   modelRanking: ModelRank[];
+  providerCredits: ProviderCreditSummary[];
   sessionRail: ActivityRow[];
 }
 
@@ -238,6 +273,7 @@ export class OverviewRepository {
       heatmapDays: HEATMAP_DAYS,
       // 模型排行按累计 token 降序（OpenDesign 稿口径），范围从首个 rollup 日起。
       modelRanking: this.modelRanking(kpis.firstDate ?? to, to, 'tokens'),
+      providerCredits: this.providerCredits(),
       sessionRail: this.sessionRail(SESSION_RAIL_LIMIT)
     };
   }
@@ -290,13 +326,25 @@ export class OverviewRepository {
               s.source_session_key AS sourceSessionKey,
               coalesce(s.provider_id, s.source_kind) AS providerId,
               coalesce(p.display_name, '未知项目') AS projectName,
-              sr.primary_model AS primaryModel,
-              (SELECT group_concat(DISTINCT e2.model_canonical) FROM usage_events e2
-                 WHERE e2.session_id = sr.session_id AND e2.is_sidechain = 0) AS models,
+              coalesce((
+                SELECT mc.display_name
+                  FROM model_catalog mc
+                 WHERE mc.provider_id = coalesce(s.provider_id, s.source_kind)
+                   AND mc.model_canonical = sr.primary_model
+              ), sr.primary_model) AS primaryModel,
+              (SELECT group_concat(DISTINCT coalesce(mc2.display_name, e2.model_canonical))
+                 FROM usage_events e2
+            LEFT JOIN model_catalog mc2
+                   ON mc2.provider_id = coalesce(s.provider_id, s.source_kind)
+                  AND mc2.model_canonical = e2.model_canonical
+                WHERE e2.session_id = sr.session_id AND e2.is_sidechain = 0) AS models,
               sr.tokens_total + coalesce(sub.tokens, 0) AS tokensTotal,
+              sr.token_unreported_events + coalesce(sub.token_unreported, 0) AS tokenUnreportedEvents,
               sr.first_event_epoch_ms AS firstEventEpochMs,
               coalesce(sr.cost_usd_micros, 0) + coalesce(sub.cost, 0) AS costUsdMicros,
-              sr.cost_unknown_events AS costUnknownEvents,
+              sr.cost_unknown_events + coalesce(sub.cost_unknown, 0) AS costUnknownEvents,
+              CAST(sr.credits_picos + coalesce(sub.credits, 0) AS TEXT) AS creditsPicos,
+              sr.credit_events + coalesce(sub.credit_events, 0) AS creditEvents,
               max(sr.last_event_epoch_ms, coalesce(sub.last_event, 0)) AS lastEventEpochMs,
               coalesce(sub.cnt, 0) + coalesce(sc.cnt, 0) AS subagentCount,
               live.lstate AS liveState,
@@ -307,7 +355,11 @@ export class OverviewRepository {
     LEFT JOIN (
            SELECT cs.source_kind AS sk, cs.root_session_key AS rk,
                   sum(csr.tokens_total) AS tokens,
+                  sum(csr.token_unreported_events) AS token_unreported,
                   sum(csr.cost_usd_micros) AS cost,
+                  sum(csr.cost_unknown_events) AS cost_unknown,
+                  sum(csr.credits_picos) AS credits,
+                  sum(csr.credit_events) AS credit_events,
                   max(csr.last_event_epoch_ms) AS last_event,
                   count(*) AS cnt
              FROM agent_sessions cs
@@ -411,9 +463,12 @@ export class OverviewRepository {
         primaryModel: null,
         models: [],
         tokensTotal: 0,
+        tokenUnreportedEvents: 0,
         firstEventEpochMs: r.startedEpochMs,
         costUsdMicros: 0,
         costUnknownEvents: 0,
+        creditsPicos: '0',
+        creditEvents: 0,
         msSinceLastEvent: Math.max(0, now - r.lastSeenEpochMs),
         isLive: true,
         isBlocked: r.blocked === 1,
@@ -441,8 +496,8 @@ export class OverviewRepository {
   }
 
   /// 主会话的子代理明细下钻（spec §6.3）。两种数据形态、对外统一结构：
-  /// - Claude：子代理是父会话里 is_sidechain=1 的事件，按 source_file 分组，名字取 source_files.subagent_label。
-  /// - 其他三家：子代理是独立子会话（root_session_key 指向本会话），名字取 agent_sessions.subagent_label。
+  /// - sidechain 形态：子代理事件仍归父会话，按 source_file 分组，名字取 source_files.subagent_label。
+  /// - 独立会话形态：root_session_key 指向本会话，名字取 agent_sessions.subagent_label。
   /// token 口径与别处一致：不含 reasoning。
   subagentBreakdown(sessionId: number): SubagentRow[] {
     const session = this.db.prepare(
@@ -450,12 +505,14 @@ export class OverviewRepository {
     ).get(sessionId) as { sourceKind: string; sourceSessionKey: string } | undefined;
     if (!session) return [];
 
-    if (session.sourceKind === 'claude_jsonl') {
-      return this.db.prepare(
+    const sidechains = this.db.prepare(
         `SELECT coalesce(f.subagent_label, '子代理') AS label,
                 sum(e.tokens_input + e.tokens_output + e.tokens_cache_read
                     + e.tokens_cache_write_5m + e.tokens_cache_write_1h) AS tokens,
+                sum(CASE WHEN e.tokens_reported = 0 THEN 1 ELSE 0 END) AS tokenUnreportedEvents,
                 coalesce(sum(e.cost_usd_micros), 0) AS costUsdMicros,
+                CAST(coalesce(sum(e.credits_picos), 0) AS TEXT) AS creditsPicos,
+                count(e.credits_picos) AS creditEvents,
                 max(e.observed_epoch_ms) - min(e.observed_epoch_ms) AS durationMs,
                 max(e.model_canonical) AS model,
                 max(e.observed_epoch_ms) AS lastEventMs
@@ -465,12 +522,15 @@ export class OverviewRepository {
           GROUP BY e.source_file_id
           ORDER BY lastEventMs DESC`
       ).all(sessionId) as SubagentRow[];
-    }
+    if (sidechains.length > 0) return sidechains;
 
     return this.db.prepare(
       `SELECT coalesce(cs.subagent_label, cs.source_session_key) AS label,
               csr.tokens_total AS tokens,
+              csr.token_unreported_events AS tokenUnreportedEvents,
               coalesce(csr.cost_usd_micros, 0) AS costUsdMicros,
+              CAST(csr.credits_picos AS TEXT) AS creditsPicos,
+              csr.credit_events AS creditEvents,
               csr.last_event_epoch_ms - csr.first_event_epoch_ms AS durationMs,
               csr.primary_model AS model,
               csr.last_event_epoch_ms AS lastEventMs
@@ -495,17 +555,19 @@ export class OverviewRepository {
 
     const todayRow = this.db.prepare(
       `SELECT coalesce(sum(cost_usd_micros), 0) AS cost,
-              coalesce(sum(cost_unknown_events), 0) AS unknown
+              coalesce(sum(cost_unknown_events), 0) AS unknown,
+              coalesce(sum(token_unreported_events), 0) AS tokenUnreported
          FROM daily_rollup WHERE usage_date = ?`
-    ).get(today) as { cost: number; unknown: number };
+    ).get(today) as { cost: number; unknown: number; tokenUnreported: number };
 
     const monthRow = this.db.prepare(
       `SELECT coalesce(sum(tokens_input + tokens_output + tokens_cache_read
                            + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
               coalesce(sum(cost_usd_micros), 0) AS cost,
-              coalesce(sum(cost_unknown_events), 0) AS unknown
+              coalesce(sum(cost_unknown_events), 0) AS unknown,
+              coalesce(sum(token_unreported_events), 0) AS tokenUnreported
          FROM daily_rollup WHERE usage_date LIKE ?`
-    ).get(`${monthPrefix}-%`) as { tokens: number; cost: number; unknown: number };
+    ).get(`${monthPrefix}-%`) as { tokens: number; cost: number; unknown: number; tokenUnreported: number };
 
     // 本周＝周一起（date 的 weekday 修饰符与 trendByDate 的周分桶同一日历）。
     const weekStart = (this.db.prepare(`SELECT date(?, 'weekday 0', '-6 days') AS d`).get(today) as { d: string }).d;
@@ -513,9 +575,10 @@ export class OverviewRepository {
       `SELECT coalesce(sum(tokens_input + tokens_output + tokens_cache_read
                            + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
               coalesce(sum(cost_usd_micros), 0) AS cost,
-              coalesce(sum(cost_unknown_events), 0) AS unknown
+              coalesce(sum(cost_unknown_events), 0) AS unknown,
+              coalesce(sum(token_unreported_events), 0) AS tokenUnreported
          FROM daily_rollup WHERE usage_date >= ?`
-    ).get(weekStart) as { tokens: number; cost: number; unknown: number };
+    ).get(weekStart) as { tokens: number; cost: number; unknown: number; tokenUnreported: number };
 
     // 累计口径全部从 daily_rollup 聚合（行数按 天×provider×模型 计，很小）；
     // 会话数只数主会话，与今日会话数同一口径。
@@ -525,9 +588,10 @@ export class OverviewRepository {
                            + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
               coalesce(sum(cost_usd_micros), 0) AS cost,
               coalesce(sum(cost_unknown_events), 0) AS unknown,
+              coalesce(sum(token_unreported_events), 0) AS tokenUnreported,
               coalesce(sum(events_count), 0) AS events
          FROM daily_rollup`
-    ).get() as { firstDate: string | null; tokens: number; cost: number; unknown: number; events: number };
+    ).get() as { firstDate: string | null; tokens: number; cost: number; unknown: number; tokenUnreported: number; events: number };
 
     const totalSessions = (this.db.prepare(
       `SELECT count(*) AS n FROM session_rollup sr
@@ -548,23 +612,45 @@ export class OverviewRepository {
 
     return {
       todayTokens: tokensOf(today),
+      todayTokenUnreportedEvents: todayRow.tokenUnreported,
       yesterdayTokens: tokensOf(yesterday),
       todaySessions,
       todayCostUsdMicros: todayRow.cost,
       todayCostUnknownEvents: todayRow.unknown,
       monthTokens: monthRow.tokens,
+      monthTokenUnreportedEvents: monthRow.tokenUnreported,
       monthCostUsdMicros: monthRow.cost,
       monthCostUnknownEvents: monthRow.unknown,
       weekTokens: weekRow.tokens,
+      weekTokenUnreportedEvents: weekRow.tokenUnreported,
       weekCostUsdMicros: weekRow.cost,
       weekCostUnknownEvents: weekRow.unknown,
       totalTokens: totalRow.tokens,
+      totalTokenUnreportedEvents: totalRow.tokenUnreported,
       totalCostUsdMicros: totalRow.cost,
       totalCostUnknownEvents: totalRow.unknown,
       totalEvents: totalRow.events,
       totalSessions,
       firstDate: totalRow.firstDate
     };
+  }
+
+  providerCredits(): ProviderCreditSummary[] {
+    const today = this.localDate(0);
+    const monthPrefix = `${today.slice(0, 7)}-%`;
+    const weekStart = (this.db.prepare(`SELECT date(?, 'weekday 0', '-6 days') AS d`).get(today) as { d: string }).d;
+    return this.db.prepare(
+      `SELECT provider_id AS providerId,
+              CAST(coalesce(sum(CASE WHEN usage_date = ? THEN credits_picos ELSE 0 END), 0) AS TEXT) AS todayPicos,
+              CAST(coalesce(sum(CASE WHEN usage_date >= ? THEN credits_picos ELSE 0 END), 0) AS TEXT) AS weekPicos,
+              CAST(coalesce(sum(CASE WHEN usage_date LIKE ? THEN credits_picos ELSE 0 END), 0) AS TEXT) AS monthPicos,
+              CAST(coalesce(sum(credits_picos), 0) AS TEXT) AS totalPicos,
+              coalesce(sum(credit_events), 0) AS creditEvents
+         FROM daily_rollup
+     GROUP BY provider_id
+       HAVING sum(credit_events) > 0
+     ORDER BY provider_id`
+    ).all(today, weekStart, monthPrefix) as ProviderCreditSummary[];
   }
 
   trend(from: string, to: string, g: Granularity): TrendBucket[] {
@@ -599,6 +685,7 @@ export class OverviewRepository {
               provider_id AS providerId,
               coalesce(sum(tokens_input + tokens_output + tokens_cache_read
                            + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
+              coalesce(sum(token_unreported_events), 0) AS tokenUnreportedEvents,
               coalesce(sum(cost_usd_micros), 0) AS costUsdMicros
          FROM daily_rollup
         WHERE usage_date BETWEEN ? AND ?
@@ -624,7 +711,14 @@ export class OverviewRepository {
       if (row) {
         row.sessions = s.sessions;
       } else {
-        byKey.set(key, { bucket: s.bucket, providerId: s.providerId, tokens: 0, costUsdMicros: 0, sessions: s.sessions });
+        byKey.set(key, {
+          bucket: s.bucket,
+          providerId: s.providerId,
+          tokens: 0,
+          tokenUnreportedEvents: 0,
+          costUsdMicros: 0,
+          sessions: s.sessions
+        });
       }
     }
 
@@ -689,7 +783,8 @@ export class OverviewRepository {
                            + d.tokens_cache_write_5m + d.tokens_cache_write_1h), 0) AS tokens,
               coalesce(sum(d.cost_usd_micros), 0) AS costUsdMicros,
               coalesce(max(s.sessions), 0) AS sessions,
-              coalesce(sum(d.events_count), 0) AS events
+              coalesce(sum(d.events_count), 0) AS events,
+              coalesce(sum(d.token_unreported_events), 0) AS tokenUnreportedEvents
          FROM daily_rollup d
          LEFT JOIN (
               SELECT usage_date, sum(sessions_count) AS sessions
@@ -712,7 +807,8 @@ export class OverviewRepository {
                            + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
               coalesce(sum(cost_usd_micros), 0) AS costUsdMicros,
               coalesce(sum(sessions_count), 0) AS sessions,
-              coalesce(sum(events_count), 0) AS events
+              coalesce(sum(events_count), 0) AS events,
+              coalesce(sum(token_unreported_events), 0) AS tokenUnreportedEvents
          FROM daily_rollup
         WHERE usage_date = ?
      GROUP BY model_canonical
@@ -729,7 +825,8 @@ export class OverviewRepository {
                            + d.tokens_cache_write_5m + d.tokens_cache_write_1h), 0) AS tokens,
               coalesce(sum(d.cost_usd_micros), 0) AS costUsdMicros,
               coalesce(sum(d.sessions_count), 0) AS sessions,
-              coalesce(sum(d.events_count), 0) AS events
+              coalesce(sum(d.events_count), 0) AS events,
+              coalesce(sum(d.token_unreported_events), 0) AS tokenUnreportedEvents
          FROM daily_rollup d
     LEFT JOIN projects p ON p.id = d.project_id
         WHERE d.usage_date = ?
@@ -748,6 +845,7 @@ export class OverviewRepository {
                            + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
               coalesce(sum(cost_usd_micros), 0) AS costUsdMicros,
               coalesce(sum(cost_unknown_events), 0) AS costUnknownEvents,
+              coalesce(sum(token_unreported_events), 0) AS tokenUnreportedEvents,
               count(DISTINCT provider_id) AS providerCount,
               min(provider_id) AS soleProvider
          FROM daily_rollup

@@ -11,6 +11,7 @@ export interface ProjectCard {
   costUsdMicros: number;
   costUnknownEvents: number;
   tokensTotal: number;
+  tokenUnreportedEvents: number;
   /// 近 14 天每日花费（USD micros），从今天-13 到今天按日对齐，缺日补 0。
   spark: number[];
   lastActiveDate: string | null;
@@ -27,10 +28,18 @@ export interface ProjectDetail {
   costUsdMicros: number;
   costUnknownEvents: number;
   tokensTotal: number;
+  tokenUnreportedEvents: number;
   /// 近 14 天 [date, costUsdMicros]，含补零。
   dailyCost: Array<{ date: string; costUsdMicros: number }>;
-  models: Array<{ model: string; tokens: number; costUsdMicros: number }>;
-  agents: Array<{ providerId: string; tokens: number; costUsdMicros: number }>;
+  models: Array<{ model: string; tokens: number; tokenUnreportedEvents: number; costUsdMicros: number }>;
+  agents: Array<{
+    providerId: string;
+    tokens: number;
+    tokenUnreportedEvents: number;
+    costUsdMicros: number;
+    creditsPicos: string;
+    creditEvents: number;
+  }>;
 }
 
 const SPARK_DAYS = 14;
@@ -51,6 +60,7 @@ export class ProjectsRepository {
                 coalesce(sum(d.cost_unknown_events), 0) AS costUnknownEvents,
                 coalesce(sum(d.tokens_input + d.tokens_output + d.tokens_cache_read
                              + d.tokens_cache_write_5m + d.tokens_cache_write_1h), 0) AS tokensTotal,
+                coalesce(sum(d.token_unreported_events), 0) AS tokenUnreportedEvents,
                 max(d.usage_date) AS lastActiveDate
          FROM projects p
          JOIN daily_rollup d ON d.project_id = p.id
@@ -111,12 +121,13 @@ export class ProjectsRepository {
                 coalesce(sum(cost_unknown_events), 0) AS costUnknownEvents,
                 coalesce(sum(tokens_input + tokens_output + tokens_cache_read
                              + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokensTotal,
+                coalesce(sum(token_unreported_events), 0) AS tokenUnreportedEvents,
                 count(DISTINCT usage_date) AS activeDays,
                 max(usage_date) AS lastActiveDate
          FROM daily_rollup WHERE project_id = ?`
       )
       .get(projectId) as {
-        costUsdMicros: number; costUnknownEvents: number; tokensTotal: number;
+        costUsdMicros: number; costUnknownEvents: number; tokensTotal: number; tokenUnreportedEvents: number;
         activeDays: number; lastActiveDate: string | null;
       };
 
@@ -145,6 +156,7 @@ export class ProjectsRepository {
         `SELECT model_canonical AS model,
                 coalesce(sum(tokens_input + tokens_output + tokens_cache_read
                              + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
+                coalesce(sum(token_unreported_events), 0) AS tokenUnreportedEvents,
                 coalesce(sum(cost_usd_micros), 0) AS costUsdMicros
          FROM daily_rollup WHERE project_id = ?
          GROUP BY model_canonical ORDER BY tokens DESC LIMIT 8`
@@ -156,7 +168,10 @@ export class ProjectsRepository {
         `SELECT provider_id AS providerId,
                 coalesce(sum(tokens_input + tokens_output + tokens_cache_read
                              + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
-                coalesce(sum(cost_usd_micros), 0) AS costUsdMicros
+                coalesce(sum(token_unreported_events), 0) AS tokenUnreportedEvents,
+                coalesce(sum(cost_usd_micros), 0) AS costUsdMicros,
+                CAST(coalesce(sum(credits_picos), 0) AS TEXT) AS creditsPicos,
+                coalesce(sum(credit_events), 0) AS creditEvents
          FROM daily_rollup WHERE project_id = ?
          GROUP BY provider_id ORDER BY tokens DESC`
       )

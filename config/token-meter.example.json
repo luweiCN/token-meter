@@ -16,6 +16,12 @@
       "enabled": true
     },
     {
+      "id": "antigravity",
+      "type": "antigravity",
+      "displayName": "AGY",
+      "enabled": false
+    },
+    {
       "id": "opencode-go",
       "type": "opencodeGo",
       "displayName": "OpenCode Go",

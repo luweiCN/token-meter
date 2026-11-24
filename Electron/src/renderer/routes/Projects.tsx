@@ -3,17 +3,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ProjectCard, ProjectDetail, SessionItem, SessionsFilter } from '../api.js';
 import { chartAnimationDelay } from '../charts/chartMotion.js';
 import { Pager, Select } from '../components/ui.js';
-import { formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
-
-/// agent 显示名（与总览 PROVIDER_LABEL 同名单；名单外回落原始 id）。
-const AGENT_LABEL: Record<string, string> = {
-  'claude-code': 'Claude Code',
-  codex: 'Codex CLI',
-  omp: 'OMP',
-  opencode: 'OpenCode',
-  reasonix: 'Reasonix',
-  grok: 'Grok Build'
-};
+import {
+  formatCredits, formatReportedTokens, formatUnknownCostNote,
+  formatUsdMicros
+} from '../format.js';
+import { providerLabel } from '../providers.js';
 import { SessionCell, SessionDetail } from './Sessions.js';
 
 /// 项目页（OpenDesign 稿 view-projects / view-project-detail）：
@@ -114,7 +108,9 @@ function ProjectGrid({ onOpen }: { onOpen: (card: ProjectCard) => void }) {
               <Sparkline values={card.spark} />
               <div className="pc-foot">
                 <span className="num">{card.sessionsCount.toLocaleString()} 会话</span>
-                <span className="num">{formatTokens(card.tokensTotal)}</span>
+                <span className="num">
+                  {formatReportedTokens(card.tokensTotal, card.tokenUnreportedEvents)}
+                </span>
                 <span className="num" title={unknownNote ? `部分事件价格未知（${unknownNote}）` : undefined}>
                   {formatUsdMicros(card.costUsdMicros)}{unknownNote ? '†' : ''}
                 </span>
@@ -187,7 +183,12 @@ function ProjectDetailView({ card, onBack }: { card: ProjectCard; onBack: () => 
         </div>
         <div className="stat">
           <div className="lb">Token</div>
-          <div className="v num">{formatTokens(detail?.tokensTotal ?? card.tokensTotal)}</div>
+          <div className="v num">
+            {formatReportedTokens(
+              detail?.tokensTotal ?? card.tokensTotal,
+              detail?.tokenUnreportedEvents ?? card.tokenUnreportedEvents
+            )}
+          </div>
           <div className="sb">全部历史</div>
         </div>
         <div className="stat">
@@ -236,7 +237,9 @@ function ProjectDetailView({ card, onBack }: { card: ProjectCard; onBack: () => 
                       }}
                     />
                   </div>
-                  <span className="num">{formatTokens(m.tokens)}</span>
+                  <span className="num">
+                    {formatReportedTokens(m.tokens, m.tokenUnreportedEvents)}
+                  </span>
                 </div>
               ))}
             </div>
@@ -248,7 +251,7 @@ function ProjectDetailView({ card, onBack }: { card: ProjectCard; onBack: () => 
             <div>
               {detail!.agents.map((a, index) => (
                 <div className="mbar dist-row" key={a.providerId}>
-                  <span className="mname dist-name">{AGENT_LABEL[a.providerId] ?? a.providerId}</span>
+                  <span className="mname dist-name">{providerLabel(a.providerId)}</span>
                   <div className="bar">
                     <i
                       className="chart-bar-x-in"
@@ -258,7 +261,10 @@ function ProjectDetailView({ card, onBack }: { card: ProjectCard; onBack: () => 
                       }}
                     />
                   </div>
-                  <span className="num">{formatTokens(a.tokens)}</span>
+                  <span className="num">
+                    {formatReportedTokens(a.tokens, a.tokenUnreportedEvents)}
+                    {a.creditEvents > 0 ? ` · ${formatCredits(a.creditsPicos)}` : ''}
+                  </span>
                 </div>
               ))}
             </div>
@@ -325,6 +331,7 @@ function ProjectSessions({ projectId, onOpen }: { projectId: number; onOpen: (se
               <tr>
                 <th>会话</th><th>模型</th>
                 <th className={sortClass('tokens')} onClick={() => onSort('tokens')}>Token</th>
+                <th className="r">Credits</th>
                 <th className={sortClass('cost')} onClick={() => onSort('cost')}>成本</th>
                 <th className={sortClass('start')} onClick={() => onSort('start')}>开始</th>
                 <th className="r">子代理</th>
@@ -335,7 +342,10 @@ function ProjectSessions({ projectId, onOpen }: { projectId: number; onOpen: (se
                 <tr key={`${s.sourceKind}:${s.sessionKey}`} className="sess-row" onClick={() => onOpen(s)}>
                   <td><SessionCell session={s} /></td>
                   <td><span className="mname">{s.modelName ?? '—'}</span></td>
-                  <td className="r num">{formatTokens(s.tokensTotal)}</td>
+                  <td className="r num">
+                    {formatReportedTokens(s.tokensTotal, s.tokenUnreportedEvents)}
+                  </td>
+                  <td className="r num">{s.creditEvents > 0 ? formatCredits(s.creditsPicos) : '—'}</td>
                   <td className="r num">{formatUsdMicros(s.costUsdMicros)}</td>
                   <td className="r num">{new Date(s.firstEventEpochMs).toLocaleDateString()}</td>
                   <td className="r num">{s.subagentCount}</td>

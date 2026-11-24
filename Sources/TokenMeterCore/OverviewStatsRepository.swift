@@ -5,11 +5,13 @@ import Foundation
 public struct OverviewStatsBucket: Equatable {
     package var cacheUsage = PromptCacheUsage()
     public let tokens: Int64
+    public let tokenUnreportedEvents: Int64
     public let costUsdMicros: Int64
     public let costUnknownEvents: Int64
 
-    public init(tokens: Int64, costUsdMicros: Int64, costUnknownEvents: Int64) {
+    public init(tokens: Int64, tokenUnreportedEvents: Int64 = 0, costUsdMicros: Int64, costUnknownEvents: Int64) {
         self.tokens = tokens
+        self.tokenUnreportedEvents = tokenUnreportedEvents
         self.costUsdMicros = costUsdMicros
         self.costUnknownEvents = costUnknownEvents
     }
@@ -59,7 +61,8 @@ public enum OverviewStatsRepository {
                    coalesce(sum(tokens_input + tokens_output + tokens_cache_read
                                 + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
                    coalesce(sum(cost_usd_micros), 0) AS cost,
-                   coalesce(sum(cost_unknown_events), 0) AS unknown
+                   coalesce(sum(cost_unknown_events), 0) AS unknown,
+                   coalesce(sum(token_unreported_events), 0) AS tokenUnreported
               FROM daily_rollup
         """
 
@@ -67,6 +70,7 @@ public enum OverviewStatsRepository {
             guard let row = (try? database.query(sql, params))?.first else { return .zero }
             var result = OverviewStatsBucket(
                 tokens: row.int("tokens") ?? 0,
+                tokenUnreportedEvents: row.int("tokenUnreported") ?? 0,
                 costUsdMicros: row.int("cost") ?? 0,
                 costUnknownEvents: row.int("unknown") ?? 0
             )

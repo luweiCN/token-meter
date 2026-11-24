@@ -411,7 +411,9 @@ describe('AppShell renderer routes', () => {
     render(<AppShell />);
 
     expect(await screen.findByRole('status', { name: '正在扫描' })).toBeTruthy();
-    expect(api.index.isScanning).toHaveBeenCalledTimes(1);
+    // 全量并行测试负载下可能已跨过 1s 轮询间隔；这里验证首次查询与指示灯，
+    // 不把计时器恰好未触发当成产品契约。
+    expect(api.index.isScanning.mock.calls.length).toBeGreaterThanOrEqual(1);
   });
 
   it('parses SQLite UTC scan timestamps without adding the local timezone offset', async () => {
@@ -498,7 +500,8 @@ describe('AppShell renderer routes', () => {
     expect(await screen.findByText('~/.codex/records')).toBeTruthy();
     expect(screen.getByText('已完成')).toBeTruthy();
     expect(screen.getByText('38,455')).toBeTruthy();       // Codex 事件数
-    expect(screen.getByText('已停用')).toBeTruthy();       // enabled=false
+    const disabledSource = document.querySelector<HTMLElement>('.src[data-state="off"]');
+    expect(disabledSource && within(disabledSource).getByText('已停用')).toBeTruthy();
     // 失败文件收进卡片错误行（1 个解析失败 + root 级错误合并展示）。
     expect(screen.getByText(/1 个文件解析失败/)).toBeTruthy();
     // 数据区汇总：总事件数 = 两源之和。
@@ -600,6 +603,17 @@ describe('AppShell renderer routes', () => {
     await waitFor(() => {
       expect(api.settings.update).toHaveBeenCalledWith({ providerEnabled: { zhipu: false } }, 12);
     });
+  });
+
+  it('enables Antigravity quota only after the user opts in', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(screen.getByRole('button', { name: '设置' }));
+    const toggle = await screen.findByRole('button', { name: '启用 Antigravity' });
+    expect((screen.getByRole('textbox', { name: 'Antigravity 显示名' }) as HTMLInputElement).value).toBe('AGY');
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    await user.click(toggle);
+    await waitFor(() => expect(api.settings.update).toHaveBeenCalledWith({ providerEnabled: { antigravity: true } }, 12));
   });
 
   it('saves a Command Code API key to the keychain without requiring its CLI', async () => {

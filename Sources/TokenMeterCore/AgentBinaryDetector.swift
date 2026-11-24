@@ -25,7 +25,11 @@ public enum AgentBinaryDetector {
         ("omp", "omp"),
         ("opencode", "opencode"),
         ("dsh", "dsh"),
-        ("grok", "grok")
+        ("grok", "grok"),
+        ("qwenCode", "qwen"),
+        ("qoder", "qoderclicn"),
+        ("antigravityCLI", "agy"),
+        ("geminiCLI", "gemini")
     ]
 
     public static func detect(
@@ -54,6 +58,7 @@ public enum AgentBinaryDetector {
         directories += [
             "\(homeDirectory)/.local/bin",
             "\(homeDirectory)/.grok/bin",
+            "\(homeDirectory)/.qoder-cn/bin/qoderclicn",
             "\(homeDirectory)/.codex/packages/standalone/current/bin",
             "\(homeDirectory)/.bun/bin",
             "/opt/homebrew/bin",
@@ -72,6 +77,17 @@ public enum AgentBinaryDetector {
                !isDirectory.boolValue,
                fileManager.isExecutableFile(atPath: candidate) {
                 return candidate
+            }
+            // Qoder 把可执行文件命名为 qoderclicn-<version>，目录中的
+            // version.txt 只是选版索引；按版本名逆序选取可执行文件。
+            if name == "qoderclicn",
+               let entries = try? fileManager.contentsOfDirectory(atPath: directory),
+               let versioned = entries
+                .filter({ $0.hasPrefix("qoderclicn-") })
+                .sorted(by: { $0.localizedStandardCompare($1) == .orderedDescending })
+                .map({ (directory as NSString).appendingPathComponent($0) })
+                .first(where: { fileManager.isExecutableFile(atPath: $0) }) {
+                return versioned
             }
         }
         return nil

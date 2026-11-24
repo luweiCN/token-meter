@@ -39,7 +39,7 @@ Codex reset cards show the remaining days, hours, or minutes. An opt-in setting 
 - **Projects**: aggregated by working directory, spend sparklines and model distribution
 - **Sessions**: main-session list (subagents merged in), trend and stat cards follow filters, drill into subagent tasks
 - **Models**: per-model token / cost ranking, Top-6 model usage trend
-- **Settings**: agent integration toggles (auto-installs hooks), provider quota access, live menu-bar preview
+- **Settings**: local agent-source toggles, provider quota access, live menu-bar preview
 
 | Settings | Menu bar customization |
 |---|---|
@@ -49,13 +49,20 @@ Codex reset cards show the remaining days, hours, or minutes. An opt-in setting 
 
 **Local session accounting** (parses logs the agents already write, read-only):
 
-| Agent | Source |
-|---|---|
-| Claude Code | `~/.claude/projects/*.jsonl` |
-| Codex CLI | `~/.codex/sessions/*.jsonl` |
-| OMP (Oh My Pi) | `~/.omp/agent/sessions/*.jsonl` |
-| OpenCode | `~/.local/share/opencode/opencode.db` |
-| Grok Build | `$GROK_HOME/sessions/*/*/updates.jsonl` (default `~/.grok/sessions`) |
+| Agent | Source | Additional accounting |
+|---|---|---|
+| Claude Code | `~/.claude/projects/*.jsonl` | — |
+| Codex CLI | `~/.codex/sessions/*.jsonl` | — |
+| OMP (Oh My Pi) | `~/.omp/agent/sessions/*.jsonl` | — |
+| OpenCode | `~/.local/share/opencode/opencode.db` | — |
+| Grok Build | `$GROK_HOME/sessions/*/*/updates.jsonl` (default `~/.grok/sessions`) | — |
+| Qwen Code | sessions/monthly ledger under `QWEN_RUNTIME_DIR` + `QWEN_HOME/usage_record.jsonl` (both default to `~/.qwen`) | Tokens |
+| Qoder CLI / Desktop | `~/.qoder-cn/projects/**/*.jsonl`; Desktop attribution from `main.sqlite` | Tokens when the source actually reports them; per-request Credits; official CLI model names. Current Qwen3.8-Max data has positive Credits but zeroed Token counters, so Token is shown as unreported and is never inferred |
+| Antigravity CLI | `~/.gemini/antigravity-cli/conversations/*.db` | Per-generation tokens, cache usage, reasoning, and estimated model cost |
+| Gemini CLI | JSON and JSONL recordings under `~/.gemini/tmp/*/chats/` | Historical and subagent tokens, cache usage, and estimated model cost |
+| Tencent WorkBuddy | `~/.workbuddy/projects/**/*.jsonl` + `~/.workbuddy/workbuddy.db` | Tokens, Credits, locally estimated cost; runtime corpus still pending |
+
+Doubao Work is not integrated because no token/cost ledger could be validated reliably. See the [local data-source contract and evidence](docs/data-source-contracts.md) for field semantics, precedence, deduplication, and validation boundaries.
 
 **Subscription quotas** (uses credentials already on your machine, or an API key):
 
@@ -63,9 +70,11 @@ Codex reset cards show the remaining days, hours, or minutes. An opt-in setting 
 |---|---|
 | Claude Code | Keychain (local login) |
 | Codex | `~/.codex/auth.json` |
+| Antigravity (AGY) | Enable in Settings to refresh quota automatically using the signed-in CLI. Expand the card for Gemini, Claude/GPT, and model-specific limits. [Setup and quota rules](docs/antigravity-quota.md) |
 | Zhipu GLM | In-app key (stored in Keychain) or `ZHIPU_API_KEY` |
 | OpenCode Go | In-app "Sign in with OpenCode Go" (WebView login, valid 1 year) |
 | Grok Build | `~/.grok/auth.json` (`grok login`) |
+| Qoder | Existing Qoder CLI login; Plan, Add-on, and shared organization Credits through the official `get_usage_info` control API |
 
 ## Architecture
 

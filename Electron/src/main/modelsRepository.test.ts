@@ -34,7 +34,20 @@ function createModelsDb() {
         tokens_cache_read + tokens_cache_write_5m + tokens_cache_write_1h
       ) VIRTUAL,
       cost_usd_micros INTEGER,
-      cost_source TEXT NOT NULL DEFAULT 'computed'
+      cost_source TEXT NOT NULL DEFAULT 'computed',
+      tokens_reported INTEGER NOT NULL DEFAULT 1,
+      credits_picos INTEGER
+    );
+
+    CREATE TABLE model_catalog (
+      provider_id TEXT NOT NULL,
+      model_canonical TEXT NOT NULL,
+      source_model_id TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      catalog_source TEXT NOT NULL,
+      is_enabled INTEGER,
+      fetched_epoch_ms INTEGER NOT NULL,
+      PRIMARY KEY (provider_id, model_canonical)
     );
   `);
   return db;
@@ -60,18 +73,24 @@ function seedEvent(
     tokens?: number;
     cost?: number | null;
     costSource?: string;
+    tokensReported?: number;
+    creditsPicos?: string | null;
   }
 ) {
   db.prepare(
-    `INSERT INTO usage_events (session_id, event_seq, observed_epoch_ms, model_canonical, tokens_input, cost_usd_micros, cost_source)
-     VALUES (?, (SELECT coalesce(max(event_seq), 0) + 1 FROM usage_events), ?, ?, ?, ?, ?)`
+    `INSERT INTO usage_events (
+       session_id, event_seq, observed_epoch_ms, model_canonical, tokens_input,
+       cost_usd_micros, cost_source, tokens_reported, credits_picos
+     ) VALUES (?, (SELECT coalesce(max(event_seq), 0) + 1 FROM usage_events), ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     options.session,
     options.at,
     options.model,
     options.tokens ?? 100,
     options.cost === undefined ? 10 : options.cost,
-    options.costSource ?? 'computed'
+    options.costSource ?? 'computed',
+    options.tokensReported ?? 1,
+    options.creditsPicos ?? null
   );
 }
 
@@ -100,6 +119,7 @@ describe('ModelsRepository', () => {
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0].model).toBe('gpt-5.6-sol');
+    expect(result.items[0].displayName).toBe('gpt-5.6-sol');
     expect(result.items[0].tokensTotal).toBe(11_100);
     expect(result.items[0].eventsCount).toBe(3);
     expect(result.items[0].firstUsedEpochMs).toBe(2_000);
@@ -148,6 +168,53 @@ describe('ModelsRepository', () => {
     const result = repository.query({});
 
     expect(result.items.map((item) => item.model)).toEqual(['gpt-5.6-sol']);
+  });
+
+  it('uses Qoder official display names and exposes provider-scoped Credits', () => {
+    seedSession(db, 1, 'qoder-cli');
+    seedEvent(db, {
+      session: 1,
+      at: 1_000,
+      model: 'qmodel_38max',
+      tokens: 0,
+      cost: null,
+      costSource: 'unknown',
+      creditsPicos: '250000000000'
+    });
+    seedEvent(db, {
+      session: 1,
+      at: 2_000,
+      model: 'qmodel_38max',
+      tokens: 0,
+      cost: null,
+      costSource: 'unknown',
+      creditsPicos: '500000000000'
+    });
+    db.prepare(
+      `INSERT INTO model_catalog (
+         provider_id, model_canonical, source_model_id, display_name,
+         catalog_source, is_enabled, fetched_epoch_ms
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run('qoder-cli', 'qmodel_38max', 'qmodel_38max', 'Qwen3.8-Max', 'system', 1, 1_000);
+
+    const result = repository.query({ search: 'Qwen3.8' });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      model: 'qmodel_38max',
+      displayName: 'Qwen3.8-Max',
+      tokensTotal: 0,
+      costUsdMicros: 0,
+      costUnknownEvents: 2,
+      credits: [{
+        providerId: 'qoder-cli',
+        creditsPicos: '750000000000',
+        creditEvents: 2
+      }]
+    });
+    expect(repository.trend({ search: 'Qwen3.8', fromEpochMs: 0, toEpochMs: 3_000 }).rows).toEqual([
+      { bucket: '1970-01-01', model: 'qmodel_38max', tokens: 0 }
+    ]);
   });
 
   describe('trend', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatTokens, formatUsdMicros, setMoneyDisplay } from './format.js';
+import { addCreditPicos, formatCredits, formatTokens, formatUsdMicros, setMoneyDisplay } from './format.js';
 
 describe('formatTokens', () => {
   it('uses K/M/B for aggregated (multi-day) values', () => {
@@ -32,5 +32,16 @@ describe('formatUsdMicros money display', () => {
   it('switches back to USD through the same formatter', () => {
     setMoneyDisplay('usd', 6.76);
     expect(formatUsdMicros(1_500_000)).toBe('$1.50');
+  });
+});
+
+describe('Credits integer formatting', () => {
+  it('formats picos without converting the Int64 value to an unsafe JS number', () => {
+    expect(formatCredits('250000000000')).toBe('0.25 Credits');
+    expect(formatCredits('12345678901234567')).toBe('12,345.68 Credits');
+  });
+
+  it('adds provider-grouped picos exactly beyond Number.MAX_SAFE_INTEGER', () => {
+    expect(addCreditPicos('9007199254740993', '7')).toBe('9007199254741000');
   });
 });

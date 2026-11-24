@@ -52,6 +52,8 @@ function createDashboardDb() {
       ) VIRTUAL,
       cost_usd_micros INTEGER,
       cost_source TEXT NOT NULL CHECK (cost_source IN ('reported', 'computed', 'unknown')),
+      tokens_reported INTEGER NOT NULL DEFAULT 1,
+      credits_picos INTEGER,
       dedupe_key TEXT,
       source_offset INTEGER NOT NULL,
       is_sidechain INTEGER NOT NULL DEFAULT 0,
@@ -73,7 +75,10 @@ function createDashboardDb() {
       tokens_cache_write_5m INTEGER NOT NULL DEFAULT 0,
       tokens_cache_write_1h INTEGER NOT NULL DEFAULT 0,
       cost_usd_micros INTEGER NOT NULL DEFAULT 0,
-      cost_unknown_events INTEGER NOT NULL DEFAULT 0
+      cost_unknown_events INTEGER NOT NULL DEFAULT 0,
+      token_unreported_events INTEGER NOT NULL DEFAULT 0,
+      credits_picos INTEGER NOT NULL DEFAULT 0,
+      credit_events INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE session_rollup (
@@ -84,6 +89,9 @@ function createDashboardDb() {
       tokens_total INTEGER NOT NULL,
       cost_usd_micros INTEGER NOT NULL,
       cost_unknown_events INTEGER NOT NULL DEFAULT 0,
+      token_unreported_events INTEGER NOT NULL DEFAULT 0,
+      credits_picos INTEGER NOT NULL DEFAULT 0,
+      credit_events INTEGER NOT NULL DEFAULT 0,
       primary_model TEXT
     );
 
@@ -108,7 +116,8 @@ function rebuildRollups(db: Database.Database) {
         sessions_count, events_count,
         tokens_input, tokens_output, tokens_reasoning,
         tokens_cache_read, tokens_cache_write_5m, tokens_cache_write_1h,
-        cost_usd_micros, cost_unknown_events
+        cost_usd_micros, cost_unknown_events,
+        token_unreported_events, credits_picos, credit_events
     )
     SELECT
         date(e.observed_epoch_ms / 1000, 'unixepoch', 'localtime') AS usage_date,
@@ -125,7 +134,10 @@ function rebuildRollups(db: Database.Database) {
         coalesce(sum(e.tokens_cache_write_5m), 0),
         coalesce(sum(e.tokens_cache_write_1h), 0),
         coalesce(sum(e.cost_usd_micros), 0),
-        sum(CASE WHEN e.cost_source = 'unknown' THEN 1 ELSE 0 END)
+        sum(CASE WHEN e.cost_source = 'unknown' THEN 1 ELSE 0 END),
+        sum(CASE WHEN e.tokens_reported = 0 THEN 1 ELSE 0 END),
+        coalesce(sum(e.credits_picos), 0),
+        count(e.credits_picos)
     FROM usage_events e
     JOIN agent_sessions s ON s.id = e.session_id
     WHERE s.status != 'deleted'
@@ -136,7 +148,8 @@ function rebuildRollups(db: Database.Database) {
   db.exec(`
     INSERT INTO session_rollup(
         session_id, first_event_epoch_ms, last_event_epoch_ms, events_count,
-        tokens_total, cost_usd_micros, cost_unknown_events, primary_model
+        tokens_total, cost_usd_micros, cost_unknown_events,
+        token_unreported_events, credits_picos, credit_events, primary_model
     )
     SELECT
         e.session_id,
@@ -146,6 +159,9 @@ function rebuildRollups(db: Database.Database) {
         coalesce(sum(e.tokens_total), 0),
         coalesce(sum(e.cost_usd_micros), 0),
         sum(CASE WHEN e.cost_source = 'unknown' THEN 1 ELSE 0 END),
+        sum(CASE WHEN e.tokens_reported = 0 THEN 1 ELSE 0 END),
+        coalesce(sum(e.credits_picos), 0),
+        count(e.credits_picos),
         (
             SELECT e2.model_canonical
             FROM usage_events e2

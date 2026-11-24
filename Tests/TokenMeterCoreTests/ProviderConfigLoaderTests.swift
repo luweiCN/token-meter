@@ -11,7 +11,8 @@ final class ProviderConfigLoaderTests: XCTestCase {
             "opencode-go",
             "command-code",
             "zhipu",
-            "grok"
+            "grok",
+            "qoder"
         ])
 
         let openCodeGo = try XCTUnwrap(config.providers.first { $0.id == "opencode-go" })
@@ -26,6 +27,10 @@ final class ProviderConfigLoaderTests: XCTestCase {
         let zhipu = try XCTUnwrap(config.providers.first { $0.id == "zhipu" })
         XCTAssertEqual(zhipu.endpoint, "https://bigmodel.cn/api/monitor/usage/quota/limit")
         XCTAssertNil(zhipu.credential?.filePath)
+
+        let qoder = try XCTUnwrap(config.providers.first { $0.id == "qoder" })
+        XCTAssertEqual(qoder.type, .qoder)
+        XCTAssertNil(qoder.credential)
     }
 
     func testDecodesExampleConfig() throws {

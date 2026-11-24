@@ -76,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bindSettingsTimer(to: store)
         bindCodexResetAutomation(to: store)
         bindHooksInstaller(to: store)
+        bindAntigravity(to: store)
         // 静默更新检查（24h 节流）：有新版发系统通知；手动入口在右键菜单。
         UpdateChecker.autoCheckIfDue()
     }
@@ -93,6 +94,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
     }
 
+    private func bindAntigravity(to store: ProviderStore) {
+        guard let config = store.antigravityConfig, let executable = Bundle.main.executableURL else { return }
+        let installer = AntigravityStatusLine(executable: executable)
+        store.$settingsSnapshot.compactMap { $0 }.map { settings in
+            settings.providerOverrides.first { $0.providerId == config.id }?.enabled ?? config.enabled
+        }
+        .removeDuplicates()
+        .receive(on: DispatchQueue(label: "TokenMeter.AntigravityStatusLine", qos: .utility))
+        .sink { [weak store] enabled in
+            let result = Result { try installer.setEnabled(enabled) }
+            Task { @MainActor in
+                guard let store, store.isProviderEnabled(config.id) == enabled else { return }
+                if case .failure(let error) = result {
+                    store.antigravityConnectionError = "无法配置 Antigravity 状态栏：\(error.localizedDescription)"
+                } else {
+                    store.antigravityConnectionError = nil
+                }
+                if enabled { store.refreshAntigravityIfNeeded() }
+                else { store.stopAntigravityRefresh(); await store.reloadAntigravityQuota() }
+            }
+        }.store(in: &cancellables)
+        DistributedNotificationCenter.default().publisher(for: AntigravityQuota.changed)
+            .debounce(for: .milliseconds(200), scheduler: RunLoop.main)
+            .sink { [weak store] _ in Task { @MainActor in await store?.antigravityDidReceiveQuota() } }
+            .store(in: &cancellables)
+        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+            .sink { [weak store] _ in Task { @MainActor in store?.refreshAntigravityIfNeeded() } }
+            .store(in: &cancellables)
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         isTerminating = true
         startupTask?.cancel()
@@ -101,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTimer?.invalidate()
         codexResetTimer?.invalidate()
         store?.stopCodexResetAutomation()
+        store?.stopAntigravityRefresh()
         exchangeRateTimer?.invalidate()
         pricingRefreshTimer?.invalidate()
         cancellables.removeAll()

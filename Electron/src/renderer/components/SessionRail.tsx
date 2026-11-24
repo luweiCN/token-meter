@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import type { ActivityRow, SubagentRow } from '../api.js';
-import { formatDurationShort, formatRelative, formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
+import {
+  formatCredits, formatDurationShort, formatRelative, formatReportedTokens,
+  formatUnknownCostNote, formatUsdMicros
+} from '../format.js';
+import { providerLabel } from '../providers.js';
 
 /// 实时会话卡（OpenDesign 稿 8b）四态：
 ///   blocked —— hooks 上报「agent 停下来等用户」（权限确认 / 提问，琥珀色脉冲点）
@@ -46,21 +50,25 @@ export function SessionRail({ sessions, now }: { sessions: ActivityRow[]; now: n
                 <span className="proj" title={s.projectName}>{s.projectName}</span>
                 <span className="last">{s.isLive ? '刚刚' : formatRelative(s.msSinceLastEvent)}</span>
               </div>
-              {model ? (
-                <span className="lc-model" title={s.models.join('、') || model}>
-                  {model}
-                  {s.models.length > 1 ? ` +${s.models.length - 1}` : ''}
-                </span>
-              ) : null}
+              <span className="lc-model" title={s.models.join('、') || model || undefined}>
+                {providerLabel(s.providerId)}
+                {model ? ` · ${model}${s.models.length > 1 ? ` +${s.models.length - 1}` : ''}` : ''}
+              </span>
               <div className="lc-stats">
                 <div>
                   <i>Token</i>
-                  <b className="num">{formatTokens(s.tokensTotal)}</b>
+                  <b className="num">{formatReportedTokens(s.tokensTotal, s.tokenUnreportedEvents)}</b>
                 </div>
                 <div title={unknownNote ? `部分事件价格未知，成本可能偏低（${unknownNote}）` : undefined}>
                   <i>花费</i>
                   <b className="num">{formatUsdMicros(s.costUsdMicros)}{unknownNote ? '†' : ''}</b>
                 </div>
+                {s.creditEvents > 0 ? (
+                  <div>
+                    <i>Credits</i>
+                    <b className="num">{formatCredits(s.creditsPicos)}</b>
+                  </div>
+                ) : null}
                 <div>
                   <i>时长</i>
                   <b className="num">{formatDurationShort(Math.max(0, now - s.firstEventEpochMs))}</b>
@@ -210,6 +218,7 @@ function SubagentModal({
                   <th className="r">#</th>
                   <th>名称</th>
                   <th>Token</th>
+                  <th className="r">Credits</th>
                   <th className="r">成本</th>
                   <th className="r">时间</th>
                 </tr>
@@ -222,9 +231,12 @@ function SubagentModal({
                     <td>
                       <div className="mbar">
                         <div className="bar"><i style={{ width: `${Math.round((r.tokens / maxTokens) * 100)}%` }} /></div>
-                        <span className="num">{formatTokens(r.tokens)}</span>
+                        <span className="num">
+                          {formatReportedTokens(r.tokens, r.tokenUnreportedEvents)}
+                        </span>
                       </div>
                     </td>
+                    <td className="r num">{r.creditEvents > 0 ? formatCredits(r.creditsPicos) : '—'}</td>
                     <td className="r num">{formatUsdMicros(r.costUsdMicros)}</td>
                     <td className="r num">{formatRelative(now - r.lastEventMs)}</td>
                   </tr>

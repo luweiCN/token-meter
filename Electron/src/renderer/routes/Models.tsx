@@ -3,7 +3,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ModelsFilter, ModelTrendResult, ModelUsageItem } from '../api.js';
 import { StackedTrendChart, type TrendSeriesDef } from '../charts/StackedTrendChart.js';
 import { DateTimeRangePicker, type DateTimeRangeValue } from '../components/ui.js';
-import { formatCount, formatTokens, formatUnknownCostNote, formatUsdMicros } from '../format.js';
+import {
+  formatCount, formatCredits, formatReportedTokens, formatTokens, formatUnknownCostNote,
+  formatUsdMicros
+} from '../format.js';
+import { providerLabel } from '../providers.js';
 
 type SortKey = NonNullable<ModelsFilter['sortBy']>;
 
@@ -14,16 +18,6 @@ function formatShortDateTime(epochMs: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/// agent 显示名(与趋势图图例同一命名)。
-const AGENT_LABEL: Record<string, string> = {
-  'claude-code': 'Claude Code',
-  codex: 'Codex CLI',
-  omp: 'OMP',
-  opencode: 'OpenCode',
-  reasonix: 'Reasonix',
-  grok: 'Grok Build'
-};
-
 /// 趋势系列色:系列色 s1-s4 打头(与全应用图表一致),补两色,「其他」灰。
 const SHARE_COLORS = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', '#ff8fa3', '#ffb26b'];
 const OTHER_MODEL = '__other';
@@ -31,7 +25,7 @@ const OTHER_MODEL = '__other';
 /// Top6 模型（按筛选范围 token 总量降序）+「其他」的系列定义。
 function modelSeriesDefs(items: ModelUsageItem[]): TrendSeriesDef[] {
   const top = [...items].sort((a, b) => b.tokensTotal - a.tokensTotal).slice(0, 6);
-  const defs = top.map((item, index) => ({ id: item.model, label: item.model, color: SHARE_COLORS[index] }));
+  const defs = top.map((item, index) => ({ id: item.model, label: item.displayName, color: SHARE_COLORS[index] }));
   if (items.length > top.length) defs.push({ id: OTHER_MODEL, label: '其他', color: 'var(--muted)' });
   return defs;
 }
@@ -42,7 +36,7 @@ function ModelStatCards({
   totals
 }: {
   items: ModelUsageItem[];
-  totals: { tokens: number; cost: number; events: number };
+  totals: { tokens: number; tokenUnreported: number; cost: number; costUnknown: number; events: number };
 }) {
   const top = items.reduce<ModelUsageItem | null>(
     (best, item) => (best === null || item.tokensTotal > best.tokensTotal ? item : best),
@@ -54,13 +48,19 @@ function ModelStatCards({
     <div className="stats">
       <div className="stat">
         <div className="lb">Token</div>
-        <div className="v num">{formatTokens(totals.tokens)}</div>
+        <div className="v num">
+          {formatReportedTokens(totals.tokens, totals.tokenUnreported)}
+        </div>
         <div className="sb">{formatCount(totals.events)} 条用量事件</div>
       </div>
       <div className="stat">
         <div className="lb">花费</div>
-        <div className="v num">{formatUsdMicros(totals.cost)}</div>
-        <div className="sb">不含价格未知事件</div>
+        <div className="v num" title={formatUnknownCostNote(totals.costUnknown) ?? undefined}>
+          {totals.cost === 0 && totals.costUnknown > 0
+            ? '未知'
+            : `${formatUsdMicros(totals.cost)}${totals.costUnknown > 0 ? '†' : ''}`}
+        </div>
+        <div className="sb">{totals.costUnknown > 0 ? `${formatCount(totals.costUnknown)} 条事件价格未知` : '已知事件成本合计'}</div>
       </div>
       <div className="stat">
         <div className="lb">模型</div>
@@ -69,7 +69,7 @@ function ModelStatCards({
       </div>
       <div className="stat">
         <div className="lb">用量第一</div>
-        <div className="v"><span className="mname">{top?.model ?? '—'}</span></div>
+        <div className="v"><span className="mname">{top?.displayName ?? '—'}</span></div>
         <div className="sb">{top !== null ? `占总量 ${topShare.toFixed(1)}%` : '暂无用量'}</div>
       </div>
     </div>
@@ -166,10 +166,12 @@ export function Models() {
       items.reduce(
         (acc, item) => ({
           tokens: acc.tokens + item.tokensTotal,
+          tokenUnreported: acc.tokenUnreported + item.tokenUnreportedEvents,
           cost: acc.cost + item.costUsdMicros,
+          costUnknown: acc.costUnknown + item.costUnknownEvents,
           events: acc.events + item.eventsCount
         }),
-        { tokens: 0, cost: 0, events: 0 }
+        { tokens: 0, tokenUnreported: 0, cost: 0, costUnknown: 0, events: 0 }
       ),
     [items]
   );
@@ -194,8 +196,14 @@ export function Models() {
         <h1>模型</h1>
         <span className="sub">
           <b className="num">{items.length}</b> 个模型 ·{' '}
-          <b className="num">{formatTokens(totals.tokens)}</b> tokens ·{' '}
-          <b className="num">{formatUsdMicros(totals.cost)}</b>
+          <b className="num">
+            {formatReportedTokens(totals.tokens, totals.tokenUnreported)}
+          </b> tokens ·{' '}
+          <b className="num" title={formatUnknownCostNote(totals.costUnknown) ?? undefined}>
+            {totals.cost === 0 && totals.costUnknown > 0
+              ? '成本未知'
+              : `${formatUsdMicros(totals.cost)}${totals.costUnknown > 0 ? '†' : ''}`}
+          </b>
           {filtered ? ' · 筛选范围内' : ''}
         </span>
         <div className="spacer" />
@@ -233,6 +241,7 @@ export function Models() {
                 <th>模型</th>
                 <th>Agent</th>
                 <th className={sortClass('tokens')} onClick={() => onSort('tokens')}>Token</th>
+                <th className="r">Credits</th>
                 <th className={sortClass('cost')} onClick={() => onSort('cost')}>成本</th>
                 <th className="r">会话</th>
                 <th className={`${sortClass('events')} hide-sm`} onClick={() => onSort('events')}>事件</th>
@@ -244,20 +253,45 @@ export function Models() {
                 const unknownNote = formatUnknownCostNote(item.costUnknownEvents);
                 return (
                   <tr key={item.model}>
-                    <td><span className="mname">{item.model}</span></td>
                     <td>
-                      <span className="t2">
-                        {item.agents.map((agent) => AGENT_LABEL[agent] ?? agent).join(' · ')}
+                      <span className="mname" title={item.displayName === item.model ? undefined : `原始模型 ID：${item.model}`}>
+                        {item.displayName}
                       </span>
                     </td>
-                    <td className="r num">
+                    <td>
+                      <span className="t2">
+                        {item.agents.map((agent) => providerLabel(agent)).join(' · ')}
+                      </span>
+                    </td>
+                    <td
+                      className="r num"
+                      title={item.tokensTotal === 0 && item.tokenUnreportedEvents === 0 && item.credits.length > 0
+                          ? '上游明确上报 Token 为 0；Credits 是独立用量单位'
+                          : undefined}
+                    >
                       <span className="rowbar">
-                        <span>{formatTokens(item.tokensTotal)}</span>
+                        <span>
+                          {formatReportedTokens(item.tokensTotal, item.tokenUnreportedEvents)}
+                        </span>
                         <i style={{ width: `${maxTokens > 0 ? (item.tokensTotal / maxTokens) * 100 : 0}%` }} />
                       </span>
                     </td>
+                    <td className="r">
+                      {item.credits.length > 0 ? (
+                        <div className="model-credit-stack">
+                          {item.credits.map((credit) => (
+                            <div key={credit.providerId} title={`${formatCount(credit.creditEvents)} 条 Credits 事件`}>
+                              <span className="t2">{providerLabel(credit.providerId)}</span>{' '}
+                              <span className="num">{formatCredits(credit.creditsPicos)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : '—'}
+                    </td>
                     <td className="r num" title={unknownNote ? `部分事件价格未知（${unknownNote}）` : undefined}>
-                      {formatUsdMicros(item.costUsdMicros)}{unknownNote ? '†' : ''}
+                      {item.costUsdMicros === 0 && item.costUnknownEvents > 0
+                        ? '未知'
+                        : `${formatUsdMicros(item.costUsdMicros)}${unknownNote ? '†' : ''}`}
                     </td>
                     <td className="r num">{formatCount(item.sessionsCount)}</td>
                     <td className="r num hide-sm">{formatCount(item.eventsCount)}</td>
@@ -266,7 +300,7 @@ export function Models() {
                 );
               })}
               {items.length === 0 && !loadError ? (
-                <tr><td colSpan={7} className="muted sess-empty">该时间范围内没有模型用量。</td></tr>
+                <tr><td colSpan={8} className="muted sess-empty">该时间范围内没有模型用量。</td></tr>
               ) : null}
             </tbody>
           </table>

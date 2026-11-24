@@ -8,6 +8,7 @@ export type {
   AgentTrendSeries,
   HeatmapDay,
   ModelRank,
+  ProviderCreditSummary,
   ActivityRow,
   SubagentRow,
   DayModelRow,
@@ -203,12 +204,19 @@ export interface ModelsFilter {
 /// 模型维度一行(与主进程 modelsRepository.ModelItem 同形)。
 export interface ModelUsageItem {
   model: string;
+  displayName: string;
   tokensTotal: number;
   costUsdMicros: number;
   costUnknownEvents: number;
+  tokenUnreportedEvents: number;
   eventsCount: number;
   sessionsCount: number;
   agents: string[];
+  credits: Array<{
+    providerId: string;
+    creditsPicos: string;
+    creditEvents: number;
+  }>;
   firstUsedEpochMs: number;
   lastUsedEpochMs: number;
 }
@@ -235,7 +243,10 @@ export interface SessionTrendRow {
   bucket: string;
   providerId: string;
   tokens: number;
+  tokenUnreportedEvents: number;
   costUsdMicros: number;
+  creditsPicos: string;
+  creditEvents: number;
   sessions: number;
 }
 
@@ -257,8 +268,11 @@ export interface SessionItem {
   firstEventEpochMs: number;
   lastEventEpochMs: number;
   tokensTotal: number;
+  tokenUnreportedEvents: number;
   costUsdMicros: number;
   costUnknownEvents: number;
+  creditsPicos: string;
+  creditEvents: number;
   /// 主会话自己的 usage 事件数（不含子代理会话的）。
   eventsCount: number;
   subagentCount: number;
@@ -284,6 +298,7 @@ export interface ProjectCard {
   costUsdMicros: number;
   costUnknownEvents: number;
   tokensTotal: number;
+  tokenUnreportedEvents: number;
   /// 近 14 天每日花费（USD micros），日对齐补零。
   spark: number[];
   lastActiveDate: string | null;
@@ -299,9 +314,17 @@ export interface ProjectDetail {
   costUsdMicros: number;
   costUnknownEvents: number;
   tokensTotal: number;
+  tokenUnreportedEvents: number;
   dailyCost: Array<{ date: string; costUsdMicros: number }>;
-  models: Array<{ model: string; tokens: number; costUsdMicros: number }>;
-  agents: Array<{ providerId: string; tokens: number; costUsdMicros: number }>;
+  models: Array<{ model: string; tokens: number; tokenUnreportedEvents: number; costUsdMicros: number }>;
+  agents: Array<{
+    providerId: string;
+    tokens: number;
+    tokenUnreportedEvents: number;
+    costUsdMicros: number;
+    creditsPicos: string;
+    creditEvents: number;
+  }>;
 }
 
 export interface ScanRootSummary {

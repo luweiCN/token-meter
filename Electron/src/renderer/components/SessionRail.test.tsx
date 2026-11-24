@@ -8,14 +8,15 @@ import type { ActivityRow, SubagentRow } from '../api.js';
 const base: ActivityRow = {
   sessionId: 1, sourceKind: 'codex_jsonl', sourceSessionKey: 's1',
   providerId: 'codex', projectName: 'proj', primaryModel: 'gpt-5.5',
-  tokensTotal: 1800, firstEventEpochMs: 0, costUsdMicros: 3000, costUnknownEvents: 0,
+  tokensTotal: 1800, tokenUnreportedEvents: 0, firstEventEpochMs: 0, costUsdMicros: 3000, costUnknownEvents: 0,
+  creditsPicos: '0', creditEvents: 0,
   msSinceLastEvent: 60_000, isLive: false, isBlocked: false, subagentCount: 2,
   models: ['gpt-5.5', 'gpt-5.6-sol']
 };
 
 const breakdown: SubagentRow[] = [
-  { label: 'explorer', tokens: 300, costUsdMicros: 1500, durationMs: 60_000, model: 'm', lastEventMs: 2 },
-  { label: 'worker', tokens: 500, costUsdMicros: 2000, durationMs: 60_000, model: 'm', lastEventMs: 1 }
+  { label: 'explorer', tokens: 300, tokenUnreportedEvents: 0, costUsdMicros: 1500, creditsPicos: '0', creditEvents: 0, durationMs: 60_000, model: 'm', lastEventMs: 2 },
+  { label: 'worker', tokens: 500, tokenUnreportedEvents: 0, costUsdMicros: 2000, creditsPicos: '0', creditEvents: 0, durationMs: 60_000, model: 'm', lastEventMs: 1 }
 ];
 
 beforeEach(() => {

@@ -234,6 +234,13 @@ describe('SettingsRepository', () => {
     expect(repo.get().enabledAgentKinds).toEqual(['claudeCode', 'codex', 'opencode', 'omp', 'reasonix', 'dsh', 'grok']);
   });
 
+  it('accepts Qwen Code, Qoder, and WorkBuddy in enabledAgentKinds', () => {
+    const { repo } = openRepo();
+    const kinds = ['claudeCode', 'qwenCode', 'qoder', 'workbuddy', 'antigravityCLI', 'geminiCLI'];
+    repo.update({ enabledAgentKinds: kinds }, 3);
+    expect(repo.get().enabledAgentKinds).toEqual(kinds);
+  });
+
   it('stores provider enable flags into overrides and bumps the settings version', () => {
     const { repo } = openRepo();
 

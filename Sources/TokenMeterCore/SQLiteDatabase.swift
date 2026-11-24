@@ -36,11 +36,7 @@ public final class SQLiteDatabase {
     private var handle: OpaquePointer?
     private var snapshotDirectory: URL?
 
-    public convenience init(path: String) throws {
-        try self.init(path: path, readOnly: false)
-    }
-
-    package init(path: String, readOnly: Bool) throws {
+    public init(path: String, readOnly: Bool = false) throws {
         let flags = (readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE) | SQLITE_OPEN_FULLMUTEX
         try open(path, flags: flags)
         try execute("PRAGMA busy_timeout = 5000")
@@ -184,6 +180,20 @@ public final class SQLiteDatabase {
                 }
             }
             rows.append(SQLiteRow(values: values))
+        }
+    }
+
+    /// 逐行消费会话元数据，避免把整库的大 BLOB 同时留在内存中。
+    func forEachIndexedBlob(_ sql: String, _ consume: (Int64, Data) throws -> Void) throws {
+        let statement = try prepare(sql, [])
+        defer { sqlite3_finalize(statement) }
+        while true {
+            let result = sqlite3_step(statement)
+            if result == SQLITE_DONE { return }
+            guard result == SQLITE_ROW else { throw SQLiteDatabaseError.stepFailed(errorMessage) }
+            guard let bytes = sqlite3_column_blob(statement, 1) else { continue }
+            let count = Int(sqlite3_column_bytes(statement, 1))
+            try consume(sqlite3_column_int64(statement, 0), Data(bytes: bytes, count: count))
         }
     }
 

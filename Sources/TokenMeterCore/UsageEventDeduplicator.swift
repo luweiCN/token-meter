@@ -47,7 +47,9 @@ public enum UsageEventDeduplicator {
             let identity = ExactIdentity(scope: event.dedupeScopeKey, key: key)
             if let existing = byExactKey[identity] {
                 if replacesOnExactKey(existing, with: event) {
-                    byExactKey[identity] = event
+                    byExactKey[identity] = event.mergingMissingCredit(from: existing)
+                } else {
+                    byExactKey[identity] = existing.mergingMissingCredit(from: event)
                 }
             } else {
                 byExactKey[identity] = event
@@ -70,7 +72,9 @@ public enum UsageEventDeduplicator {
                 continue
             }
             if shouldReplace(existing, with: event) {
-                byMessageId[identity] = event
+                byMessageId[identity] = event.mergingMissingCredit(from: existing)
+            } else {
+                byMessageId[identity] = existing.mergingMissingCredit(from: event)
             }
         }
 
@@ -79,11 +83,11 @@ public enum UsageEventDeduplicator {
 
     /// 规则一的全序判别：`candidate` 是否应替换掉已在 `byExactKey` 里的 `existing`。
     ///
-    /// 三级全序（tokensTotal 最大 → observedAt 最早 → eventSeq 最小）由 `UsageEventPrecedence`
+    /// 四级全序（tokensTotal 最大 → Token 已上报 → observedAt 最早 → eventSeq 最小）由 `UsageEventPrecedence`
     /// 统一裁决，`UsageEventWriter` 对已落库行去重时走同一个函数。规则曾被抄成两份、Task 14g
     /// 只修了这一份，因此绝不在这里复制排序逻辑。
-    /// （`testTotalOrderIsLoadBearingAtEveryLevel` 用一个乱序输入守这三级：把高 seq 的并列帧
-    /// 放在最小 seq 之前，删掉任一级就会挑错 winner。）
+    /// `testTotalOrderIsLoadBearingAtEveryLevel` 用乱序输入守数值/时间/seq，另有零值测试守
+    /// Token 可用性；删掉任一级都会挑错 winner。
     private static func replacesOnExactKey(_ existing: UsageEvent, with candidate: UsageEvent) -> Bool {
         UsageEventPrecedence.candidateWins(candidate.precedenceFields, over: existing.precedenceFields)
     }

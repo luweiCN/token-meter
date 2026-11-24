@@ -93,6 +93,20 @@ public struct CostCalculator {
             return (reported, .reported)
         }
 
+        // 来源未上报 Token 时，0 只是数据库占位，不是一次真实的零 Token 请求。
+        // 即使模型能命中价格表也不能据此算出 $0。
+        guard event.tokensReported else {
+            return (nil, .unknown)
+        }
+
+        // Credits 是供应商资源单位，不能换算成 USD。若请求确实消耗了 Credits，
+        // 但来源的全部 Token 字段为 0，则用模型单价乘出 $0 会制造“免费”的假象。
+        if event.totalTokens == 0,
+           let credit = event.creditUsage,
+           credit.actualPicos > 0 || (credit.originalPicos ?? 0) > 0 {
+            return (nil, .unknown)
+        }
+
         // 不做家族兜底。同家族价格能差 100 倍（gpt-5 $0.05 vs gpt-5.5 $5.00），
         // 借来的价格会被标成 computed，用户无从分辨那是不是真的。
         // 匹配不到就诚实地说不知道，等待经过校验的新快照或用户覆盖补齐。

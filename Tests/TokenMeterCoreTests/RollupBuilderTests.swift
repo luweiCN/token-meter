@@ -97,6 +97,36 @@ final class RollupBuilderTests: XCTestCase {
         XCTAssertEqual(row.int("cost_unknown_events"), 1)
     }
 
+    func testRollupsPreserveMissingTokenAndProviderCreditsFacts() throws {
+        let database = try makeDatabase()
+        let ms = Int64(ISO8601DateFormatter().date(from: "2026-07-08T05:00:00Z")!.timeIntervalSince1970 * 1000)
+        try database.execute(
+            """
+            INSERT INTO usage_events(
+                session_id, source_file_id, event_seq, observed_epoch_ms, model_canonical,
+                tokens_reported, credits_picos, cost_source, source_offset
+            ) VALUES (1, 1, 1, ?, 'qwen3-coder', 0, 250000000000, 'unknown', 1)
+            """,
+            [.int(ms)]
+        )
+
+        try RollupBuilder(database: database).rebuildAll()
+
+        let daily = try XCTUnwrap(database.query(
+            "SELECT token_unreported_events, credits_picos, credit_events FROM daily_rollup"
+        ).first)
+        XCTAssertEqual(daily.int("token_unreported_events"), 1)
+        XCTAssertEqual(daily.int("credits_picos"), 250_000_000_000)
+        XCTAssertEqual(daily.int("credit_events"), 1)
+
+        let session = try XCTUnwrap(database.query(
+            "SELECT token_unreported_events, credits_picos, credit_events FROM session_rollup"
+        ).first)
+        XCTAssertEqual(session.int("token_unreported_events"), 1)
+        XCTAssertEqual(session.int("credits_picos"), 250_000_000_000)
+        XCTAssertEqual(session.int("credit_events"), 1)
+    }
+
     func testBuildsSessionRollupWithPrimaryModel() throws {
         let database = try makeDatabase()
         try insertEvent(database, seq: 1, iso: "2026-07-08T05:00:00Z", model: "claude-fable-5", input: 1000, cost: 100)

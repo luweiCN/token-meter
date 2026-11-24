@@ -14,24 +14,30 @@ import Foundation
 ///   1. `tokensTotal` 更大者胜 —— 保留流式响应最终（最完整）帧。Claude 同一次调用（同 messageId、
 ///      同 requestId）在流式返回时反复落盘，`output_tokens` 单调增长（4 → 4 → 559），`input`/cache
 ///      各档不变，最早那帧是被截断的。「最完整」而非「最早」正是本次要落实到两端的核心。
-///   2. 总量并列 → `observedEpochMs` 更早者胜 —— resume/fork 的逐字节副本走到这里，复刻
+///   2. 总量并列 → 来源明确提供 Token 的事件胜过未提供 Token 的 Credits-only 事件。
+///      二者的 0 不能混为一谈；这也保证 Credits 兜底帧不会盖掉明确上报的零 Token。
+///   3. Token 可用性并列 → `observedEpochMs` 更早者胜 —— resume/fork 的逐字节副本走到这里，复刻
 ///      Task 14g 之前「保留最早」的确定性行为。
-///   3. 时间也并列 → `eventSeq` 更小者胜 —— 否则完全并列时，胜者取决于事件到达顺序 /
+///   4. 时间也并列 → `eventSeq` 更小者胜 —— 否则完全并列时，胜者取决于事件到达顺序 /
 ///      Swift 每进程随机的哈希种子。补上这一级让胜者只由数据本身决定。
 enum UsageEventPrecedence {
-    /// 决胜所需的三个字段。`UsageEvent`（内存去重）与已落库行（写库去重）都能提供：
-    /// 前者走计算属性，后者读 `tokens_total` / `observed_epoch_ms` / `event_seq` 三列。
+    /// 决胜所需字段。`UsageEvent`（内存去重）与已落库行（写库去重）都能提供：
+    /// 前者走计算属性，后者读 `tokens_total` / `tokens_reported` / 时间 / seq 列。
     /// 用一个中间结构而不是两份比较逻辑，避免为省一次类型转换又把规则抄第二遍。
     struct Fields: Equatable {
         let tokensTotal: Int64
+        let tokensReported: Bool
         let observedEpochMs: Int64
         let eventSeq: Int64
     }
 
-    /// `candidate` 是否应取代 `existing`。见类型注释的三级全序。
+    /// `candidate` 是否应取代 `existing`。见类型注释的四级全序。
     static func candidateWins(_ candidate: Fields, over existing: Fields) -> Bool {
         if candidate.tokensTotal != existing.tokensTotal {
             return candidate.tokensTotal > existing.tokensTotal
+        }
+        if candidate.tokensReported != existing.tokensReported {
+            return candidate.tokensReported
         }
         if candidate.observedEpochMs != existing.observedEpochMs {
             return candidate.observedEpochMs < existing.observedEpochMs
@@ -45,6 +51,7 @@ extension UsageEvent {
     var precedenceFields: UsageEventPrecedence.Fields {
         UsageEventPrecedence.Fields(
             tokensTotal: totalTokens,
+            tokensReported: tokensReported,
             observedEpochMs: observedEpochMilliseconds,
             eventSeq: Int64(eventSeq)
         )

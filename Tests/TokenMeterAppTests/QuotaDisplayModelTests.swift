@@ -326,6 +326,47 @@ final class QuotaDisplayModelTests: XCTestCase {
         XCTAssertEqual(model.summaryText, model.summarySegments.map(\.text).joined(separator: " · "))
     }
 
+    /// Qoder Credits 没有官方可验证的窗口时长，但套餐与加购都是主额度，必须并列进环；
+    /// 第三项仍为条，且不得伪造窗口供菜单栏使用。
+    func testPrimaryNoWindowQuotaUsesTwoRingsWithoutMenuBarWindow() {
+        let snapshot = ProviderUsageSnapshot(
+            providerId: "qoder", displayName: "Qoder", status: .ok, fetchedAt: Date(),
+            summary: "套餐剩余 0 · 加购剩余 25 · 组织包剩余 10", message: nil,
+            groups: [
+                UsageGroup(id: "qoder", title: "Qoder", subtitle: nil, items: [
+                    metric(id: "qoder-plan", used: 100, windowMinutes: nil),
+                    metric(id: "qoder-addon", used: 75, windowMinutes: nil),
+                    metric(id: "qoder-org", used: 90, windowMinutes: nil)
+                ])
+            ]
+        )
+
+        let model = QuotaDisplayModel(snapshot: snapshot)
+
+        XCTAssertEqual(model.rings.map(\.id), ["qoder-plan", "qoder-addon"])
+        XCTAssertEqual(model.rings.map(\.percent), [0, 25])
+        XCTAssertTrue(model.menuBarWindows.isEmpty)
+        XCTAssertEqual(model.bars.map(\.label), ["x"])
+        XCTAssertEqual(model.summarySegments.map(\.text), ["x 0%", "x 25%"])
+        XCTAssertEqual(model.summarySegments.map(\.tone), [.bad, .warning])
+    }
+
+    func testDepletedQuotaUsesRingStateWithoutDuplicateAlertCard() {
+        let snapshot = ProviderUsageSnapshot(
+            providerId: "qoder", displayName: "Qoder", status: .warning, fetchedAt: Date(),
+            summary: "套餐剩余 0 / 300 Credits", message: "Credits 额度已用尽",
+            groups: [UsageGroup(id: "qoder", title: "Qoder", subtitle: "Credits", items: [
+                metric(id: "qoder-plan", used: 100, windowMinutes: nil)
+            ])]
+        )
+
+        let model = QuotaDisplayModel(snapshot: snapshot)
+
+        XCTAssertEqual(model.rings.first?.tone, .bad)
+        XCTAssertNil(model.alertMessage)
+        XCTAssertNil(model.staleMinutes)
+    }
+
     func testGrokLoginErrorShowsHelpAndNeedsLogin() {
         let snapshot = ProviderUsageSnapshot(
             providerId: "grok",

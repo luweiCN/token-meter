@@ -33,7 +33,8 @@ public final class RollupBuilder {
                 sessions_count, events_count,
                 tokens_input, tokens_output, tokens_reasoning,
                 tokens_cache_read, tokens_cache_write_5m, tokens_cache_write_1h,
-                cost_usd_micros, cost_unknown_events
+                cost_usd_micros, cost_unknown_events,
+                token_unreported_events, credits_picos, credit_events
             )
             SELECT
                 -- observed_epoch_ms 是 UTC 毫秒，'localtime' 修饰符让 SQLite 把它转换成
@@ -59,7 +60,10 @@ public final class RollupBuilder {
                 -- 显得"精确"但其实偏低。cost_unknown_events 记下有多少行未定价，
                 -- 让调用方能察觉这个总额不完整。
                 coalesce(sum(e.cost_usd_micros), 0),
-                sum(CASE WHEN e.cost_source = 'unknown' THEN 1 ELSE 0 END)
+                sum(CASE WHEN e.cost_source = 'unknown' THEN 1 ELSE 0 END),
+                sum(CASE WHEN e.tokens_reported = 0 THEN 1 ELSE 0 END),
+                coalesce(sum(e.credits_picos), 0),
+                count(e.credits_picos)
             FROM usage_events e
             JOIN agent_sessions s ON s.id = e.session_id
             WHERE s.status != 'deleted'
@@ -103,7 +107,8 @@ public final class RollupBuilder {
             """
             INSERT INTO session_rollup(
                 session_id, first_event_epoch_ms, last_event_epoch_ms, events_count,
-                tokens_total, cost_usd_micros, cost_unknown_events, primary_model
+                tokens_total, cost_usd_micros, cost_unknown_events,
+                token_unreported_events, credits_picos, credit_events, primary_model
             )
             SELECT
                 e.session_id,
@@ -113,6 +118,9 @@ public final class RollupBuilder {
                 coalesce(sum(e.tokens_total), 0),
                 coalesce(sum(e.cost_usd_micros), 0),
                 sum(CASE WHEN e.cost_source = 'unknown' THEN 1 ELSE 0 END),
+                sum(CASE WHEN e.tokens_reported = 0 THEN 1 ELSE 0 END),
+                coalesce(sum(e.credits_picos), 0),
+                count(e.credits_picos),
                 (
                     -- 该会话内 token 总数最大的模型；按 token 数降序、模型名升序打破平局，
                     -- 保证结果确定，不依赖行的物理顺序。

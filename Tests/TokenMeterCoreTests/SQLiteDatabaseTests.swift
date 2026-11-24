@@ -50,4 +50,24 @@ final class SQLiteDatabaseTests: XCTestCase {
 
         XCTAssertNoThrow(try database.close())
     }
+
+    func testReadOnlyConnectionReadsButCannotMutateOrCreateDatabase() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tokenmeter-readonly-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("source.sqlite")
+        let writer = try SQLiteDatabase(path: url.path)
+        try writer.execute("CREATE TABLE source_rows(value INTEGER NOT NULL)")
+        try writer.execute("INSERT INTO source_rows(value) VALUES (7)")
+        try writer.close()
+
+        let reader = try SQLiteDatabase(path: url.path, readOnly: true)
+        XCTAssertEqual(try reader.query("SELECT value FROM source_rows").first?.int("value"), 7)
+        XCTAssertThrowsError(try reader.execute("INSERT INTO source_rows(value) VALUES (8)"))
+
+        let missing = directory.appendingPathComponent("missing.sqlite")
+        XCTAssertThrowsError(try SQLiteDatabase(path: missing.path, readOnly: true))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: missing.path))
+    }
 }

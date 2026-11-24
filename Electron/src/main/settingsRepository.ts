@@ -94,7 +94,12 @@ const LOCAL_AGENT_KIND_ALLOWED: Record<string, true> = {
   omp: true,
   reasonix: true,
   dsh: true,
-  grok: true
+  grok: true,
+  qwenCode: true,
+  qoder: true,
+  workbuddy: true,
+  antigravityCLI: true,
+  geminiCLI: true
 };
 
 

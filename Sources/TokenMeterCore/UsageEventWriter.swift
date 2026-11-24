@@ -27,10 +27,14 @@ public final class UsageEventWriter {
         sourceFileId: Int64,
         runId: Int64?,
         rootSessionKeyOverride: String? = nil,
-        subagentLabelOverride: String? = nil
+        subagentLabelOverride: String? = nil,
+        replacingFileEvents: Bool = false
     ) throws {
         try database.execute("BEGIN IMMEDIATE")
         do {
+            if replacingFileEvents {
+                try database.execute("DELETE FROM usage_events WHERE source_file_id = ?", [.int(sourceFileId)])
+            }
             let projectId = try upsertProject(session.projectPath)
             try upsertAgentSession(
                 session, scanRootId: scanRootId, projectId: projectId, runId: runId,
@@ -123,18 +127,6 @@ public final class UsageEventWriter {
 
     // MARK: - Session
 
-    private func providerId(for sourceKind: SourceKind) -> String {
-        switch sourceKind {
-        case .claudeJSONL: return "claude-code"
-        case .codexJSONL: return "codex"
-        case .ompJSONL: return "omp"
-        case .opencodeSQLite: return "opencode"
-        case .reasonixStats: return "reasonix"
-        case .dshJSONL: return "dsh"
-        case .grokJSONL: return "grok"
-        }
-    }
-
     private func upsertAgentSession(
         _ session: ParsedSession, scanRootId: Int64, projectId: Int64?, runId: Int64?,
         rootSessionKey: String?, subagentLabel: String?
@@ -171,14 +163,16 @@ public final class UsageEventWriter {
                 last_indexed_run_id = excluded.last_indexed_run_id,
                 raw_meta_json = excluded.raw_meta_json,
                 root_session_key = excluded.root_session_key,
-                subagent_label = excluded.subagent_label
+                subagent_label = excluded.subagent_label,
+                status = 'active',
+                deleted_at = NULL
             """,
             [
                 .text(session.sourceKind.rawValue),
                 .text(session.sessionKey),
                 .int(scanRootId),
                 sqliteInt(projectId),
-                .text(providerId(for: session.sourceKind)),
+                .text(session.providerId ?? session.sourceKind.defaultProviderId),
                 sqliteText(session.cliVersion),
                 sqliteText(session.startedAt.map(dateFormatter.string(from:))),
                 sqliteText(session.updatedAt.map(dateFormatter.string(from:))),
@@ -217,6 +211,7 @@ public final class UsageEventWriter {
         let dedupeScopeKey = event.dedupeKey == nil
             ? nil
             : (event.dedupeScopeKey ?? defaultDedupeScopeKey)
+        var effectiveCredit = event.creditUsage
         if let dedupeKey = event.dedupeKey {
             // `idx_usage_dedupe` 是 UNIQUE(dedupe_scope_key, dedupe_key)，`INSERT OR IGNORE`
             // 只能挡住第二次写入，但保留的是**先写入的那条**——扫描顺序（先扫到哪个文件）
@@ -227,24 +222,60 @@ public final class UsageEventWriter {
             // 彼此，只有这里能挡住——若仍「保留最早」，先落库的中间帧（output=4）会永久顶掉续读到
             // 的最终帧（output=559）。Task 14g 只修了内存那一遍，漏了这里。
             let existingRows = try database.query(
-                "SELECT id, tokens_total, observed_epoch_ms, event_seq FROM usage_events WHERE dedupe_scope_key = ? AND dedupe_key = ?",
+                """
+                SELECT id, tokens_total, tokens_reported, observed_epoch_ms, event_seq, cost_source,
+                       credits_picos, original_credits_picos, billable
+                FROM usage_events
+                WHERE dedupe_scope_key = ? AND dedupe_key = ?
+                """,
                 [.text(dedupeScopeKey ?? defaultDedupeScopeKey), .text(dedupeKey)]
             )
             if let existing = existingRows.first, let existingId = existing.int("id") {
-                // 三列均为 NOT NULL（tokens_total 是生成列），兜底值只在理论上不可达的读失败时生效。
+                // 决胜列均为 NOT NULL（tokens_total 是生成列），兜底值只在理论上不可达的读失败时生效。
                 let existingFields = UsageEventPrecedence.Fields(
                     tokensTotal: existing.int("tokens_total") ?? 0,
+                    tokensReported: (existing.int("tokens_reported") ?? 1) == 1,
                     observedEpochMs: existing.int("observed_epoch_ms") ?? Int64.max,
                     eventSeq: existing.int("event_seq") ?? Int64.max
                 )
+                let existingCredit = existing.int("credits_picos").map {
+                    ProviderCreditUsage(
+                        actualPicos: $0,
+                        originalPicos: existing.int("original_credits_picos"),
+                        billable: existing.int("billable").map { $0 == 1 }
+                    )
+                }
                 guard UsageEventPrecedence.candidateWins(event.precedenceFields, over: existingFields) else {
+                    // Token 胜者没有 Credits 时，败者仍可补齐这一正交事实；不能因
+                    // UNIQUE 去重把 WorkBuddy 数据库兜底或 Qoder Credits 静默吞掉。
+                    if existingCredit == nil, let effectiveCredit {
+                        try database.execute(
+                            "UPDATE usage_events SET credits_picos = ?, original_credits_picos = ?, billable = ? WHERE id = ?",
+                            [
+                                .int(effectiveCredit.actualPicos),
+                                effectiveCredit.originalPicos.map(SQLiteValue.int) ?? .null,
+                                effectiveCredit.billable.map { .int($0 ? 1 : 0) } ?? .null,
+                                .int(existingId)
+                            ]
+                        )
+                        if existingFields.tokensTotal == 0,
+                           effectiveCredit.actualPicos > 0 || (effectiveCredit.originalPicos ?? 0) > 0,
+                           existing.string("cost_source") != CostSource.reported.rawValue {
+                            try database.execute(
+                                "UPDATE usage_events SET cost_usd_micros = NULL, cost_source = 'unknown' WHERE id = ?",
+                                [.int(existingId)]
+                            )
+                        }
+                    }
                     return
                 }
+                if effectiveCredit == nil { effectiveCredit = existingCredit }
                 try database.execute("DELETE FROM usage_events WHERE id = ?", [.int(existingId)])
             }
         }
 
-        let (costMicros, costSource) = costCalculator.cost(for: event)
+        let eventForCost = event.replacingCreditUsage(effectiveCredit)
+        let (costMicros, costSource) = costCalculator.cost(for: eventForCost)
 
         // 上报价没被采信（computed/unknown）但事件确实带着它时，把原值留在
         // reported_cost_usd_micros：供模型级本地定价审计，也供 custom-pricing 移除后还原。
@@ -263,8 +294,9 @@ public final class UsageEventWriter {
                 tokens_input, tokens_output, tokens_reasoning,
                 tokens_cache_read, tokens_cache_write_5m, tokens_cache_write_1h,
                 cost_usd_micros, cost_source, reported_cost_usd_micros,
+                tokens_reported, credits_picos, original_credits_picos, billable,
                 dedupe_key, dedupe_scope_key, source_offset, is_sidechain
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source_file_id, event_seq) DO UPDATE SET
                 session_id = excluded.session_id,
                 observed_epoch_ms = excluded.observed_epoch_ms,
@@ -279,6 +311,10 @@ public final class UsageEventWriter {
                 cost_usd_micros = excluded.cost_usd_micros,
                 cost_source = excluded.cost_source,
                 reported_cost_usd_micros = excluded.reported_cost_usd_micros,
+                tokens_reported = excluded.tokens_reported,
+                credits_picos = excluded.credits_picos,
+                original_credits_picos = excluded.original_credits_picos,
+                billable = excluded.billable,
                 dedupe_key = excluded.dedupe_key,
                 dedupe_scope_key = excluded.dedupe_scope_key,
                 source_offset = excluded.source_offset,
@@ -300,6 +336,10 @@ public final class UsageEventWriter {
                 costMicros.map(SQLiteValue.int) ?? .null,
                 .text(costSource.rawValue),
                 reportedBackup.map(SQLiteValue.int) ?? .null,
+                .int(event.tokensReported ? 1 : 0),
+                effectiveCredit.map { .int($0.actualPicos) } ?? .null,
+                effectiveCredit?.originalPicos.map(SQLiteValue.int) ?? .null,
+                effectiveCredit?.billable.map { .int($0 ? 1 : 0) } ?? .null,
                 sqliteText(event.dedupeKey),
                 sqliteText(dedupeScopeKey),
                 .int(event.sourceOffset),

@@ -70,8 +70,11 @@ export function AppShell() {
   // scan_run 的轻量布尔值。短扫描来不及显示也无需闪烁，持续扫描会在 1s 内点亮。
   useEffect(() => {
     let cancelled = false;
+    // 固定住当前 preload bridge。测试卸载和窗口销毁都可能先移除全局属性，
+    // 已进入任务队列的最后一次 timer callback 仍应安静收尾。
+    const indexApi = window.tokenMeter.index;
     const refreshScanState = () => {
-      void window.tokenMeter.index
+      void indexApi
         .isScanning()
         .then((active) => {
           if (!cancelled) setIsScanning(active);

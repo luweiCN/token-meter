@@ -21,7 +21,11 @@ beforeEach(() => {
     CREATE TABLE session_rollup (
       session_id INTEGER PRIMARY KEY, first_event_epoch_ms INTEGER NOT NULL, last_event_epoch_ms INTEGER NOT NULL,
       events_count INTEGER NOT NULL, tokens_total INTEGER NOT NULL, cost_usd_micros INTEGER,
-      cost_unknown_events INTEGER NOT NULL DEFAULT 0, primary_model TEXT
+      cost_unknown_events INTEGER NOT NULL DEFAULT 0,
+      token_unreported_events INTEGER NOT NULL DEFAULT 0,
+      credits_picos INTEGER NOT NULL DEFAULT 0,
+      credit_events INTEGER NOT NULL DEFAULT 0,
+      primary_model TEXT
     );
     CREATE TABLE daily_rollup (
       usage_date TEXT NOT NULL, provider_id TEXT NOT NULL, source_kind TEXT NOT NULL, project_id INTEGER,
@@ -29,7 +33,10 @@ beforeEach(() => {
       tokens_input INTEGER NOT NULL DEFAULT 0, tokens_output INTEGER NOT NULL DEFAULT 0,
       tokens_reasoning INTEGER NOT NULL DEFAULT 0, tokens_cache_read INTEGER NOT NULL DEFAULT 0,
       tokens_cache_write_5m INTEGER NOT NULL DEFAULT 0, tokens_cache_write_1h INTEGER NOT NULL DEFAULT 0,
-      cost_usd_micros INTEGER, cost_unknown_events INTEGER NOT NULL DEFAULT 0
+      cost_usd_micros INTEGER, cost_unknown_events INTEGER NOT NULL DEFAULT 0,
+      token_unreported_events INTEGER NOT NULL DEFAULT 0,
+      credits_picos INTEGER NOT NULL DEFAULT 0,
+      credit_events INTEGER NOT NULL DEFAULT 0
     );
     -- 生产库用带表达式的 UNIQUE INDEX 而非 PRIMARY KEY（SQLite 禁止在 PK 约束里写表达式）。
     -- 见 TokenMeterDatabaseSchema.swift 的 idx_daily_rollup_unique。
@@ -52,6 +59,8 @@ beforeEach(() => {
       tokens_cache_write_1h INTEGER NOT NULL DEFAULT 0,
       cost_usd_micros INTEGER,
       cost_source TEXT NOT NULL DEFAULT 'reported',
+      tokens_reported INTEGER NOT NULL DEFAULT 1,
+      credits_picos INTEGER,
       is_sidechain INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE source_files (
@@ -80,6 +89,16 @@ beforeEach(() => {
       started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (agent_kind, session_id)
+    );
+    CREATE TABLE model_catalog (
+      provider_id TEXT NOT NULL,
+      model_canonical TEXT NOT NULL,
+      source_model_id TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      catalog_source TEXT NOT NULL,
+      is_enabled INTEGER,
+      fetched_epoch_ms INTEGER NOT NULL,
+      PRIMARY KEY (provider_id, model_canonical)
     );
   `);
 });
@@ -285,6 +304,23 @@ describe('sessionRail sub-agent merging', () => {
     const rail = new OverviewRepository(db, () => NOW).sessionRail(10);
     expect([...rail.find(r => r.sessionId === 1)!.models].sort()).toEqual(['gpt-5.5', 'gpt-5.6-sol']);
   });
+
+  it('uses the provider model catalog for Qoder names while keeping the raw model as fallback', () => {
+    seedSession(1, 'qoder-cli', 'proj', 60_000, 0);
+    db.prepare(`UPDATE agent_sessions SET source_kind = 'qoder_jsonl' WHERE id = 1`).run();
+    db.prepare(`UPDATE session_rollup SET primary_model = 'qmodel_38max' WHERE session_id = 1`).run();
+    seedEvent(10, 1, '2026-07-10T11:00:00+08:00', 'qmodel_38max');
+    db.prepare(`INSERT INTO model_catalog(
+      provider_id, model_canonical, source_model_id, display_name,
+      catalog_source, is_enabled, fetched_epoch_ms
+    ) VALUES ('qoder-cli', 'qmodel_38max', 'qmodel_38max', 'Qwen3.8-Max', 'system', 1, ?)`)
+      .run(NOW);
+
+    const session = new OverviewRepository(db, () => NOW).sessionRail(10)[0];
+
+    expect(session.primaryModel).toBe('Qwen3.8-Max');
+    expect(session.models).toEqual(['Qwen3.8-Max']);
+  });
 });
 
 describe('kpis todaySessions sub-agent handling', () => {
@@ -410,8 +446,8 @@ describe('heatmap', () => {
     const rows = new OverviewRepository(db, () => NOW).heatmap('2026-07-09', '2026-07-10');
 
     expect(rows).toEqual([
-      { date: '2026-07-09', tokens: 165, costUsdMicros: 800, sessions: 2, events: 5 },
-      { date: '2026-07-10', tokens: 22, costUsdMicros: 100, sessions: 1, events: 1 }
+      { date: '2026-07-09', tokens: 165, costUsdMicros: 800, sessions: 2, events: 5, tokenUnreportedEvents: 0 },
+      { date: '2026-07-10', tokens: 22, costUsdMicros: 100, sessions: 1, events: 1, tokenUnreportedEvents: 0 }
     ]);
   });
 
@@ -449,6 +485,35 @@ describe('modelRanking', () => {
       .find(m => m.model === 'unpriced')!;
     expect(unpriced.costUsdMicros).toBe(0);
     expect(unpriced.costUnknownEvents).toBe(4);   // 成本是 0 还是「不知道」，UI 必须能区分
+  });
+});
+
+describe('providerCredits', () => {
+  it('returns exact Int64 text grouped by provider without cross-provider totals', () => {
+    db.exec(`INSERT INTO daily_rollup(
+      usage_date, provider_id, source_kind, model_canonical, credits_picos, credit_events
+    ) VALUES
+      ('2026-07-10','qoder-cli','qoder_jsonl','qwen3-coder',9007199254740993000,2),
+      ('2026-07-09','workbuddy','workbuddy_jsonl','unknown',500000000000,1);`);
+
+    expect(new OverviewRepository(db, () => NOW).providerCredits()).toEqual([
+      {
+        providerId: 'qoder-cli',
+        todayPicos: '9007199254740993000',
+        weekPicos: '9007199254740993000',
+        monthPicos: '9007199254740993000',
+        totalPicos: '9007199254740993000',
+        creditEvents: 2
+      },
+      {
+        providerId: 'workbuddy',
+        todayPicos: '0',
+        weekPicos: '500000000000',
+        monthPicos: '500000000000',
+        totalPicos: '500000000000',
+        creditEvents: 1
+      }
+    ]);
   });
 });
 
@@ -556,9 +621,9 @@ describe('agentTrend', () => {
     const series = new OverviewRepository(db, () => NOW).agentTrend('2026-07-01', '2026-07-10', 'day');
 
     expect(series.rows).toEqual([
-      { bucket: '2026-07-09', providerId: 'claude-code', tokens: 100, costUsdMicros: 5000, sessions: 0 },
-      { bucket: '2026-07-09', providerId: 'codex', tokens: 40, costUsdMicros: 2000, sessions: 0 },
-      { bucket: '2026-07-10', providerId: 'claude-code', tokens: 60, costUsdMicros: 3000, sessions: 0 }
+      { bucket: '2026-07-09', providerId: 'claude-code', tokens: 100, tokenUnreportedEvents: 0, costUsdMicros: 5000, sessions: 0 },
+      { bucket: '2026-07-09', providerId: 'codex', tokens: 40, tokenUnreportedEvents: 0, costUsdMicros: 2000, sessions: 0 },
+      { bucket: '2026-07-10', providerId: 'claude-code', tokens: 60, tokenUnreportedEvents: 0, costUsdMicros: 3000, sessions: 0 }
     ]);
     // 完整桶轴：10 天，含无数据的空桶
     expect(series.buckets).toHaveLength(10);
@@ -664,8 +729,8 @@ describe('dayProjectBreakdown', () => {
 
     // 同项目跨 provider/model 的行合并；其他日期不掺入；无项目行归入「未归属项目」
     expect(rows).toEqual([
-      { project: 'token-meter', tokens: 160, costUsdMicros: 8000, sessions: 3, events: 60 },
-      { project: '未归属项目', tokens: 10, costUsdMicros: 500, sessions: 1, events: 5 }
+      { project: 'token-meter', tokens: 160, costUsdMicros: 8000, sessions: 3, events: 60, tokenUnreportedEvents: 0 },
+      { project: '未归属项目', tokens: 10, costUsdMicros: 500, sessions: 1, events: 5, tokenUnreportedEvents: 0 }
     ]);
   });
 });

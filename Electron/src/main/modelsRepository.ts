@@ -13,16 +13,27 @@ export interface ModelsFilter {
 
 export interface ModelItem {
   model: string;
+  /// 供应商官方目录中的展示名；无法唯一、安全映射时等于 model 原始归一键。
+  displayName: string;
   tokensTotal: number;
   costUsdMicros: number;
   costUnknownEvents: number;
+  tokenUnreportedEvents: number;
   eventsCount: number;
   /// 归并口径的会话数(子代理折进主会话,键与 daily_active_sessions 一致)。
   sessionsCount: number;
   /// 用过该模型的 agent(provider_id 或 source_kind 兜底),字典序。
   agents: string[];
+  /// Credits 是供应商私有单位，必须逐 provider 展示，禁止跨供应商相加。
+  credits: ModelCreditUsage[];
   firstUsedEpochMs: number;
   lastUsedEpochMs: number;
+}
+
+export interface ModelCreditUsage {
+  providerId: string;
+  creditsPicos: string;
+  creditEvents: number;
 }
 
 export interface ModelsResult {
@@ -81,9 +92,11 @@ const SORT_EXPR: Record<NonNullable<ModelsFilter['sortBy']>, string> = {
 
 interface ModelRow {
   model: string;
+  displayName: string;
   tokensTotal: number;
   costUsdMicros: number;
   costUnknownEvents: number;
+  tokenUnreportedEvents: number;
   eventsCount: number;
   sessionsCount: number;
   agentsConcat: string | null;
@@ -91,9 +104,17 @@ interface ModelRow {
   lastUsedEpochMs: number;
 }
 
+interface ModelCreditRow {
+  model: string;
+  providerId: string;
+  creditsPicos: string;
+  creditEvents: number;
+}
+
 /// 模型维度统计:直接聚合 usage_events(唯一有毫秒时间戳的表),
 /// 项目/会话维度之外的第三面板。model_canonical 已在扫描端归一
-/// (供应商前缀剥离),这里不再做任何名字加工。
+/// (供应商前缀剥离),这里不再改写身份。展示名只从 provider-scoped 官方目录投影；
+/// 映射不完整或同一聚合键出现多个展示名时回退原始键。
 export class ModelsRepository {
   constructor(private readonly db: Database.Database) {}
 
@@ -101,11 +122,32 @@ export class ModelsRepository {
     const sortBy = SORT_EXPR[filter.sortBy ?? 'tokens'];
     const sortDir = filter.sortDir === 'asc' ? 'ASC' : 'DESC';
 
+    const parameters = [
+      filter.fromEpochMs ?? null, filter.fromEpochMs ?? null,
+      filter.toEpochMs ?? null, filter.toEpochMs ?? null,
+      filter.search ?? null, filter.search ?? null, filter.search ?? null
+    ];
+    const searchClause = `(? IS NULL
+      OR instr(lower(e.model_canonical), lower(?)) > 0
+      OR EXISTS (
+        SELECT 1
+          FROM model_catalog search_catalog
+         WHERE search_catalog.model_canonical = e.model_canonical
+           AND instr(lower(search_catalog.display_name), lower(?)) > 0
+      ))`;
+
     const rows = this.db.prepare(
       `SELECT e.model_canonical AS model,
+              CASE
+                WHEN count(*) = count(mc.display_name)
+                 AND count(DISTINCT mc.display_name) = 1
+                THEN max(mc.display_name)
+                ELSE e.model_canonical
+              END AS displayName,
               coalesce(sum(e.tokens_total), 0) AS tokensTotal,
               coalesce(sum(e.cost_usd_micros), 0) AS costUsdMicros,
               sum(CASE WHEN e.cost_source = 'unknown' THEN 1 ELSE 0 END) AS costUnknownEvents,
+              sum(CASE WHEN e.tokens_reported = 0 THEN 1 ELSE 0 END) AS tokenUnreportedEvents,
               count(*) AS eventsCount,
               count(DISTINCT s.source_kind || ':' || coalesce(s.root_session_key, s.source_session_key)) AS sessionsCount,
               group_concat(DISTINCT coalesce(s.provider_id, s.source_kind)) AS agentsConcat,
@@ -113,27 +155,55 @@ export class ModelsRepository {
               max(e.observed_epoch_ms) AS lastUsedEpochMs
          FROM usage_events e
          JOIN agent_sessions s ON s.id = e.session_id
+    LEFT JOIN model_catalog mc
+           ON mc.provider_id = coalesce(s.provider_id, s.source_kind)
+          AND mc.model_canonical = e.model_canonical
         WHERE e.model_canonical IS NOT NULL
           AND (? IS NULL OR e.observed_epoch_ms >= ?)
           AND (? IS NULL OR e.observed_epoch_ms <= ?)
-          AND (? IS NULL OR instr(lower(e.model_canonical), lower(?)) > 0)
+          AND ${searchClause}
      GROUP BY e.model_canonical
      ORDER BY ${sortBy} ${sortDir}, model ASC`
-    ).all(
-      filter.fromEpochMs ?? null, filter.fromEpochMs ?? null,
-      filter.toEpochMs ?? null, filter.toEpochMs ?? null,
-      filter.search ?? null, filter.search ?? null
-    ) as ModelRow[];
+    ).all(...parameters) as ModelRow[];
+
+    const creditRows = this.db.prepare(
+      `SELECT e.model_canonical AS model,
+              coalesce(s.provider_id, s.source_kind) AS providerId,
+              CAST(sum(e.credits_picos) AS TEXT) AS creditsPicos,
+              count(*) AS creditEvents
+         FROM usage_events e
+         JOIN agent_sessions s ON s.id = e.session_id
+        WHERE e.model_canonical IS NOT NULL
+          AND e.credits_picos IS NOT NULL
+          AND (? IS NULL OR e.observed_epoch_ms >= ?)
+          AND (? IS NULL OR e.observed_epoch_ms <= ?)
+          AND ${searchClause}
+     GROUP BY e.model_canonical, providerId
+     ORDER BY e.model_canonical ASC, providerId ASC`
+    ).all(...parameters) as ModelCreditRow[];
+    const creditsByModel = new Map<string, ModelCreditUsage[]>();
+    for (const row of creditRows) {
+      const values = creditsByModel.get(row.model) ?? [];
+      values.push({
+        providerId: row.providerId,
+        creditsPicos: row.creditsPicos,
+        creditEvents: row.creditEvents
+      });
+      creditsByModel.set(row.model, values);
+    }
 
     return {
       items: rows.map((row) => ({
         model: row.model,
+        displayName: row.displayName,
         tokensTotal: row.tokensTotal,
         costUsdMicros: row.costUsdMicros,
         costUnknownEvents: row.costUnknownEvents,
+        tokenUnreportedEvents: row.tokenUnreportedEvents,
         eventsCount: row.eventsCount,
         sessionsCount: row.sessionsCount,
         agents: (row.agentsConcat ?? '').split(',').filter(Boolean).sort(),
+        credits: creditsByModel.get(row.model) ?? [],
         firstUsedEpochMs: row.firstUsedEpochMs,
         lastUsedEpochMs: row.lastUsedEpochMs
       }))
@@ -158,12 +228,19 @@ export class ModelsRepository {
         WHERE e.model_canonical IS NOT NULL
           AND e.observed_epoch_ms >= ?
           AND e.observed_epoch_ms <= ?
-          AND (? IS NULL OR instr(lower(e.model_canonical), lower(?)) > 0)
+          AND (? IS NULL
+            OR instr(lower(e.model_canonical), lower(?)) > 0
+            OR EXISTS (
+              SELECT 1
+                FROM model_catalog search_catalog
+               WHERE search_catalog.model_canonical = e.model_canonical
+                 AND instr(lower(search_catalog.display_name), lower(?)) > 0
+            ))
      GROUP BY bucket, model
      ORDER BY bucket ASC, model ASC`
     ).all(
       range.fromEpochMs, range.toEpochMs,
-      filter.search ?? null, filter.search ?? null
+      filter.search ?? null, filter.search ?? null, filter.search ?? null
     ) as ModelTrendRow[];
 
     return { buckets: dayBuckets(range.fromEpochMs, range.toEpochMs), rows };

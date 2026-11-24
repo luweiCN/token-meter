@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public protocol UsageProvider {
@@ -1249,6 +1250,10 @@ public enum ProviderRegistry {
                     return ZhipuUsageProvider(config: providerConfig)
                 case .grok:
                     return GrokUsageProvider(config: providerConfig)
+                case .qoder:
+                    return QoderUsageProvider(config: providerConfig)
+                case .antigravity:
+                    return AntigravityUsageProvider(config: providerConfig)
                 }
             }
     }
@@ -1661,11 +1666,14 @@ func runProcess(
     executable: String,
     arguments: [String],
     environmentOverrides: [String: String] = [:],
+    input: Data? = nil,
+    currentDirectory: URL? = nil,
     timeout: TimeInterval
 ) throws -> Data {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = arguments
+    process.currentDirectoryURL = currentDirectory
     if !environmentOverrides.isEmpty {
         var environment = ProcessInfo.processInfo.environment
         environmentOverrides.forEach { environment[$0] = $1 }
@@ -1676,30 +1684,78 @@ func runProcess(
     let error = Pipe()
     process.standardOutput = output
     process.standardError = error
+    let standardInput = input.map { _ in Pipe() }
+    if let standardInput { process.standardInput = standardInput }
+    else { process.standardInput = FileHandle.nullDevice }
 
+    try Task.checkCancellation()
     try process.run()
 
+    // 两条管道必须在子进程运行期间并发排空。等退出后才读会在输出超过 pipe buffer 时
+    // 形成经典死锁（子进程等父进程读，父进程等子进程退出）；Qoder initialize 会输出
+    // 较大的能力清单，不能依赖当前版本恰好没顶满 buffer。
+    let capture = ProcessOutputCapture()
+    let reads = DispatchGroup()
+    reads.enter()
+    DispatchQueue.global(qos: .utility).async {
+        capture.setOutput(output.fileHandleForReading.readDataToEndOfFile())
+        reads.leave()
+    }
+    reads.enter()
+    DispatchQueue.global(qos: .utility).async {
+        capture.setError(error.fileHandleForReading.readDataToEndOfFile())
+        reads.leave()
+    }
+
+    if let input, let standardInput {
+        standardInput.fileHandleForWriting.write(input)
+        try? standardInput.fileHandleForWriting.close()
+    }
+
     let deadline = Date().addingTimeInterval(timeout)
-    while process.isRunning && Date() < deadline {
+    while process.isRunning && Date() < deadline && !Task.isCancelled {
         Thread.sleep(forTimeInterval: 0.05)
     }
 
     if process.isRunning {
         process.terminate()
+        let terminationDeadline = Date().addingTimeInterval(0.5)
+        while process.isRunning && Date() < terminationDeadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        if process.isRunning {
+            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+        }
+        process.waitUntilExit()
+        reads.wait()
+        try Task.checkCancellation()
         throw ProcessError.timedOut
     }
 
-    let data = output.fileHandleForReading.readDataToEndOfFile()
+    reads.wait()
+    let data = capture.output
     if process.terminationStatus != 0 {
-        let errorData = error.fileHandleForReading.readDataToEndOfFile()
-        let errorText = String(decoding: errorData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        let errorText = String(decoding: capture.error, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         throw ProcessError.failed(status: process.terminationStatus, message: errorText)
     }
 
     return data
 }
 
-private enum ProcessError: LocalizedError {
+private final class ProcessOutputCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var outputData = Data()
+    private var errorData = Data()
+
+    var output: Data { lock.withLock { outputData } }
+    var error: Data { lock.withLock { errorData } }
+
+    func setOutput(_ data: Data) { lock.withLock { outputData = data } }
+    func setError(_ data: Data) { lock.withLock { errorData = data } }
+}
+
+enum ProcessError: LocalizedError {
     case timedOut
     case failed(status: Int32, message: String)
 
@@ -1768,7 +1824,11 @@ private func date(fromIsoString value: String?) -> Date? {
 }
 
 private func countdownText(until date: Date) -> String {
-    let seconds = max(0, Int(date.timeIntervalSinceNow))
+    countdownText(until: date, now: Date())
+}
+
+func countdownText(until date: Date, now: Date) -> String {
+    let seconds = max(0, Int(date.timeIntervalSince(now)))
     if seconds >= 86_400 {
         return "\(seconds / 86_400)d\((seconds % 86_400) / 3600)h"
     }

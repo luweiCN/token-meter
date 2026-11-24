@@ -7,13 +7,27 @@ public struct MenuBarTodaySummary: Equatable {
     public struct ProviderToday: Equatable {
         public let providerId: String
         public let tokens: Int64
+        public let tokenUnreportedEvents: Int
         public let costUsdMicros: Int64
+        public let creditsPicos: Int64
+        public let creditEvents: Int
         public let sessions: Int
 
-        public init(providerId: String, tokens: Int64, costUsdMicros: Int64, sessions: Int) {
+        public init(
+            providerId: String,
+            tokens: Int64,
+            tokenUnreportedEvents: Int = 0,
+            costUsdMicros: Int64,
+            creditsPicos: Int64 = 0,
+            creditEvents: Int = 0,
+            sessions: Int
+        ) {
             self.providerId = providerId
             self.tokens = tokens
+            self.tokenUnreportedEvents = tokenUnreportedEvents
             self.costUsdMicros = costUsdMicros
+            self.creditsPicos = creditsPicos
+            self.creditEvents = creditEvents
             self.sessions = sessions
         }
     }
@@ -22,16 +36,19 @@ public struct MenuBarTodaySummary: Equatable {
         package var cacheUsage = PromptCacheUsage()
         public let model: String
         public let tokens: Int64
+        public let tokenUnreportedEvents: Int
         public let costUsdMicros: Int64
 
-        public init(model: String, tokens: Int64, costUsdMicros: Int64) {
+        public init(model: String, tokens: Int64, tokenUnreportedEvents: Int = 0, costUsdMicros: Int64) {
             self.model = model
             self.tokens = tokens
+            self.tokenUnreportedEvents = tokenUnreportedEvents
             self.costUsdMicros = costUsdMicros
         }
     }
 
     public let tokens: Int64
+    public let tokenUnreportedEvents: Int
     public let costUsdMicros: Int64
     public let sessions: Int
     public let unknownEvents: Int
@@ -47,6 +64,7 @@ public struct MenuBarTodaySummary: Equatable {
 
     public init(
         tokens: Int64,
+        tokenUnreportedEvents: Int = 0,
         costUsdMicros: Int64,
         sessions: Int,
         unknownEvents: Int,
@@ -54,6 +72,7 @@ public struct MenuBarTodaySummary: Equatable {
         perModel: [ModelToday] = []
     ) {
         self.tokens = tokens
+        self.tokenUnreportedEvents = tokenUnreportedEvents
         self.costUsdMicros = costUsdMicros
         self.sessions = sessions
         self.unknownEvents = unknownEvents
@@ -81,7 +100,10 @@ public enum MenuBarTodaySummaryRepository {
                    coalesce(sum(tokens_input + tokens_output + tokens_cache_read
                                 + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
                    coalesce(sum(cost_usd_micros), 0) AS cost,
-                   coalesce(sum(cost_unknown_events), 0) AS unknown
+                   coalesce(sum(cost_unknown_events), 0) AS unknown,
+                   coalesce(sum(token_unreported_events), 0) AS tokenUnreported,
+                   coalesce(sum(credits_picos), 0) AS credits,
+                   coalesce(sum(credit_events), 0) AS creditEvents
               FROM daily_rollup
              WHERE usage_date = ?
             GROUP BY provider_id
@@ -98,6 +120,7 @@ public enum MenuBarTodaySummaryRepository {
                    coalesce(sum(tokens_input + tokens_output + tokens_cache_read
                                 + tokens_cache_write_5m + tokens_cache_write_1h), 0) AS tokens,
                    coalesce(sum(cost_usd_micros), 0) AS cost
+                   , coalesce(sum(token_unreported_events), 0) AS tokenUnreported
               FROM daily_rollup
              WHERE usage_date = ?
             GROUP BY model_canonical
@@ -129,6 +152,7 @@ public enum MenuBarTodaySummaryRepository {
         var totalTokens: Int64 = 0
         var totalCost: Int64 = 0
         var totalUnknown = 0
+        var totalTokenUnreported = 0
         for row in usageRows {
             guard let id = row.string("providerId") else { continue }
             let tokens = row.int("tokens") ?? 0
@@ -136,10 +160,14 @@ public enum MenuBarTodaySummaryRepository {
             totalTokens += tokens
             totalCost += cost
             totalUnknown += Int(row.int("unknown") ?? 0)
+            totalTokenUnreported += Int(row.int("tokenUnreported") ?? 0)
             perProvider.append(.init(
                 providerId: id,
                 tokens: tokens,
+                tokenUnreportedEvents: Int(row.int("tokenUnreported") ?? 0),
                 costUsdMicros: cost,
+                creditsPicos: row.int("credits") ?? 0,
+                creditEvents: Int(row.int("creditEvents") ?? 0),
                 sessions: sessionsByProvider[id] ?? 0
             ))
         }
@@ -147,7 +175,12 @@ public enum MenuBarTodaySummaryRepository {
 
         let perModel: [MenuBarTodaySummary.ModelToday] = modelRows.compactMap { row in
             guard let model = row.string("model") else { return nil }
-            var result = MenuBarTodaySummary.ModelToday(model: model, tokens: row.int("tokens") ?? 0, costUsdMicros: row.int("cost") ?? 0)
+            var result = MenuBarTodaySummary.ModelToday(
+                model: model,
+                tokens: row.int("tokens") ?? 0,
+                tokenUnreportedEvents: Int(row.int("tokenUnreported") ?? 0),
+                costUsdMicros: row.int("cost") ?? 0
+            )
             result.cacheUsage = PromptCacheUsage(row: row)
             return result
         }
@@ -155,6 +188,7 @@ public enum MenuBarTodaySummaryRepository {
         let totalSessions = sessionsByProvider.values.reduce(0, +)
         return MenuBarTodaySummary(
             tokens: totalTokens,
+            tokenUnreportedEvents: totalTokenUnreported,
             costUsdMicros: totalCost,
             sessions: totalSessions,
             unknownEvents: totalUnknown,

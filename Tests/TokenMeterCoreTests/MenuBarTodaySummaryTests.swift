@@ -16,7 +16,10 @@ final class MenuBarTodaySummaryTests: XCTestCase {
           tokens_input INTEGER NOT NULL DEFAULT 0, tokens_output INTEGER NOT NULL DEFAULT 0,
           tokens_cache_read INTEGER NOT NULL DEFAULT 0,
           tokens_cache_write_5m INTEGER NOT NULL DEFAULT 0, tokens_cache_write_1h INTEGER NOT NULL DEFAULT 0,
-          cost_usd_micros INTEGER, cost_unknown_events INTEGER NOT NULL DEFAULT 0
+          cost_usd_micros INTEGER, cost_unknown_events INTEGER NOT NULL DEFAULT 0,
+          token_unreported_events INTEGER NOT NULL DEFAULT 0,
+          credits_picos INTEGER NOT NULL DEFAULT 0,
+          credit_events INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE agent_sessions (
           id INTEGER PRIMARY KEY, source_kind TEXT NOT NULL, source_session_key TEXT NOT NULL,

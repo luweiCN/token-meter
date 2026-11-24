@@ -27,6 +27,8 @@ final class CostCalculatorTests: XCTestCase {
         write5m: Int64 = 0,
         write1h: Int64 = 0,
         reported: Int64? = nil,
+        tokensReported: Bool = true,
+        creditUsage: ProviderCreditUsage? = nil,
         observedAt: Date = Date(timeIntervalSince1970: 0)
     ) -> UsageEvent {
         UsageEvent(
@@ -40,6 +42,8 @@ final class CostCalculatorTests: XCTestCase {
             cacheWrite5mTokens: write5m,
             cacheWrite1hTokens: write1h,
             reportedCostUSDMicros: reported,
+            tokensReported: tokensReported,
+            creditUsage: creditUsage,
             sourceOffset: 0
         )
     }
@@ -156,6 +160,24 @@ final class CostCalculatorTests: XCTestCase {
         let result = makeCalculator().cost(for: event(model: "claude-opus-4-8", input: 1_000_000, output: 1_000_000))
         XCTAssertEqual(result.micros, 110_000_000)
         XCTAssertEqual(result.source, .computed)
+    }
+
+    func testMissingTokensNeverBecomeComputedZeroCost() {
+        let result = makeCalculator().cost(for: event(
+            model: "claude-opus-4-8",
+            tokensReported: false
+        ))
+        XCTAssertNil(result.micros)
+        XCTAssertEqual(result.source, .unknown)
+    }
+
+    func testPositiveCreditsWithZeroTokensNeverBecomeComputedZeroCost() {
+        let result = makeCalculator().cost(for: event(
+            model: "claude-opus-4-8",
+            creditUsage: ProviderCreditUsage(actualPicos: 250_000_000_000)
+        ))
+        XCTAssertNil(result.micros)
+        XCTAssertEqual(result.source, .unknown)
     }
 
     func testThirdPartyHostedPriceNeverShadowsOfficialPrice() {

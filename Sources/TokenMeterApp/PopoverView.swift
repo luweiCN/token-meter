@@ -46,6 +46,12 @@ struct MBTheme: Equatable {
         case "reasonix": return self == .light ? Color(hex: 0xC2542E) : Color(hex: 0xFF7A5C)
         case "dsh": return self == .light ? Color(hex: 0x1E90FF) : Color(hex: 0x4A9EFF)
         case "grok": return self == .light ? Color(hex: 0x111111) : Color(hex: 0xE6E6E6)
+        case "qwen-code": return self == .light ? Color(hex: 0x1E6FBB) : Color(hex: 0x4A9EFF)
+        case "qoder-cli": return self == .light ? Color(hex: 0xB45F06) : Color(hex: 0xFF9F43)
+        case "qoder-desktop": return self == .light ? Color(hex: 0xA83C96) : Color(hex: 0xF368E0)
+        case "workbuddy": return self == .light ? Color(hex: 0x2563A8) : Color(hex: 0x54A0FF)
+        case "antigravity-cli": return self == .light ? Color(hex: 0x087B70) : Color(hex: 0x4FD8C6)
+        case "gemini-cli": return self == .light ? Color(hex: 0x514CC0) : Color(hex: 0xA6A1FF)
         default: return muted
         }
     }
@@ -149,6 +155,12 @@ enum MenuBarProviderName {
         case "reasonix": return "Reasonix"
         case "dsh": return "DeepSeek Harness"
         case "grok": return "Grok Build"
+        case "qwen-code": return "千问 Code"
+        case "qoder-cli": return "Qoder CLI"
+        case "qoder-desktop": return "Qoder Desktop"
+        case "workbuddy": return "WorkBuddy"
+        case "antigravity-cli": return AntigravityCLIUsage.displayName
+        case "gemini-cli": return "Gemini CLI"
         default: return providerId
         }
     }
@@ -158,6 +170,13 @@ enum MenuBarNumberFormat {
     /// 与菜单栏标题共用同一实现（UsageFormatter.compactTokens），两处数字永远同格式。
     static func tokens(_ value: Int64) -> String {
         UsageFormatter.compactTokens(value)
+    }
+
+    static func credits(_ picos: Int64) -> String {
+        let value = Double(picos) / 1_000_000_000_000
+        let digits = value >= 100 ? 2 : (value >= 1 ? 4 : 8)
+        return String(format: "%.*f Credits", digits, value)
+            .replacingOccurrences(of: #"\.?0+ Credits$"#, with: " Credits", options: .regularExpression)
     }
 
     /// 金额显示：美元直接用存储值，人民币按当前汇率换算。两位小数。
@@ -291,12 +310,13 @@ struct PopoverView: View {
                                     QuotaGroupView(
                                         snapshot: snapshot,
                                         isExpanded: resolvedExpandedProviderId == snapshot.providerId,
+                                        isRefreshing: snapshot.providerId == store.antigravityConfig?.id && store.isRefreshingAntigravity,
                                         onToggleExpanded: {
                                             expandedProviderId = resolvedExpandedProviderId == snapshot.providerId
                                                 ? "" : snapshot.providerId
                                         }
                                     ) {
-                                        Task { await store.refresh() }
+                                        Task { await store.retryQuota(for: snapshot.providerId) }
                                     }
                                 }
                             }
@@ -483,7 +503,7 @@ private struct TodayBlock: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    Text(MenuBarNumberFormat.tokens(summary.tokens))
+                    Text(PopoverTokenAmount(tokens: summary.tokens, unreportedEvents: Int64(summary.tokenUnreportedEvents)).dailyText)
                         .font(.system(size: 32, weight: .bold))
                         .foregroundStyle(theme.fg)
                         .monospacedDigit()
@@ -827,7 +847,7 @@ private struct OverviewTilesView: View {
         title: String,
         bucket: OverviewStatsBucket
     ) -> some View {
-        let amount = PopoverTokenAmount(tokens: bucket.tokens)
+        let amount = PopoverTokenAmount(tokens: bucket.tokens, unreportedEvents: bucket.tokenUnreportedEvents)
         let cache = bucket.cacheUsage
         let details = [title, amount.detail, cache.detail].joined(separator: "\n")
         return VStack(alignment: .leading, spacing: 3) {
@@ -1133,11 +1153,19 @@ private struct ProviderRow: View {
 
             Spacer(minLength: 8)
 
-            Text(MenuBarNumberFormat.tokens(row.tokens))
+            Text(PopoverTokenAmount(tokens: row.tokens, unreportedEvents: Int64(row.tokenUnreportedEvents)).dailyText)
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(theme.fg)
                 .monospacedDigit()
                 .rollingNumber(value: row.tokens)
+
+            if row.creditEvents > 0 {
+                Text(MenuBarNumberFormat.credits(row.creditsPicos))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(theme.fg2)
+                    .monospacedDigit()
+                    .fixedSize()
+            }
 
             Text("\(MenuBarNumberFormat.money(row.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny)) · \(row.sessions) 会话")
                 .font(.system(size: 11, design: .monospaced))
@@ -1178,14 +1206,14 @@ private struct ModelListBlock: View {
 
                 ForEach(expanded ? models : Array(models.prefix(Self.visibleCount)), id: \.model) { row in
                     modelRow(
-                        row.model, amount: PopoverTokenAmount(tokens: row.tokens),
+                        row.model, amount: PopoverTokenAmount(tokens: row.tokens, unreportedEvents: Int64(row.tokenUnreportedEvents)),
                         cost: row.costUsdMicros, cache: row.cacheUsage
                     )
                 }
 
                 Rectangle().fill(theme.border).frame(height: 1).gridCellUnsizedAxes(.horizontal)
                 modelRow(
-                    "今日合计", amount: PopoverTokenAmount(tokens: summary.tokens),
+                    "今日合计", amount: PopoverTokenAmount(tokens: summary.tokens, unreportedEvents: Int64(summary.tokenUnreportedEvents)),
                     cost: summary.costUsdMicros, cache: summary.cacheUsage
                 )
             }
@@ -1245,11 +1273,13 @@ struct QuotaDisplayModel {
     /// 一律长条。绝对阈值而非相对排名——候选不足时排名会递补，阈值不会。
     static let ringWindowCeilingMinutes = 7 * 24 * 60
 
-    struct Ring {
+    struct Ring: Identifiable {
+        let id: String
         let label: String
         /// 剩余百分比（与折叠行 summary、tmux 段同语义：数值越大额度越充裕）。
         let percent: Double
         let resetText: String?
+        let note: String?
         /// 时间进度感知的警戒色（tmux 同款 pace 逻辑）：用量明显跑赢时间进度才
         /// 黄/红；快到重置时剩得少也算绿。见 UsageMetricToneResolver。
         let tone: UsageMetricTone
@@ -1305,8 +1335,10 @@ struct QuotaDisplayModel {
         let labeledMetrics = snapshot.groups.flatMap { group in
             group.items.map { metric -> (label: String, metric: UsageMetric, isPrimary: Bool) in
                 let window = Self.shortWindowLabel(metric)
-                let isPrimary = snapshot.providerId == "codex" ? group.id == "codex" : group.title == snapshot.displayName
-                let label = isPrimary ? window : "\(group.title) \(window)"
+                let isGoogle = snapshot.providerId == AntigravityQuota.providerID
+                let isPrimary = isGoogle ? group.id == "gemini"
+                    : (snapshot.providerId == "codex" ? group.id == "codex" : group.title == snapshot.displayName)
+                let label = (isPrimary && !isGoogle) || group.title == window ? window : "\(group.title) \(window)"
                 return (label, metric, isPrimary)
             }
         }
@@ -1339,13 +1371,13 @@ struct QuotaDisplayModel {
         let reasons = [reason, staleMinutes.map(Self.staleDataText)].compactMap { $0 }
         statusHelp = reasons.isEmpty ? nil : reasons.joined(separator: "\n")
 
-        // 环＝主组（组名与 provider 同名）里【带窗口时长且 ≤7 天】的 quota，按时长升序
-        // 取至多两只（短窗优先当环：5h 排在 7d 前；一行放不下第三只环）。两条硬语义
-        // 边界（用户裁定，不得为凑满环位而突破）：
+        // 环＝主组（组名与 provider 同名）里【≤7 天或没有时间窗】的 quota，按时间窗
+        // 升序、原始顺序稳定地取至多两只。没有时间窗不等于次要额度：Qoder 的套餐与
+        // 加购都是一等可消费额度，必须并列用环展示。两条硬语义边界：
         // - 候选不足两只就少画，【绝不递补】：OpenCode 的 Monthly 曾在 5h 行解析失败时
         //   被顶进环位——月级与模型级次要额度属于「条」的世界，不因环缺而升级。
         //   资格线因此必须是绝对阈值而非相对排名：只剩两只候选时「前二」仍会把月窗收进来。
-        // - 无窗口时长的额度（智谱 MCP 这类按次计）永远是条，不进环。
+        // - 次要组永远不进环；主组第三项及月级以上额度仍为条。
         let percentMetrics = labeledMetrics.filter { $0.metric.usedPercent != nil }
         // 状态异常/用尽直接红；其余交给时间进度感知的 pace 逻辑。
         func metricTone(_ metric: UsageMetric) -> UsageMetricTone {
@@ -1370,24 +1402,39 @@ struct QuotaDisplayModel {
             .map(\.element)
         menuBarWindows = primaryWindowMetrics.map { entry in
             Ring(
-                label: entry.label,
+                id: entry.metric.id,
+                label: snapshot.providerId == AntigravityQuota.providerID ? Self.shortWindowLabel(entry.metric) : entry.label,
                 percent: Self.remainingPercent(entry.metric),
                 resetText: entry.metric.resetText,
+                note: entry.metric.detail,
                 tone: metricTone(entry.metric)
             )
         }
 
+        let ringCandidates = percentMetrics
+            .filter { entry in
+                guard entry.isPrimary, entry.metric.kind == .quota else { return false }
+                guard let window = entry.metric.windowDurationMinutes else { return true }
+                return window <= Self.ringWindowCeilingMinutes
+            }
+            .enumerated()
+            .sorted { lhs, rhs in
+                let lhsWindow = lhs.element.metric.windowDurationMinutes ?? Int.max
+                let rhsWindow = rhs.element.metric.windowDurationMinutes ?? Int.max
+                return lhsWindow == rhsWindow ? lhs.offset < rhs.offset : lhsWindow < rhsWindow
+            }
+            .map(\.element)
         let ringMetrics = Array(
-            primaryWindowMetrics
-                .filter { ($0.metric.windowDurationMinutes ?? Int.max) <= Self.ringWindowCeilingMinutes }
-                .prefix(2)
+            ringCandidates.prefix(2)
         )
         let ringIds = Set(ringMetrics.map(\.metric.id))
         rings = ringMetrics.map { entry in
             Ring(
+                id: entry.metric.id,
                 label: entry.label,
                 percent: Self.remainingPercent(entry.metric),
                 resetText: entry.metric.resetText,
+                note: entry.metric.detail,
                 tone: metricTone(entry.metric)
             )
         }
@@ -1401,12 +1448,29 @@ struct QuotaDisplayModel {
             )
         }
 
-        summarySegments = rings.map {
-            SummarySegment(text: "\($0.label) \(Int($0.percent.rounded()))%", tone: $0.tone)
+        // 折叠态优先复用环摘要；像 Qoder Credits、智谱 MCP 这类没有可验证
+        // 时间窗的额度只会进入条位，仍需给出摘要，避免整行只剩供应商名称。
+        // 条位最多展示两项，完整列表留在展开态，防止窄弹窗被三项以上额度挤爆。
+        if rings.isEmpty {
+            summarySegments = bars.prefix(2).compactMap { bar in
+                bar.percent.map {
+                    SummarySegment(text: "\(bar.label) \(Int($0.rounded()))%", tone: bar.tone)
+                }
+            }
+        } else {
+            summarySegments = rings.enumerated().map { index, ring in
+                let label = snapshot.providerId == AntigravityQuota.providerID
+                    ? Self.shortWindowLabel(ringMetrics[index].metric) : ring.label
+                return SummarySegment(text: "\(label) \(Int(ring.percent.rounded()))%", tone: ring.tone)
+            }
         }
         summaryText = summarySegments.map(\.text).joined(separator: " · ")
 
-        if isWarn, let message = snapshot.message, !message.isEmpty {
+        // 额度用尽已经由红色环与标题告警完整表达，不再额外堆一张大号“额度提醒”卡。
+        // 其它无法从指标本身读出的告警仍保留消息卡。
+        let warningRepresentedByQuota = snapshot.status == .warning
+            && labeledMetrics.contains { ($0.metric.usedPercent ?? 0) >= 99.5 || ($0.metric.remainingPercent ?? 100) <= 0.5 }
+        if isWarn, !warningRepresentedByQuota, let message = snapshot.message, !message.isEmpty {
             alertMessage = message
             let formatter = DateFormatter()
             formatter.dateFormat = "HH:mm"
@@ -1417,7 +1481,12 @@ struct QuotaDisplayModel {
         }
 
         resetCredits = snapshot.resetCredits
-        if case let .claude(_, extra?) = snapshot.accountCredits {
+        if snapshot.providerId == AntigravityQuota.providerID {
+            creditDetails = labeledMetrics.compactMap { entry in
+                guard entry.metric.remainingPercent == nil, let quantity = entry.metric.detail else { return nil }
+                return (entry.label, quantity)
+            }
+        } else if case let .claude(_, extra?) = snapshot.accountCredits {
             creditDetails = [
                 ("额外用量", extra.enabled == false ? "已关闭" : nil),
                 ("本月额外已用", extra.used?.displayText),
@@ -1480,6 +1549,7 @@ private struct QuotaGroupView: View {
     let snapshot: ProviderUsageSnapshot
     /// 展开态由列表层受控（手风琴：至多一家展开），不再各组自持。
     let isExpanded: Bool
+    let isRefreshing: Bool
     let onToggleExpanded: () -> Void
     let onRetry: () -> Void
     @Environment(\.mbTheme) private var theme
@@ -1488,11 +1558,13 @@ private struct QuotaGroupView: View {
     init(
         snapshot: ProviderUsageSnapshot,
         isExpanded: Bool,
+        isRefreshing: Bool = false,
         onToggleExpanded: @escaping () -> Void,
         onRetry: @escaping () -> Void
     ) {
         self.snapshot = snapshot
         self.isExpanded = isExpanded
+        self.isRefreshing = isRefreshing
         self.onToggleExpanded = onToggleExpanded
         self.onRetry = onRetry
         self.model = QuotaDisplayModel(snapshot: snapshot)
@@ -1501,24 +1573,33 @@ private struct QuotaGroupView: View {
     var body: some View {
         VStack(spacing: 0) {
             summaryRow
+                .contextMenu {
+                    if snapshot.providerId == AntigravityQuota.providerID {
+                        Button("刷新额度", action: onRetry).disabled(isRefreshing)
+                    }
+                }
 
             if isExpanded && model.hasDetails {
                 VStack(alignment: .leading, spacing: 0) {
                     PanelDivider()
 
                     VStack(alignment: .leading, spacing: 8) {
-                        if let minutes = model.staleMinutes, let help = model.statusHelp {
-                            StaleCard(minutes: minutes, help: help, onRetry: onRetry)
+                        let failure = snapshot.providerId == AntigravityQuota.providerID && (snapshot.status == .error || (snapshot.status == .warning && !snapshot.groups.isEmpty))
+                            ? snapshot.message : nil
+                        if model.staleMinutes != nil || failure != nil, let help = model.statusHelp {
+                            StaleCard(minutes: model.staleMinutes, help: help, failure: failure,
+                                      hasPreviousReading: !snapshot.groups.isEmpty,
+                                      isRefreshing: isRefreshing, onRetry: onRetry)
                         }
 
-                        if let message = model.alertMessage {
+                        if let message = model.alertMessage, failure == nil {
                             AlertCard(message: message, time: model.alertTime)
                         }
 
                         if !model.rings.isEmpty {
                             HStack(spacing: 8) {
-                                ForEach(model.rings.indices, id: \.self) { i in
-                                    QRingCard(ring: model.rings[i])
+                                ForEach(model.rings) { ring in
+                                    QRingCard(ring: ring)
                                 }
                             }
                         }
@@ -1742,37 +1823,45 @@ private struct AlertCard: View {
 }
 
 private struct StaleCard: View {
-    let minutes: Int
+    let minutes: Int?
     let help: String
+    let failure: String?
+    let hasPreviousReading: Bool
+    let isRefreshing: Bool
     let onRetry: () -> Void
     @Environment(\.mbTheme) private var theme
 
     var body: some View {
+        let showWarning = failure != nil && hasPreviousReading
+        let accent = showWarning ? theme.warn : theme.danger
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: "exclamationmark.circle")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(theme.danger)
+                .foregroundStyle(accent)
                 .padding(.top, 1)
                 .background(PopoverToolTip(text: help))
                 .accessibilityLabel(Text(verbatim: help))
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("额度数据待更新")
+                Text(failure == nil ? "额度数据待更新" : "额度刷新失败")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.danger)
-                Text(QuotaDisplayModel.staleDataText(minutes: minutes))
+                    .foregroundStyle(accent)
+                if let failure { Text(failure).font(.system(size: 11.5)).foregroundStyle(theme.fg) }
+                if let minutes { Text(QuotaDisplayModel.staleDataText(minutes: minutes))
                     .font(.system(size: 11.5))
                     .foregroundStyle(theme.fg2)
                     .lineSpacing(2)
                     .lineLimit(2)
                     .truncationMode(.tail)
+                }
             }
 
             Spacer(minLength: 8)
 
-            Button("重试", action: onRetry)
+            Button(isRefreshing ? "刷新中" : "重试", action: onRetry)
+                .disabled(isRefreshing)
                 .buttonStyle(.plain)
-        .focusable(false)
+                .focusable(false)
                 .font(.system(size: 11))
                 .foregroundStyle(theme.fg)
                 .padding(EdgeInsets(top: 3, leading: 11, bottom: 3, trailing: 11))
@@ -1783,7 +1872,7 @@ private struct StaleCard: View {
                 )
         }
         .padding(EdgeInsets(top: 10, leading: 12, bottom: 10, trailing: 12))
-        .background(RoundedRectangle(cornerRadius: 8).fill(theme.tintDanger))
+        .background(RoundedRectangle(cornerRadius: 8).fill(showWarning ? theme.tintWarn : theme.tintDanger))
     }
 }
 
@@ -1869,12 +1958,28 @@ private struct QRingCard: View {
                         .font(.system(size: 10))
                         .foregroundStyle(theme.muted)
                         .lineLimit(1)
-                        // 三环并排时 VStack 只剩 ~29pt（OpenCode 的 27d18h 需要 ~33pt）：
-                        // 放不下先缩字体而不是截成「27d…」，倒计时信息要完整。
                         .minimumScaleFactor(0.75)
                 }
+                if let note = ring.note {
+                    ViewThatFits(in: .horizontal) {
+                        Text(note)
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .foregroundStyle(theme.muted)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+
+                        Text(note)
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .foregroundStyle(theme.muted)
+                            .monospacedDigit()
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.7)
+                    }
+                }
             }
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
         }
         .padding(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
         .background(
@@ -1883,6 +1988,7 @@ private struct QRingCard: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.border, lineWidth: 1))
         )
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
     }
 }
 

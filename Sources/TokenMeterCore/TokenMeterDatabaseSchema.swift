@@ -1,4 +1,9 @@
 public enum TokenMeterDatabaseSchema {
+    /// `zaly_jsonl` 仅用于让已有配置行无损通过表重建；它没有对应的 SourceKind、
+    /// 默认扫描根或 provider，不能被当作本次目标产品的数据源。
+    static let acceptedScanRootKindsSQL = (SourceKind.allCases.map(\.rawValue) + ["zaly_jsonl"])
+        .map { "'\($0)'" }.joined(separator: ", ")
+
     /// 派生数据的 schema 版本。改动它 == 下次启动删光派生表、重建、等一次全量重扫。
     /// 这是【零成本】的：数据的真相在会话文件里（~/.claude、~/.codex、~/.omp、opencode.db），不在这里。
     /// 因此不需要 V1/V2/V3 那套版本化迁移链，也不需要「加列必须是加法」那套开发期约束。
@@ -22,6 +27,9 @@ public enum TokenMeterDatabaseSchema {
     /// 14：Codex 预筛保留 thread_settings_applied；重扫修正曾被误算成 Standard 的 Fast 事件
     /// 15：峰谷模型按模型级本地时刻表优先于任何供应商上报价，重扫修正既有 DeepSeek 成本
     /// 16：价格表保留长上下文档位，并持久化逐模型指纹以支持运行时价格快照增量重算
+    /// 17：新增千问 Code、Qoder、WorkBuddy；保存 Token 可用状态与供应商内 Credits
+    /// 18：新增供应商模型目录，用 Qoder 官方 initialize 响应展示服务端模型名称
+    /// 19：Qoder 正数 Credits + 全零 Token 计数器改判为 Token 未提供，重扫历史事件
     public static let derivedVersion: Int64 = 20
 
     /// 用户配置。永不删除。这三张表存的是无法从会话文件重建的东西：
@@ -75,13 +83,14 @@ public enum TokenMeterDatabaseSchema {
 
     CREATE TABLE IF NOT EXISTS scan_roots (
       id INTEGER PRIMARY KEY,
-      kind TEXT NOT NULL CHECK (kind IN ('claude_jsonl', 'codex_jsonl', 'omp_jsonl', 'opencode_sqlite', 'reasonix_stats', 'dsh_jsonl', 'grok_jsonl')),
+      kind TEXT NOT NULL CHECK (kind IN (\(acceptedScanRootKindsSQL))),
       root_path TEXT NOT NULL,
       display_name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
       scan_mode TEXT NOT NULL DEFAULT 'incremental' CHECK (scan_mode IN ('incremental', 'full', 'disabled')),
       file_glob TEXT,
       source_db_path TEXT,
+      auxiliary_path TEXT,
       stable_source_key TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -110,7 +119,7 @@ public enum TokenMeterDatabaseSchema {
 
     /// 派生数据。全部可由一次全量重扫从会话文件重建，故 schema 版本一变就整体 DROP + CREATE。
     /// 这里包含 source_files / projects / agent_sessions / scan_runs / usage_events /
-    /// daily_rollup / session_rollup / model_pricing 及它们的索引。
+    /// daily_rollup / session_rollup / model_pricing / model_catalog 及它们的索引。
     /// 注意：agent_sessions 用的是「事件级」之后的最终形状——已删掉下沉到 usage_events 的
     /// source_file_id / model_name / total_cost_usd_micros / worktree_path / session_closed_at 五列。
     public static let derivedTables = """
@@ -225,6 +234,10 @@ public enum TokenMeterDatabaseSchema {
       -- 原始上报价留底。cost_source != 'reported' 但本列非空 = 这行的上报价没有被
       -- 采信，例如模型级峰谷定价或 custom-pricing 的 ignoreReported 使用了本地价。
       reported_cost_usd_micros INTEGER,
+      tokens_reported INTEGER NOT NULL DEFAULT 1 CHECK (tokens_reported IN (0,1)),
+      credits_picos INTEGER CHECK (credits_picos IS NULL OR credits_picos >= 0),
+      original_credits_picos INTEGER CHECK (original_credits_picos IS NULL OR original_credits_picos >= 0),
+      billable INTEGER CHECK (billable IS NULL OR billable IN (0,1)),
       dedupe_key TEXT,
       dedupe_scope_key TEXT,
       source_offset INTEGER NOT NULL,
@@ -255,7 +268,10 @@ public enum TokenMeterDatabaseSchema {
       tokens_cache_write_5m INTEGER NOT NULL DEFAULT 0,
       tokens_cache_write_1h INTEGER NOT NULL DEFAULT 0,
       cost_usd_micros INTEGER NOT NULL DEFAULT 0,
-      cost_unknown_events INTEGER NOT NULL DEFAULT 0
+      cost_unknown_events INTEGER NOT NULL DEFAULT 0,
+      token_unreported_events INTEGER NOT NULL DEFAULT 0,
+      credits_picos INTEGER NOT NULL DEFAULT 0,
+      credit_events INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_rollup_unique
@@ -273,6 +289,9 @@ public enum TokenMeterDatabaseSchema {
       -- 与 daily_rollup 对齐：sum() 会静默跳过 cost 为 NULL 的行，
       -- 会话中途换到未定价的模型时，金额会偏低却看起来精确。
       cost_unknown_events INTEGER NOT NULL DEFAULT 0,
+      token_unreported_events INTEGER NOT NULL DEFAULT 0,
+      credits_picos INTEGER NOT NULL DEFAULT 0,
+      credit_events INTEGER NOT NULL DEFAULT 0,
       primary_model TEXT
     );
 
@@ -305,6 +324,22 @@ public enum TokenMeterDatabaseSchema {
       snapshot_version TEXT,
       pricing_fingerprint TEXT NOT NULL
     );
+
+    -- 供应商官方模型目录只负责展示名，不改写 usage_events.model_name / model_canonical：
+    -- 原始身份仍可审计，目录更新也不会改变历史聚合键。
+    CREATE TABLE IF NOT EXISTS model_catalog (
+      provider_id TEXT NOT NULL,
+      model_canonical TEXT NOT NULL,
+      source_model_id TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      catalog_source TEXT NOT NULL,
+      is_enabled INTEGER CHECK (is_enabled IS NULL OR is_enabled IN (0,1)),
+      fetched_epoch_ms INTEGER NOT NULL,
+      PRIMARY KEY (provider_id, model_canonical)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_model_catalog_display_name
+      ON model_catalog(display_name COLLATE NOCASE);
     """
 
     /// 重建派生表后，把 scan_roots 上的扫描状态清回「从未扫描过」。

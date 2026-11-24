@@ -63,7 +63,9 @@ function createSessionsDb() {
       is_sidechain INTEGER NOT NULL DEFAULT 0,
       observed_epoch_ms INTEGER NOT NULL DEFAULT 0,
       tokens_total INTEGER NOT NULL DEFAULT 0,
-      cost_usd_micros INTEGER
+      cost_usd_micros INTEGER,
+      tokens_reported INTEGER NOT NULL DEFAULT 1,
+      credits_picos INTEGER
     );
 
     CREATE TABLE session_rollup (
@@ -74,6 +76,9 @@ function createSessionsDb() {
       tokens_total INTEGER NOT NULL,
       cost_usd_micros INTEGER NOT NULL,
       cost_unknown_events INTEGER NOT NULL DEFAULT 0,
+      token_unreported_events INTEGER NOT NULL DEFAULT 0,
+      credits_picos INTEGER NOT NULL DEFAULT 0,
+      credit_events INTEGER NOT NULL DEFAULT 0,
       primary_model TEXT
     );
 
@@ -286,10 +291,10 @@ describe('SessionsRepository', () => {
 
       expect(result.buckets).toEqual(['2026-07-02', '2026-07-03', '2026-07-04']);
       expect(result.rows).toEqual([
-        { bucket: '2026-07-03', providerId: 'codex', tokens: 30, costUsdMicros: 300, sessions: 1 },
-        { bucket: '2026-07-04', providerId: 'claude-code', tokens: 70, costUsdMicros: 700, sessions: 1 },
+        { bucket: '2026-07-03', providerId: 'codex', tokens: 30, tokenUnreportedEvents: 0, costUsdMicros: 300, creditsPicos: '0', creditEvents: 0, sessions: 1 },
+        { bucket: '2026-07-04', providerId: 'claude-code', tokens: 70, tokenUnreportedEvents: 0, costUsdMicros: 700, creditsPicos: '0', creditEvents: 0, sessions: 1 },
         // 会话 1 的 5 + 子代理(归并主会话 2)的 11；活跃主会话 = 1 和 2 两个。
-        { bucket: '2026-07-04', providerId: 'codex', tokens: 16, costUsdMicros: 160, sessions: 2 }
+        { bucket: '2026-07-04', providerId: 'codex', tokens: 16, tokenUnreportedEvents: 0, costUsdMicros: 160, creditsPicos: '0', creditEvents: 0, sessions: 2 }
       ]);
     });
 
@@ -298,8 +303,8 @@ describe('SessionsRepository', () => {
 
       // 项目 10 只有 codex 主会话（1、2）；claude（无项目）被滤掉。
       expect(result.rows).toEqual([
-        { bucket: '2026-07-03', providerId: 'codex', tokens: 30, costUsdMicros: 300, sessions: 1 },
-        { bucket: '2026-07-04', providerId: 'codex', tokens: 16, costUsdMicros: 160, sessions: 2 }
+        { bucket: '2026-07-03', providerId: 'codex', tokens: 30, tokenUnreportedEvents: 0, costUsdMicros: 300, creditsPicos: '0', creditEvents: 0, sessions: 1 },
+        { bucket: '2026-07-04', providerId: 'codex', tokens: 16, tokenUnreportedEvents: 0, costUsdMicros: 160, creditsPicos: '0', creditEvents: 0, sessions: 2 }
       ]);
     });
 

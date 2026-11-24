@@ -4,7 +4,7 @@ import type { HeatmapDay } from '../../main/overviewRepository.js';
 import { buildCalendarGrid } from './calendar.js';
 import { logBucket } from './scale.js';
 import { tokenHeatmapBand } from './tokenHeatmap.js';
-import { formatCount, formatTokens, formatUsdMicros } from '../format.js';
+import { formatCount, formatReportedTokens, formatUsdMicros } from '../format.js';
 
 export type HeatmapMetric = 'tokens' | 'costUsdMicros' | 'sessions' | 'events';
 
@@ -31,12 +31,13 @@ interface DetailRow {
   costUsdMicros: number;
   sessions: number;
   events: number;
+  tokenUnreportedEvents: number;
 }
 
 /// 明细行的数值跟随当前切换的指标（Token/成本/会话/事件切什么显示什么）。
 function formatMetricValue(row: DetailRow, metric: HeatmapMetric): string {
   if (metric === 'costUsdMicros') return formatUsdMicros(row.costUsdMicros);
-  if (metric === 'tokens') return formatTokens(row.tokens, true);   // 单日 → 锁 M 单位
+  if (metric === 'tokens') return formatReportedTokens(row.tokens, row.tokenUnreportedEvents, true);
   return formatCount(row[metric]);
 }
 
@@ -172,7 +173,9 @@ export function YearHeatmap({ days, lastDay, count = 371, metric = 'tokens' }: Y
             <h4>{hovered}</h4>
             <div className="dp-stats">
               <div>
-                <b>{formatTokens(shownDay.tokens, true)}</b>
+                <b>
+                  {formatReportedTokens(shownDay.tokens, shownDay.tokenUnreportedEvents, true)}
+                </b>
                 <span>Token</span>
               </div>
               <div>

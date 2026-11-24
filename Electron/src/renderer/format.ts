@@ -26,6 +26,39 @@ export function formatTokens(value: number, dailyScale = false): string {
   return formatCount(value);
 }
 
+/// Token 为 0 且有未上报事件时显示破折号，避免把“没有字段”伪装成真实零值。
+export function formatReportedTokens(value: number, unreportedEvents: number, dailyScale = false): string {
+  if (value === 0 && unreportedEvents > 0) return '—';
+  return formatTokens(value, dailyScale);
+}
+
+/// Credits 以 10^-12 的整数存储。主进程以文本传 Int64，避免超过
+/// Number.MAX_SAFE_INTEGER 后静默丢精度。只允许在调用方已按 provider 分组后格式化。
+export function formatCredits(picos: string | number): string {
+  const raw = creditPicosBigInt(picos);
+  const scale = 1_000_000_000_000n;
+  const absolute = raw < 0n ? -raw : raw;
+  const wholeBeforeRounding = absolute / scale;
+  const decimals = wholeBeforeRounding >= 100n ? 2 : wholeBeforeRounding >= 1n ? 4 : 8;
+  const divisor = 10n ** BigInt(12 - decimals);
+  const roundedUnits = (absolute + divisor / 2n) / divisor;
+  const decimalScale = 10n ** BigInt(decimals);
+  const whole = roundedUnits / decimalScale;
+  const fraction = (roundedUnits % decimalScale).toString().padStart(decimals, '0').replace(/0+$/, '');
+  const sign = raw < 0n ? '-' : '';
+  return `${sign}${whole.toLocaleString('en-US')}${fraction === '' ? '' : `.${fraction}`} Credits`;
+}
+
+export function addCreditPicos(lhs: string | number, rhs: string | number): string {
+  return (creditPicosBigInt(lhs) + creditPicosBigInt(rhs)).toString();
+}
+
+function creditPicosBigInt(value: string | number): bigint {
+  if (typeof value === 'string') return BigInt(value);
+  if (!Number.isFinite(value) || !Number.isInteger(value)) throw new Error('Credits picos 必须是整数');
+  return BigInt(value);
+}
+
 /// 成本以微美元存储。成本从 rollup 读出来永远是数字（NULL 已被折成 0），看不出是否完整——
 /// 「部分未知」由 costUnknownEvents 单独表达，见 formatUnknownCostNote 与各处调用点。
 export function formatUsdMicros(micros: number): string {

@@ -38,7 +38,7 @@
 - **项目**：按工作目录聚合，花费火花线与模型分布
 - **会话**：主会话列表（子代理自动归并），活跃趋势与统计卡跟随筛选，下钻子代理任务明细
 - **模型**：按模型聚合的 token / 成本排行，Top 6 模型用量趋势
-- **设置**：agent 集成开关（自动装卸 hooks）、供应商额度接入、菜单栏外观实时预览
+- **设置**：agent 本地数据源开关、供应商额度接入、菜单栏外观实时预览
 
 | 设置 | 菜单栏外观定制 |
 |---|---|
@@ -48,13 +48,20 @@
 
 **本地会话统计**（解析 agent 自己写盘的日志，只读）：
 
-| Agent | 数据源 |
-|---|---|
-| Claude Code | `~/.claude/projects/*.jsonl` |
-| Codex CLI | `~/.codex/sessions/*.jsonl` |
-| OMP (Oh My Pi) | `~/.omp/agent/sessions/*.jsonl` |
-| OpenCode | `~/.local/share/opencode/opencode.db` |
-| Grok Build | `$GROK_HOME/sessions/*/*/updates.jsonl`（默认 `~/.grok/sessions`） |
+| Agent | 数据源 | 额外用量 |
+|---|---|---|
+| Claude Code | `~/.claude/projects/*.jsonl` | — |
+| Codex CLI | `~/.codex/sessions/*.jsonl` | — |
+| OMP (Oh My Pi) | `~/.omp/agent/sessions/*.jsonl` | — |
+| OpenCode | `~/.local/share/opencode/opencode.db` | — |
+| Grok Build | `$GROK_HOME/sessions/*/*/updates.jsonl`（默认 `~/.grok/sessions`） | — |
+| 千问 Code | `QWEN_RUNTIME_DIR` 下的会话/月度账本 + `QWEN_HOME/usage_record.jsonl`（均默认 `~/.qwen`） | Token |
+| Qoder CLI / Desktop | `~/.qoder-cn/projects/**/*.jsonl`；Desktop 用 `main.sqlite` 判定归属 | 来源实际提供时统计 Token；逐请求 Credits；模型展示名来自 CLI 官方模型目录。当前 Qwen3.8-Max 实测只给正数 Credits、Token 计数器全零，界面明确标为未上报，不做换算 |
+| Antigravity CLI | `~/.gemini/antigravity-cli/conversations/*.db` | 每次生成的 Token、缓存、推理和按模型估算的费用 |
+| Gemini CLI | `~/.gemini/tmp/*/chats/` 下的 JSON 和 JSONL | 历史会话与子代理的 Token、缓存和按模型估算的费用 |
+| 腾讯云 WorkBuddy | `~/.workbuddy/projects/**/*.jsonl` + `~/.workbuddy/workbuddy.db` | Token、Credits、本地估算成本；真实运行数据待复核 |
+
+豆包工作尚未发现可可靠验证的 Token / 成本账本，因此没有伪造接入。各来源的字段、优先级、去重规则和验证边界见[本地数据源契约](docs/data-source-contracts.md)。
 
 **订阅额度**（读取本机已登录凭证或 API Key）：
 
@@ -62,10 +69,12 @@
 |---|---|
 | Claude Code | 钥匙串（本机登录态） |
 | Codex | `~/.codex/auth.json` |
+| Antigravity（AGY） | 在设置中开启后，用已登录的 CLI 自动查询额度。展开可查看 Gemini、Claude/GPT 和模型专属窗口。[使用与额度规则](docs/antigravity-quota.md) |
 | 智谱 GLM | 应用内填写（存钥匙串）或 `ZHIPU_API_KEY` |
 | OpenCode Go | 设置页「登录 OpenCode Go」（WebView 登录，登录态一年有效） |
 | Command Code | 应用内填写 Studio API Key（存钥匙串）、`COMMAND_CODE_API_KEY` 或 `~/.commandcode/auth.json`；无需安装 CLI |
 | Grok Build | `~/.grok/auth.json`（`grok login`） |
+| Qoder | 本机 Qoder CLI 登录态；通过官方 `get_usage_info` 控制接口读取套餐、加购与组织共享 Credits |
 
 ## 架构
 

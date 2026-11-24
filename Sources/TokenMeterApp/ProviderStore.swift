@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import TokenMeterCore
@@ -40,12 +41,27 @@ final class ProviderStore: ObservableObject {
     /// 当前显示汇率（USD→CNY）。启动先读缓存/兜底，随后按需刷新。
     @Published private(set) var exchangeRate: ExchangeRate
     /// 弹窗底部「暂停扫描」（OpenDesign 稿）：暂停期间定时器照跳，但两类刷新都短路。
-    @Published var isScanPaused = false
+    @Published var isScanPaused = false {
+        didSet {
+            if isScanPaused { stopAntigravityRefresh() }
+            else if oldValue { refreshAntigravityIfNeeded() }
+        }
+    }
     /// refreshLocalAgentIndex 的 in-flight 互斥（MainActor 串行，但 await 让出时可重入）。
     private var isRefreshingLocalIndex = false
 
     let config: TokenMeterConfig
     private let providers: [UsageProvider]
+    let antigravityConfig: ProviderConfig?
+    private let antigravityProvider: AntigravityUsageProvider?
+    private let queryAntigravity: (AntigravityUsageProvider) async throws -> Void
+    private var antigravityGeneration = 0
+    var antigravityConnectionError: String?
+    private var antigravityRefreshTask: Task<Void, Never>?
+    private var antigravityForceRequested = false
+    private var antigravityLastAttempt: Date?
+    private var antigravityQueryError: AntigravityQueryError?
+    @Published private(set) var isRefreshingAntigravity = false
     private let codexAccountClient = CodexAccountClient()
     private var codexResetAutomation: CodexResetAutomation?
     private var codexResetTask: Task<Void, Never>?
@@ -88,9 +104,14 @@ final class ProviderStore: ObservableObject {
         )
     }
 
-    init(config: TokenMeterConfig, notificationCenter: UsageNotificationDelivering? = nil, databaseURL: URL?) {
+    init(config: TokenMeterConfig, notificationCenter: UsageNotificationDelivering? = nil, databaseURL: URL?,
+         antigravityCache: URL = AntigravityQuota.cacheURL(),
+         queryAntigravity: @escaping (AntigravityUsageProvider) async throws -> Void = { try await $0.refreshQuota() }) {
         self.config = config
-        self.providers = ProviderRegistry.makeProviders(from: config)
+        self.antigravityConfig = config.providers.first { $0.type == .antigravity }
+        self.antigravityProvider = antigravityConfig.map { AntigravityUsageProvider(config: $0, cache: antigravityCache) }
+        self.queryAntigravity = queryAntigravity
+        self.providers = ProviderRegistry.makeProviders(from: config).filter { !($0 is AntigravityUsageProvider) }
         self.snapshotCacheURL = ProviderStore.snapshotCacheURL()
         self.notificationCenter = notificationCenter
 
@@ -139,8 +160,8 @@ final class ProviderStore: ObservableObject {
         refreshGate = RefreshGate(minimumInterval: max(300, TimeInterval(settingsSnapshot?.autoRefreshSeconds ?? 300)))
 
         let cachedSnapshots = (try? ProviderSnapshotDiskCache.read(from: snapshotCacheURL)) ?? []
-        self.providerSnapshots = cachedSnapshots
-        self.snapshots = cachedSnapshots.map(\.legacySnapshot)
+        self.providerSnapshots = cachedSnapshots.filter { $0.providerId != antigravityConfig?.id }
+        self.snapshots = providerSnapshots.map(\.legacySnapshot)
     }
 
     /// 金额显示币种（设置页写入，Swift 只读）。默认人民币。
@@ -196,6 +217,7 @@ final class ProviderStore: ObservableObject {
     func isProviderEnabled(_ providerId: String) -> Bool {
         guard let enabled = settingsSnapshot?.providerOverrides
             .first(where: { $0.providerId == providerId })?.enabled else {
+            if let source = antigravityConfig, source.id == providerId { return source.enabled }
             return true
         }
         return enabled
@@ -212,7 +234,8 @@ final class ProviderStore: ObservableObject {
         var names: [String: String] = [:]
         for override in overrides {
             if let name = override.displayName, !name.isEmpty {
-                names[override.providerId] = name
+                names[override.providerId] = override.providerId == antigravityConfig?.id
+                    ? AntigravityUsageProvider.menuName(name) : name
             }
         }
         guard !names.isEmpty else { return visible }
@@ -222,6 +245,7 @@ final class ProviderStore: ObservableObject {
     }
 
     func refresh() async {
+        refreshAntigravityIfNeeded()
         // 启动时重置卡检查可能先取得账户查询权。等它结束后仍要完成本轮额度刷新。
         while let resetTask = codexResetTask {
             await resetTask.value
@@ -252,18 +276,98 @@ final class ProviderStore: ObservableObject {
             current: mergedProviderSnapshots,
             usedThresholdPercent: settingsSnapshot?.quotaUsedThresholdPercent ?? 0
         )
-        providerSnapshots = mergedProviderSnapshots
-        snapshots = mergedProviderSnapshots.map(\.legacySnapshot)
+        providerSnapshots = mergedProviderSnapshots + providerSnapshots.filter { $0.providerId == antigravityConfig?.id }
+        snapshots = providerSnapshots.map(\.legacySnapshot)
         try? ProviderSnapshotDiskCache.write(mergedProviderSnapshots, to: snapshotCacheURL)
         notificationCenter?.deliver(notificationEvents)
         isRefreshing = false
+    }
+
+    func reloadAntigravityQuota() async {
+        guard let provider = antigravityProvider else { return }
+        antigravityGeneration += 1
+        let generation = antigravityGeneration
+        var next: ProviderUsageSnapshot?
+        if isProviderEnabled(provider.id), !isScanPaused {
+            next = await provider.cachedSnapshot(failure: antigravityConnectionError ?? antigravityQueryError?.errorDescription)
+        } else if isProviderEnabled(provider.id) { return }
+        guard generation == antigravityGeneration else { return }
+        let snapshotsWithoutGoogle = providerSnapshots.filter { $0.providerId != provider.id }
+        let updated = snapshotsWithoutGoogle + (next.map { [$0] } ?? [])
+        guard updated != providerSnapshots else { return }
+        providerSnapshots = updated
+        snapshots = updated.map(\.legacySnapshot)
+    }
+
+    func antigravityDidReceiveQuota() async {
+        antigravityQueryError = nil
+        await reloadAntigravityQuota()
+    }
+
+    func stopAntigravityRefresh() {
+        antigravityRefreshTask?.cancel()
+        antigravityLastAttempt = nil
+        antigravityQueryError = nil
+    }
+
+    @discardableResult
+    func refreshAntigravityIfNeeded(force: Bool = false) -> Task<Void, Never>? {
+        guard let provider = antigravityProvider, isProviderEnabled(provider.id), !isScanPaused else { return nil }
+        if force { antigravityForceRequested = true }
+        if let antigravityRefreshTask { return antigravityRefreshTask }
+        let task = Task {
+            defer {
+                antigravityRefreshTask = nil
+                antigravityForceRequested = false
+                if isRefreshingAntigravity { isRefreshingAntigravity = false }
+            }
+            await reloadAntigravityQuota()
+            guard !Task.isCancelled, antigravityConnectionError == nil else { return }
+            let current = providerSnapshots.first { $0.providerId == provider.id }
+            let started = Date()
+            if !antigravityForceRequested {
+                if antigravityQueryError == .signIn { return }
+                if let last = antigravityLastAttempt, started.timeIntervalSince(last) < 300 { return }
+                if let current, current.status == .ok, !current.groups.isEmpty,
+                   started.timeIntervalSince(current.fetchedAt) < 300 { return }
+            }
+            antigravityLastAttempt = started
+            isRefreshingAntigravity = true
+            do {
+                try await queryAntigravity(provider)
+                antigravityQueryError = nil
+            } catch is CancellationError {
+                antigravityLastAttempt = nil
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                if let fresh = providerSnapshots.first(where: { $0.providerId == provider.id && !$0.groups.isEmpty }),
+                   fresh.fetchedAt != current?.fetchedAt,
+                   fresh.fetchedAt.timeIntervalSince1970 >= floor(started.timeIntervalSince1970) { return }
+                antigravityQueryError = (error as? AntigravityQueryError) ?? .unavailable
+            }
+            guard !Task.isCancelled else { return }
+            await reloadAntigravityQuota()
+        }
+        antigravityRefreshTask = task
+        return task
+    }
+
+    func retryQuota(for providerID: String) async {
+        if providerID == antigravityConfig?.id {
+            await refreshAntigravityIfNeeded(force: true)?.value
+        } else {
+            await refresh()
+        }
     }
 
     /// 绕过节流立即刷新一次：设置页完成 OpenCode Go 登录后调用，登录态
     /// 写盘即可见，不用等 5 分钟轮询窗口。
     func refreshNow() async {
         refreshGate = RefreshGate(minimumInterval: refreshGate.minimumInterval)
+        refreshAntigravityIfNeeded(force: true)
         await refresh()
+        await antigravityRefreshTask?.value
     }
 
     func refreshNotificationAuthorizationState() async {
@@ -291,6 +395,7 @@ final class ProviderStore: ObservableObject {
             throw ProviderStoreError.settingsVersionBehind(expected: expectedVersion, actual: snapshot.version)
         }
         settingsSnapshot = snapshot
+        if let source = antigravityConfig, !isProviderEnabled(source.id) { stopAntigravityRefresh() }
         if !shouldAutomaticallyRedeemCodexCredits { stopCodexResetAutomation() }
         refreshGate = RefreshGate(minimumInterval: max(300, TimeInterval(snapshot.autoRefreshSeconds)))
     }
@@ -455,7 +560,7 @@ final class ProviderStore: ObservableObject {
 
     private func enabledSourceKinds() -> Set<SourceKind> {
         guard let settingsSnapshot else {
-            return Set(SourceKind.allCasesForLocalIndex)
+            return Set(SourceKind.allCases)
         }
         let enabledAgentKinds = settingsSnapshot.enabledAgentKinds.compactMap(LocalAgentKind.init(rawValue:))
         guard !enabledAgentKinds.isEmpty else { return [] }
@@ -488,12 +593,6 @@ final class ProviderStore: ObservableObject {
     }
 }
 
-private extension SourceKind {
-    static var allCasesForLocalIndex: [SourceKind] {
-        [.claudeJSONL, .codexJSONL, .opencodeSQLite, .ompJSONL, .reasonixStats, .dshJSONL, .grokJSONL]
-    }
-}
-
 private extension LocalAgentKind {
     var sourceKind: SourceKind {
         switch self {
@@ -511,6 +610,16 @@ private extension LocalAgentKind {
             .dshJSONL
         case .grok:
             .grokJSONL
+        case .qwenCode:
+            .qwenJSONL
+        case .qoder:
+            .qoderJSONL
+        case .workbuddy:
+            .workbuddyJSONL
+        case .antigravityCLI:
+            .antigravitySQLite
+        case .geminiCLI:
+            .geminiChat
         }
     }
 }

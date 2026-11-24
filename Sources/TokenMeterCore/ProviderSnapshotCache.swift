@@ -10,12 +10,16 @@ public enum ProviderSnapshotCache {
 
         return refreshed.map { snapshot in
             let cached = previousByProvider[snapshot.providerId]
-            // 窗口继承只对成功刷新的快照做：失败回退走下面整份缓存的分支，无需继承。
-            let carried = snapshot.status == .ok && cached != nil
+            // status 表达的是业务状态，不是请求成败：额度已用尽等成功响应也会是 warning。
+            // 只有「本轮确实带回可展示的额度数字」才算刷新成功；失败快照通常只有一条
+            // 无数值的状态项，走下面整份缓存的回退分支。
+            let refreshedHasUsableQuota = ProviderSnapshotDiskCache.hasUsableQuota(snapshot)
+            let refreshSucceeded = snapshot.status == .ok || refreshedHasUsableQuota
+            let carried = refreshSucceeded && cached != nil
                 ? carryOverVanishedWindows(snapshot, previous: cached!, now: now)
                 : snapshot
 
-            if carried.status == .ok,
+            if refreshSucceeded,
                carried.resetCredits == nil,
                let cached,
                let resetCredits = cached.resetCredits {
@@ -32,9 +36,9 @@ public enum ProviderSnapshotCache {
                 )
             }
 
-            guard carried.status != .ok,
+            guard !refreshSucceeded,
                   let cached,
-                  !cached.groups.isEmpty else {
+                  ProviderSnapshotDiskCache.hasUsableQuota(cached) else {
                 return carried
             }
 

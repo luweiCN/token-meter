@@ -11,6 +11,8 @@ public enum ProviderType: String, Codable, Equatable {
     case shellCommand
     case zhipu
     case grok
+    case antigravity
+    case qoder
 }
 
 public struct TokenMeterConfig: Codable, Equatable {

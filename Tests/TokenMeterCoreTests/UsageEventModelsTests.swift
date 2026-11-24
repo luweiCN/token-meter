@@ -63,15 +63,21 @@ final class UsageEventModelsTests: XCTestCase {
     }
 
     func testParserStateRoundTripsCodexServiceTier() throws {
-        let state = ParserState(lastEventSeq: 1, codexServiceTier: "fast")
+        let state = ParserState(
+            lastEventSeq: 1,
+            codexServiceTier: "fast",
+            auxiliaryStorageRevision: "external-v1"
+        )
         let data = try JSONEncoder().encode(state)
         let decoded = try JSONDecoder().decode(ParserState.self, from: data)
         XCTAssertEqual(decoded.codexServiceTier, "fast")
+        XCTAssertEqual(decoded.auxiliaryStorageRevision, "external-v1")
     }
 
     func testParserStateMissingCodexServiceTierDecodesAsNil() throws {
         let json = #"{"lastEventSeq":1,"resumeOffset":0}"#
         let decoded = try JSONDecoder().decode(ParserState.self, from: Data(json.utf8))
         XCTAssertNil(decoded.codexServiceTier)
+        XCTAssertNil(decoded.auxiliaryStorageRevision)
     }
 }

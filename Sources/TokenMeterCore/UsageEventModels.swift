@@ -1,5 +1,30 @@
 import Foundation
 
+/// 一次供应商请求实际消耗的 Credits。
+///
+/// Credits 只在同一 `providerId` 内可加总，不能跨供应商比较，也不能换算为 USD。
+/// 使用 10^-12 Credits 的整数保存，避免供应商 JSON 浮点在累计时继续放大误差。
+public struct ProviderCreditUsage: Equatable {
+    public static let scale: Decimal = 1_000_000_000_000
+
+    public let actualPicos: Int64
+    public let originalPicos: Int64?
+    public let billable: Bool?
+
+    public init(actualPicos: Int64, originalPicos: Int64? = nil, billable: Bool? = nil) {
+        self.actualPicos = actualPicos
+        self.originalPicos = originalPicos
+        self.billable = billable
+    }
+
+    public static func picos(from value: Double) -> Int64? {
+        guard value.isFinite, value >= 0 else { return nil }
+        let scaled = value * 1_000_000_000_000
+        guard scaled <= Double(Int64.max) else { return nil }
+        return Int64(scaled.rounded())
+    }
+}
+
 /// 一条 assistant API 响应的用量。
 ///
 /// 字段语义已跨源归一：
@@ -32,6 +57,9 @@ public struct UsageEvent: Equatable {
     public let cacheWrite5mTokens: Int64
     public let cacheWrite1hTokens: Int64
     public let reportedCostUSDMicros: Int64?
+    /// false 表示来源没有给出 Token；这与来源明确给出各项均为 0 不同。
+    public let tokensReported: Bool
+    public let creditUsage: ProviderCreditUsage?
     public let sourceOffset: Int64
     public let isSidechain: Bool
 
@@ -49,6 +77,8 @@ public struct UsageEvent: Equatable {
         cacheWrite5mTokens: Int64 = 0,
         cacheWrite1hTokens: Int64 = 0,
         reportedCostUSDMicros: Int64? = nil,
+        tokensReported: Bool = true,
+        creditUsage: ProviderCreditUsage? = nil,
         sourceOffset: Int64,
         isSidechain: Bool = false
     ) {
@@ -65,6 +95,8 @@ public struct UsageEvent: Equatable {
         self.cacheWrite5mTokens = cacheWrite5mTokens
         self.cacheWrite1hTokens = cacheWrite1hTokens
         self.reportedCostUSDMicros = reportedCostUSDMicros
+        self.tokensReported = tokensReported
+        self.creditUsage = creditUsage
         self.sourceOffset = sourceOffset
         self.isSidechain = isSidechain
     }
@@ -79,9 +111,57 @@ public struct UsageEvent: Equatable {
     }
 }
 
+extension UsageEvent {
+    /// 去重仍由 Token 完整度决定，但 Credits 是与 Token 正交的事实。胜者没带
+    /// Credits 时保留败者的值，避免主文件里的数据库兜底与子代理 Token 帧互相吞字段。
+    func mergingMissingCredit(from other: UsageEvent) -> UsageEvent {
+        let mergedCredit: ProviderCreditUsage?
+        if let creditUsage {
+            if let otherCredit = other.creditUsage,
+               creditUsage.actualPicos == otherCredit.actualPicos {
+                mergedCredit = ProviderCreditUsage(
+                    actualPicos: creditUsage.actualPicos,
+                    originalPicos: creditUsage.originalPicos ?? otherCredit.originalPicos,
+                    billable: creditUsage.billable ?? otherCredit.billable
+                )
+            } else {
+                mergedCredit = creditUsage
+            }
+        } else {
+            mergedCredit = other.creditUsage
+        }
+        return replacingCreditUsage(mergedCredit)
+    }
+
+    func replacingCreditUsage(_ value: ProviderCreditUsage?) -> UsageEvent {
+        guard value != creditUsage else { return self }
+        return UsageEvent(
+            eventSeq: eventSeq,
+            observedAt: observedAt,
+            modelName: modelName,
+            messageId: messageId,
+            dedupeKey: dedupeKey,
+            dedupeScopeKey: dedupeScopeKey,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens,
+            reasoningTokens: reasoningTokens,
+            cacheReadTokens: cacheReadTokens,
+            cacheWrite5mTokens: cacheWrite5mTokens,
+            cacheWrite1hTokens: cacheWrite1hTokens,
+            reportedCostUSDMicros: reportedCostUSDMicros,
+            tokensReported: tokensReported,
+            creditUsage: value,
+            sourceOffset: sourceOffset,
+            isSidechain: isSidechain
+        )
+    }
+}
+
 /// 一个会话源文件解析后的产物：会话元信息，加上该文件内的全部用量事件。
 public struct ParsedSession: Equatable {
     public let sourceKind: SourceKind
+    /// 同一数据源可按会话归属到不同供应商（例如 Qoder CLI 与 Qoder Desktop）。
+    public let providerId: String?
     public let sessionKey: String
     public let projectPath: String?
     public let cliVersion: String?
@@ -94,6 +174,7 @@ public struct ParsedSession: Equatable {
 
     public init(
         sourceKind: SourceKind,
+        providerId: String? = nil,
         sessionKey: String,
         projectPath: String?,
         cliVersion: String?,
@@ -105,6 +186,7 @@ public struct ParsedSession: Equatable {
         subagentLabel: String? = nil
     ) {
         self.sourceKind = sourceKind
+        self.providerId = providerId
         self.sessionKey = sessionKey
         self.projectPath = projectPath
         self.cliVersion = cliVersion
@@ -166,6 +248,12 @@ public struct ParserState: Equatable, Codable {
     /// OpenCode 使用 WAL；主数据库文件不变时，`-wal` 仍可能新增、更新或删除消息。
     /// 保存主库与 WAL 的轻量版本，任一变化都触发完整 SQLite 快照替换。
     public var openCodeStorageRevision: String?
+    /// Qwen Code 的会话、逐请求月账本与会话汇总是同一语义的多份投影。
+    /// 保存整个相关文件集合的版本，变化时整根重建以执行固定优先级与去重。
+    public var qwenStorageRevision: String?
+    /// 会话文件之外、但会改变解析结果的本地数据版本。目前用于 Qoder Desktop
+    /// 的会话归属表，以及 WorkBuddy 的 Credit 兜底表。版本变化时不能跳过未改动的 JSONL。
+    public var auxiliaryStorageRevision: String?
     /// Grok：本文件是否见过 `params.update.usage`。缺 key 的旧 parser_state 当 false。
     public var grokSawUsage: Bool?
 
@@ -200,6 +288,8 @@ public struct ParserState: Equatable, Codable {
         codexIsUserFork: Bool? = nil,
         codexServiceTier: String? = nil,
         openCodeStorageRevision: String? = nil,
+        qwenStorageRevision: String? = nil,
+        auxiliaryStorageRevision: String? = nil,
         grokSawUsage: Bool? = nil,
         resumeOffset: Int64 = 0
     ) {
@@ -224,6 +314,8 @@ public struct ParserState: Equatable, Codable {
         self.codexIsUserFork = codexIsUserFork
         self.codexServiceTier = codexServiceTier
         self.openCodeStorageRevision = openCodeStorageRevision
+        self.qwenStorageRevision = qwenStorageRevision
+        self.auxiliaryStorageRevision = auxiliaryStorageRevision
         self.grokSawUsage = grokSawUsage
         self.resumeOffset = resumeOffset
     }

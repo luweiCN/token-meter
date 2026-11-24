@@ -70,7 +70,7 @@ interface DemoProvider {
   exampleBalance?: string;
 }
 
-/// 演示数据（稿 data 口径）：CC 5h62/7d41 · CX 34/18 · 智谱 8/55 · Go 98/100 · Command 75/80/80 · Grok 单窗 42 · OMP 71/30。
+/// 演示数据（稿 data 口径）。
 export const PREVIEW_PROVIDERS: DemoProvider[] = [
   { id: 'claude', short: 'CC', mono: 'C', w5: { p: 62, c: 'ok' }, w7: { p: 41, c: 'ok' }, w3: null, exampleBalance: 'US$18.50' },
   { id: 'codex', short: 'CX', mono: 'X', w5: { p: 34, c: 'warn' }, w7: { p: 18, c: 'warn' }, w3: null },

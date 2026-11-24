@@ -56,6 +56,13 @@
   --s4: #ffe073;
   --s5: #ff7a5c;
   --s6: #111111;
+  --s7: #4a9eff;
+  --s8: #ff9f43;
+  --s9: #f368e0;
+  --s10: #54a0ff;
+  --s11: #4a9eff;
+  --s12: #4fd8c6;
+  --s13: #a6a1ff;
 
   /* Chart segment fills (StackedBarChart reads these via --seg-*). Assigned to
      keep adjacent stack segments far apart in hue and to give the dominant
@@ -131,6 +138,13 @@
   --s4: #9a7500;
   --s5: #c2542e;
   --s6: #e6e6e6;
+  --s7: #1e6fbb;
+  --s8: #b45f06;
+  --s9: #a83c96;
+  --s10: #2563a8;
+  --s11: #1e90ff;
+  --s12: #087b70;
+  --s13: #514cc0;
 
   --seg-input: #0895bd;
   --seg-cache-write: #0f9d6e;
@@ -1799,7 +1813,7 @@ th.sort.desc::after{content:"↓";opacity:1;color:var(--accent)}
 
 .lc-stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
   gap: 6px;
 }
 
@@ -2435,6 +2449,11 @@ th.sort.desc::after{content:"↓";opacity:1;color:var(--accent)}
 .mbkeep:empty{display:none}
 .seg.mini button{padding:2px 8px;font-size:10.5px}
 .seg.dis{opacity:.4;pointer-events:none}
+.model-credit-stack {
+  display: grid;
+  gap: 2px;
+  white-space: nowrap;
+}
 
 .qreset { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 .qreset p { margin: 6px 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; }

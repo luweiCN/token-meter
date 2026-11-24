@@ -24,11 +24,13 @@ final class AgentBinaryDetectorTests: XCTestCase {
         try installFakeBinary("claude", versionOutput: "2.1.207 (Claude Code)")
         try installFakeBinary("omp", versionOutput: "omp/16.4.8")
         try installFakeBinary("grok", versionOutput: "grok 1.0.5")
+        try installFakeBinary("qwen", versionOutput: "0.24.0")
+        try installFakeBinary("qoderclicn-1.1.58", versionOutput: "1.1.58")
 
         let statuses = AgentBinaryDetector.detect(in: [bin.path])
         let byKind = Dictionary(uniqueKeysWithValues: statuses.map { ($0.kind, $0) })
 
-        XCTAssertEqual(statuses.map(\.kind), ["claudeCode", "codex", "omp", "opencode", "dsh", "grok"])
+        XCTAssertEqual(statuses.map(\.kind), ["claudeCode", "codex", "omp", "opencode", "dsh", "grok", "qwenCode", "qoder", "antigravityCLI", "geminiCLI"])
         XCTAssertEqual(byKind["claudeCode"]?.found, true)
         XCTAssertEqual(byKind["claudeCode"]?.path, bin.appendingPathComponent("claude").path)
         XCTAssertEqual(byKind["claudeCode"]?.version, "2.1.207 (Claude Code)")
@@ -38,11 +40,14 @@ final class AgentBinaryDetectorTests: XCTestCase {
         XCTAssertEqual(byKind["opencode"]?.found, false)
         XCTAssertEqual(byKind["grok"]?.found, true)
         XCTAssertEqual(byKind["grok"]?.version, "grok 1.0.5")
+        XCTAssertEqual(byKind["qwenCode"]?.version, "0.24.0")
+        XCTAssertEqual(byKind["qoder"]?.path, bin.appendingPathComponent("qoderclicn-1.1.58").path)
     }
 
-    func testSearchDirectoriesIncludeGrokBin() {
+    func testSearchDirectoriesIncludeAgentSpecificBins() {
         let dirs = AgentBinaryDetector.searchDirectories(homeDirectory: "/Users/me")
         XCTAssertTrue(dirs.contains("/Users/me/.grok/bin"))
+        XCTAssertTrue(dirs.contains("/Users/me/.qoder-cn/bin/qoderclicn"))
     }
 
     func testVersionFailureStillCountsAsFound() throws {

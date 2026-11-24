@@ -36,8 +36,8 @@ function trendSeries(granularity: 'day' | 'week' | 'month') {
     to: '2026-07-10',
     buckets: ['2026-07-09', '2026-07-10'],
     rows: [
-      { bucket: '2026-07-09', providerId: 'claude-code', tokens: 1000, costUsdMicros: 5000, sessions: 2 },
-      { bucket: '2026-07-10', providerId: 'codex', tokens: 400, costUsdMicros: 2000, sessions: 1 }
+      { bucket: '2026-07-09', providerId: 'claude-code', tokens: 1000, tokenUnreportedEvents: 0, costUsdMicros: 5000, sessions: 2 },
+      { bucket: '2026-07-10', providerId: 'codex', tokens: 400, tokenUnreportedEvents: 0, costUsdMicros: 2000, sessions: 1 }
     ]
   };
 }
@@ -47,17 +47,21 @@ const readyPayload: OverviewPayload = {
   today: '2026-07-10',
   kpis: {
     todayTokens: 12345,
+    todayTokenUnreportedEvents: 0,
     yesterdayTokens: 6789,
     todaySessions: 3,
     todayCostUsdMicros: 1_500_000,
     todayCostUnknownEvents: 4,
     monthTokens: 8_200_000,
+    monthTokenUnreportedEvents: 0,
     monthCostUsdMicros: 9_000_000,
     monthCostUnknownEvents: 4,
     weekTokens: 2_100_000,
+    weekTokenUnreportedEvents: 0,
     weekCostUsdMicros: 2_400_000,
     weekCostUnknownEvents: 0,
     totalTokens: 28_400_000,
+    totalTokenUnreportedEvents: 0,
     totalCostUsdMicros: 31_247_000_000,
     totalCostUnknownEvents: 4,
     totalEvents: 217_483,
@@ -70,13 +74,14 @@ const readyPayload: OverviewPayload = {
   ],
   trendRange: { from: '2026-06-11', to: '2026-07-10', granularity: 'day' },
   agentTrend: { day: trendSeries('day'), week: trendSeries('week'), month: trendSeries('month') },
-  heatmap: [{ date: '2026-07-10', tokens: 220, costUsdMicros: 100, sessions: 1, events: 2 }],
+  heatmap: [{ date: '2026-07-10', tokens: 220, tokenUnreportedEvents: 0, costUsdMicros: 100, sessions: 1, events: 2 }],
   heatmapLastDay: '2026-07-10',
   heatmapDays: 371,
   modelRanking: [
-    { model: 'claude-fable-5', tokens: 1000, costUsdMicros: 500_000, costUnknownEvents: 0, providerId: 'claude-code' },
-    { model: 'unpriced', tokens: 50, costUsdMicros: 0, costUnknownEvents: 4, providerId: null }
+    { model: 'claude-fable-5', tokens: 1000, tokenUnreportedEvents: 0, costUsdMicros: 500_000, costUnknownEvents: 0, providerId: 'claude-code' },
+    { model: 'unpriced', tokens: 50, tokenUnreportedEvents: 0, costUsdMicros: 0, costUnknownEvents: 4, providerId: null }
   ],
+  providerCredits: [],
   sessionRail: [
     {
       sessionId: 1,
@@ -86,9 +91,12 @@ const readyPayload: OverviewPayload = {
       projectName: 'token-meter',
       primaryModel: 'claude-fable-5',
       tokensTotal: 110,
+      tokenUnreportedEvents: 0,
       firstEventEpochMs: 1,
       costUsdMicros: 1000,
       costUnknownEvents: 0,
+      creditsPicos: '0',
+      creditEvents: 0,
       msSinceLastEvent: 30_000,
       isLive: true,
       isBlocked: false,
@@ -226,6 +234,53 @@ describe('Overview (ready)', () => {
     await waitFor(() => { expect(screen.getAllByText(/4 条事件价格未知/).length).toBeGreaterThanOrEqual(1); });
     expect(screen.getAllByText(/4 条未知/).length).toBeGreaterThanOrEqual(2);   // 当月 + 今日
     expect(screen.getByText(/†/)).toBeTruthy();                                  // 总计卡
+  });
+
+  it('keeps provider Credits separate and marks events whose Token fields were not reported', async () => {
+    api.overview.query.mockResolvedValue({
+      ...readyPayload,
+      providerCredits: [
+        {
+          providerId: 'qoder-cli',
+          todayPicos: '1250000000000',
+          weekPicos: '2500000000000',
+          monthPicos: '3000000000000',
+          totalPicos: '9007199254740993000',
+          creditEvents: 2
+        },
+        {
+          providerId: 'workbuddy',
+          todayPicos: '500000000000',
+          weekPicos: '750000000000',
+          monthPicos: '1000000000000',
+          totalPicos: '2000000000000',
+          creditEvents: 3
+        }
+      ],
+      sessionRail: [{
+        ...readyPayload.sessionRail[0],
+        providerId: 'qoder-cli',
+        tokensTotal: 0,
+        tokenUnreportedEvents: 1,
+        creditsPicos: '1250000000000',
+        creditEvents: 1
+      }]
+    });
+
+    render(<Overview />);
+
+    const credits = await screen.findByLabelText('供应商 Credits');
+    expect(within(credits).getByText('Qoder CLI')).toBeTruthy();
+    expect(within(credits).getByText('WorkBuddy')).toBeTruthy();
+    // Int64 先以文本跨 IPC，再用 BigInt 格式化；不能在 2^53 处丢精度。
+    expect(within(credits).getByText('9,007,199.25 Credits')).toBeTruthy();
+    expect(within(credits).getByText('0.5 Credits')).toBeTruthy();
+    expect(within(credits).getByText(/不跨供应商合计/)).toBeTruthy();
+
+    const card = screen.getByText('token-meter').closest('.lcard');
+    expect(card).not.toBeNull();
+    expect(within(card as HTMLElement).getByText('—')).toBeTruthy();
+    expect(card?.querySelector('[title*="未提供 Token"]')).toBeNull();
   });
 
   it('shows one hover card with the day totals plus its model breakdown', async () => {

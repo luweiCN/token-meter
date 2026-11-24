@@ -4,23 +4,19 @@ import type { SessionItem, SessionProjectOption, SessionsFilter, SessionTrendRes
 import { StackedTrendChart, type TrendSeriesDef } from '../charts/StackedTrendChart.js';
 import { DateRangePicker, MultiSelect, Pager, type DateRange } from '../components/ui.js';
 import {
+  addCreditPicos,
   formatCount,
+  formatCredits,
   formatDurationShort,
-  formatTokens,
+  formatReportedTokens,
   formatUnknownCostNote,
   formatUsdMicros
 } from '../format.js';
+import { OTHER_PROVIDER, PROVIDERS, providerLabel } from '../providers.js';
 
 /// agent 系列（与总览趋势图同色序 s1-s4；名单外 provider 归「其他」）。
-const TREND_PROVIDERS: TrendSeriesDef[] = [
-  { id: 'claude-code', label: 'Claude Code', color: 'var(--s1)' },
-  { id: 'codex', label: 'Codex CLI', color: 'var(--s2)' },
-  { id: 'omp', label: 'OMP', color: 'var(--s3)' },
-  { id: 'opencode', label: 'OpenCode', color: 'var(--s4)' },
-  { id: 'reasonix', label: 'Reasonix', color: 'var(--s5)' },
-  { id: 'grok', label: 'Grok Build', color: 'var(--s6)' }
-];
-const TREND_OTHER: TrendSeriesDef = { id: '__other', label: '其他', color: 'var(--muted)' };
+const TREND_PROVIDERS: TrendSeriesDef[] = PROVIDERS.map(({ id, label, color }) => ({ id, label, color }));
+const TREND_OTHER: TrendSeriesDef = OTHER_PROVIDER;
 
 /// 会话活跃趋势直方图：每天活跃的会话个数（按 agent 堆叠，跟随列表筛选）。
 /// 会话页的主指标是「会话」不是 token（用户裁定 2026-07-17）；token/花费
@@ -74,17 +70,23 @@ function SessionTrendCard({ trend }: { trend: SessionTrendResult | null }) {
 /// （与菜单栏「今日」同源可对账）；活跃天数 = 趋势里有数据的天数。
 function SessionStatCards({ total, trend }: { total: number; trend: SessionTrendResult | null }) {
   const sums = useMemo(() => {
-    if (trend === null) return { tokens: 0, cost: 0, activeDays: 0 };
+    if (trend === null) return { tokens: 0, tokenUnreported: 0, cost: 0, activeDays: 0, credits: [] as Array<[string, string]> };
     let tokens = 0;
+    let tokenUnreported = 0;
     let cost = 0;
     const days = new Set<string>();
+    const credits = new Map<string, string>();
     for (const row of trend.rows) {
       tokens += row.tokens;
+      tokenUnreported += row.tokenUnreportedEvents ?? 0;
       // dev 工作流里 renderer 热更快于 bundle 主进程，旧 trend 行无 cost 字段。
       cost += row.costUsdMicros ?? 0;
+      if ((row.creditEvents ?? 0) > 0) {
+        credits.set(row.providerId, addCreditPicos(credits.get(row.providerId) ?? '0', row.creditsPicos ?? '0'));
+      }
       days.add(row.bucket);
     }
-    return { tokens, cost, activeDays: days.size };
+    return { tokens, tokenUnreported, cost, activeDays: days.size, credits: [...credits.entries()] };
   }, [trend]);
 
   return (
@@ -96,7 +98,9 @@ function SessionStatCards({ total, trend }: { total: number; trend: SessionTrend
       </div>
       <div className="stat">
         <div className="lb">Token</div>
-        <div className="v num">{formatTokens(sums.tokens)}</div>
+        <div className="v num">
+          {formatReportedTokens(sums.tokens, sums.tokenUnreported)}
+        </div>
         <div className="sb">按事件实际发生日统计</div>
       </div>
       <div className="stat">
@@ -107,7 +111,11 @@ function SessionStatCards({ total, trend }: { total: number; trend: SessionTrend
       <div className="stat">
         <div className="lb">活跃天数</div>
         <div className="v num">{formatCount(sums.activeDays)}</div>
-        <div className="sb">范围内有用量的天数</div>
+        <div className="sb">
+          {sums.credits.length > 0
+            ? sums.credits.map(([id, picos]) => `${providerLabel(id)} ${formatCredits(picos)}`).join(' · ')
+            : '范围内有用量的天数'}
+        </div>
       </div>
     </div>
   );
@@ -274,6 +282,7 @@ function SessionList({ onOpen }: { onOpen: (session: SessionItem) => void }) {
                 <th>会话</th>
                 <th>模型</th>
                 <th className={sortClass('tokens')} onClick={() => onSort('tokens')}>Token</th>
+                <th className="r">Credits</th>
                 <th className={sortClass('cost')} onClick={() => onSort('cost')}>成本</th>
                 <th className={sortClass('start')} onClick={() => onSort('start')}>开始</th>
                 <th className="r hide-sm">时长</th>
@@ -289,10 +298,13 @@ function SessionList({ onOpen }: { onOpen: (session: SessionItem) => void }) {
                     <td><span className="mname">{s.modelName ?? '—'}</span></td>
                     <td className="r num">
                       <span className="rowbar">
-                        <span>{formatTokens(s.tokensTotal)}</span>
+                        <span>
+                          {formatReportedTokens(s.tokensTotal, s.tokenUnreportedEvents)}
+                        </span>
                         <i style={{ width: `${maxTokens > 0 ? (s.tokensTotal / maxTokens) * 100 : 0}%` }} />
                       </span>
                     </td>
+                    <td className="r num">{s.creditEvents > 0 ? formatCredits(s.creditsPicos) : '—'}</td>
                     <td className="r num" title={unknownNote ? `部分事件价格未知（${unknownNote}）` : undefined}>
                       {formatUsdMicros(s.costUsdMicros)}{unknownNote ? '†' : ''}
                     </td>
@@ -305,7 +317,7 @@ function SessionList({ onOpen }: { onOpen: (session: SessionItem) => void }) {
                 );
               })}
               {items.length === 0 && !loadError ? (
-                <tr><td colSpan={7} className="muted sess-empty">没有匹配的会话。</td></tr>
+                <tr><td colSpan={8} className="muted sess-empty">没有匹配的会话。</td></tr>
               ) : null}
             </tbody>
           </table>
@@ -359,13 +371,18 @@ export function SessionDetail({ session, onBack }: { session: SessionItem; onBac
       <div className="stats">
         <div className="stat">
           <div className="lb">Token</div>
-          <div className="v num">{formatTokens(session.tokensTotal)}</div>
+          <div className="v num">
+            {formatReportedTokens(session.tokensTotal, session.tokenUnreportedEvents)}
+          </div>
           <div className="sb">{session.modelName ?? '—'}</div>
         </div>
         <div className="stat" data-kind={unknownNote ? 'unknown' : undefined}>
           <div className="lb">成本</div>
           <div className="v num">{formatUsdMicros(session.costUsdMicros)}</div>
-          <div className="sb">{unknownNote ? `部分价格未知（${unknownNote}）` : '含子代理合计'}</div>
+          <div className="sb">
+            {unknownNote ? `部分价格未知（${unknownNote}）` : '含子代理合计'}
+            {session.creditEvents > 0 ? ` · ${formatCredits(session.creditsPicos)}` : ''}
+          </div>
         </div>
         <div className="stat">
           <div className="lb">事件</div>
@@ -424,7 +441,7 @@ export function SessionDetail({ session, onBack }: { session: SessionItem; onBac
               <thead>
                 <tr>
                   <th>名称</th><th>模型</th>
-                  <th className="r">Token</th><th className="r">成本</th>
+                  <th className="r">Token</th><th className="r">Credits</th><th className="r">成本</th>
                   <th className="r">开始</th><th className="r">时长</th>
                 </tr>
               </thead>
@@ -433,7 +450,10 @@ export function SessionDetail({ session, onBack }: { session: SessionItem; onBac
                   <tr key={i}>
                     <td><span className="mname" title={r.label}>{r.label}</span></td>
                     <td><span className="t2">{r.model ?? '—'}</span></td>
-                    <td className="r num">{formatTokens(r.tokens)}</td>
+                    <td className="r num">
+                      {formatReportedTokens(r.tokens, r.tokenUnreportedEvents)}
+                    </td>
+                    <td className="r num">{r.creditEvents > 0 ? formatCredits(r.creditsPicos) : '—'}</td>
                     <td className="r num">{formatUsdMicros(r.costUsdMicros)}</td>
                     <td className="r num">{formatShortDateTime(r.lastEventMs - r.durationMs)}</td>
                     <td className="r num">{formatDurationShort(r.durationMs)}</td>

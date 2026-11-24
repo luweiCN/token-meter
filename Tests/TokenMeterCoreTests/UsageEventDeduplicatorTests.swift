@@ -9,6 +9,8 @@ final class UsageEventDeduplicatorTests: XCTestCase {
         requestId: String?,
         input: Int64 = 1,
         output: Int64 = 0,
+        tokensReported: Bool = true,
+        creditUsage: ProviderCreditUsage? = nil,
         dedupeScopeKey: String? = nil,
         isSidechain: Bool = false
     ) -> UsageEvent {
@@ -22,6 +24,8 @@ final class UsageEventDeduplicatorTests: XCTestCase {
             dedupeScopeKey: dedupeScopeKey,
             inputTokens: input,
             outputTokens: output,
+            tokensReported: tokensReported,
+            creditUsage: creditUsage,
             sourceOffset: Int64(seq),
             isSidechain: isSidechain
         )
@@ -51,6 +55,42 @@ final class UsageEventDeduplicatorTests: XCTestCase {
         XCTAssertEqual(result[0].outputTokens, 559)
     }
 
+    func testExactKeyDedupeKeepsTokenWinnerAndMergesMissingCredits() {
+        let tokenFrame = event(
+            seq: 2, at: 200, messageId: "m1", requestId: "r1", input: 10
+        )
+        let creditFrame = event(
+            seq: 1, at: 100, messageId: "m1", requestId: "r1", input: 0,
+            tokensReported: false,
+            creditUsage: ProviderCreditUsage(actualPicos: 400_000_000_000)
+        )
+
+        let result = UsageEventDeduplicator.deduplicate([creditFrame, tokenFrame])
+
+        XCTAssertEqual(result.count, 1)
+        XCTAssertTrue(result[0].tokensReported)
+        XCTAssertEqual(result[0].inputTokens, 10)
+        XCTAssertEqual(result[0].creditUsage?.actualPicos, 400_000_000_000)
+    }
+
+    func testReportedZeroTokensBeatUnreportedCreditFrame() {
+        let reportedZero = event(
+            seq: 2, at: 200, messageId: "m1", requestId: "r1", input: 0,
+            tokensReported: true
+        )
+        let creditFrame = event(
+            seq: 1, at: 100, messageId: "m1", requestId: "r1", input: 0,
+            tokensReported: false,
+            creditUsage: ProviderCreditUsage(actualPicos: 100_000_000_000)
+        )
+
+        let result = UsageEventDeduplicator.deduplicate([creditFrame, reportedZero])
+
+        XCTAssertEqual(result.count, 1)
+        XCTAssertTrue(result[0].tokensReported)
+        XCTAssertEqual(result[0].creditUsage?.actualPicos, 100_000_000_000)
+    }
+
     func testExactCopiesCollapseToOneDeterministically() {
         // resume/fork 的逐字节副本：同 dedupeKey、所有 token 字段与时间都相等，只 eventSeq 不同。
         // 总量并列 → 时间并列 → 由 eventSeq 决出确定胜者（最小），结果恒为一条、且可重现。
@@ -66,7 +106,8 @@ final class UsageEventDeduplicatorTests: XCTestCase {
     }
 
     func testTotalOrderIsLoadBearingAtEveryLevel() {
-        // 规则一的三级全序都必须在场，缺一级就会挑错 winner。所有事件同 dedupeKey，故都在
+        // 规则一的数值/时间/seq 三个决胜级都必须在场（Token 可用性由独立测试覆盖）。
+        // 所有事件同 dedupeKey，故都在
         // 规则一（byExactKey）里碰撞。输入刻意乱序，把并列的高 seq 帧排在最小 seq 之前，
         // 好让「删掉 eventSeq 级」这类退化在单次运行里就确定地失败。
         //

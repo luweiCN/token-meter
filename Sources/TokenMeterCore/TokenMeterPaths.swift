@@ -3,11 +3,16 @@ import Foundation
 public struct DefaultScanRoot: Equatable {
     public let kind: SourceKind
     public let rootURL: URL
+    /// 与主扫描根共同决定解析结果、但不适合作为独立根扫描的第二来源。
+    /// Qwen Code 用它保存 QWEN_HOME（主根是 QWEN_RUNTIME_DIR），从而把
+    /// runtime 下的请求账本与 home 下的 usage_record.jsonl 合成一次快照。
+    public let auxiliaryURL: URL?
     public let displayName: String
 
-    public init(kind: SourceKind, rootURL: URL, displayName: String) {
+    public init(kind: SourceKind, rootURL: URL, auxiliaryURL: URL? = nil, displayName: String) {
         self.kind = kind
         self.rootURL = rootURL
+        self.auxiliaryURL = auxiliaryURL
         self.displayName = displayName
     }
 
@@ -62,6 +67,19 @@ public enum TokenMeterPaths {
             codexDirectory = homeDirectory.appendingPathComponent(".codex", isDirectory: true)
         }
 
+        let qwenHome = configuredDirectory(
+            environment["QWEN_HOME"],
+            defaultURL: homeDirectory.appendingPathComponent(".qwen", isDirectory: true)
+        )
+        let qwenRuntime = configuredDirectory(
+            environment["QWEN_RUNTIME_DIR"],
+            defaultURL: qwenHome
+        )
+
+        let geminiDirectory = configuredDirectory(
+            environment["GEMINI_CLI_HOME"], defaultURL: homeDirectory
+        ).appendingPathComponent(".gemini", isDirectory: true)
+
         return [
             DefaultScanRoot(
                 kind: .claudeJSONL,
@@ -109,12 +127,61 @@ public enum TokenMeterPaths {
                 kind: .grokJSONL,
                 rootURL: GrokPaths.sessionsRoot(homeDirectory: homeDirectory, environment: environment),
                 displayName: "Grok Build"
+            ),
+            DefaultScanRoot(
+                kind: .qwenJSONL,
+                rootURL: qwenRuntime,
+                auxiliaryURL: qwenHome,
+                displayName: "千问 Code"
+            ),
+            DefaultScanRoot(
+                kind: .qoderJSONL,
+                rootURL: homeDirectory.appendingPathComponent(".qoder-cn/projects", isDirectory: true),
+                displayName: "Qoder"
+            ),
+            DefaultScanRoot(
+                kind: .workbuddyJSONL,
+                rootURL: homeDirectory.appendingPathComponent(".workbuddy/projects", isDirectory: true),
+                displayName: "WorkBuddy"
+            ),
+            DefaultScanRoot(
+                kind: .antigravitySQLite,
+                rootURL: geminiDirectory.appendingPathComponent("antigravity-cli/conversations", isDirectory: true),
+                displayName: AntigravityCLIUsage.displayName
+            ),
+            DefaultScanRoot(
+                kind: .geminiChat,
+                rootURL: geminiDirectory.appendingPathComponent("tmp", isDirectory: true),
+                displayName: "Gemini CLI"
             )
         ]
     }
 
+    /// Qwen 官方允许绝对路径、相对当前工作目录的路径与 `~`。统一在播种根时
+    /// 解析为绝对标准路径，避免同一目录因不同字符串产生两个 scan root。
+    private static func configuredDirectory(_ rawValue: String?, defaultURL: URL) -> URL {
+        guard let rawValue = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty else { return defaultURL.standardizedFileURL }
+        let expanded = (rawValue as NSString).expandingTildeInPath
+        return URL(fileURLWithPath: expanded, isDirectory: true).standardizedFileURL
+    }
+
     public static func socketURL(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
         baseDirectory(homeDirectory: homeDirectory).appendingPathComponent("tokenmeter.sock")
+    }
+
+    public static func qoderDesktopDatabaseURL(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL {
+        homeDirectory
+            .appendingPathComponent("Library/Application Support/com.qodercn.app.stable", isDirectory: true)
+            .appendingPathComponent("main.sqlite")
+    }
+
+    public static func workBuddyDatabaseURL(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL {
+        homeDirectory.appendingPathComponent(".workbuddy/workbuddy.db")
     }
 }
 

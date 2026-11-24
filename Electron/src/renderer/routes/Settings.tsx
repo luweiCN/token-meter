@@ -20,18 +20,25 @@ const AGENT_KINDS: Array<{ id: string; label: string; how: string }> = [
   { id: 'opencode', label: 'OpenCode', how: '暂无集成 · 仅统计开关' },
   { id: 'reasonix', label: 'Reasonix', how: '自动统计 ~/.reasonix/stats 用量流水' },
   { id: 'dsh', label: 'DeepSeek Harness', how: '自动统计 ~/.dsh 会话流水' },
-  { id: 'grok', label: 'Grok Build', how: '自动统计 ~/.grok 会话流水' }
+  { id: 'grok', label: 'Grok Build', how: '自动统计 ~/.grok 会话流水' },
+  { id: 'qwenCode', label: '千问 Code', how: '自动统计 ~/.qwen 会话与用量账本' },
+  { id: 'qoder', label: 'Qoder', how: '自动统计 ~/.qoder-cn/projects，区分 CLI 与桌面端' },
+  { id: 'workbuddy', label: 'WorkBuddy', how: '自动统计 ~/.workbuddy/projects 与本地 Credits' },
+  { id: 'antigravityCLI', label: 'Antigravity CLI', how: '读取 agy 本地会话的模型用量' },
+  { id: 'geminiCLI', label: 'Gemini CLI', how: '读取 Gemini CLI 保存的会话用量' }
 ];
 
 /// 供应商额度接入（OpenDesign 稿 B 区）。keyed = 支持应用内填 API Key（存钥匙串，
 /// 优先于环境变量）；login = 走 WebView 登录流程（OpenCode Go）。
-const QUOTA_PROVIDERS: Array<{ id: string; name: string; pill: string; how: string; src: string; keyed?: boolean; login?: boolean }> = [
+const QUOTA_PROVIDERS: Array<{ id: string; name: string; shortName?: string; pill: string; how: string; src: string; keyed?: boolean; login?: boolean }> = [
   { id: 'codex', name: 'Codex', pill: '自动接入', how: '自动读取本机登录凭证', src: '~/.codex/auth.json' },
   { id: 'claude-code', name: 'Claude Code', pill: '自动接入', how: '自动读取本机登录凭证', src: '钥匙串 · Claude Code-credentials' },
+  { id: 'antigravity', name: 'Antigravity', shortName: 'AGY', pill: 'CLI 接入', how: '自动查询已登录账号的 Gemini 和 Claude/GPT 额度', src: 'Antigravity CLI · /usage' },
   { id: 'zhipu', name: '智谱 GLM', pill: '环境变量', how: 'API Key · 应用内填写或读取环境变量', src: 'ZHIPU_API_KEY', keyed: true },
   { id: 'opencode-go', name: 'OpenCode Go', pill: '自动接入', how: 'WebView 登录 opencode.ai · 登录态一年有效', src: '~/.config/opencode/opencode-quota/opencode-go.json', login: true },
   { id: 'command-code', name: 'Command Code', pill: 'API Key', how: 'Studio API Key · 不依赖 Command Code CLI', src: 'COMMAND_CODE_API_KEY · ~/.commandcode/auth.json', keyed: true },
-  { id: 'grok', name: 'Grok Build', pill: '自动接入', how: '自动读取本机登录凭证', src: '~/.grok/auth.json' }
+  { id: 'grok', name: 'Grok Build', pill: '自动接入', how: '自动读取本机登录凭证', src: '~/.grok/auth.json' },
+  { id: 'qoder', name: 'Qoder', pill: '自动接入', how: '通过本机 Qoder CLI 读取 Credits 额度', src: '~/.qoder-cn/bin/qoderclicn' }
 ];
 
 const SCAN_INTERVALS: Array<{ seconds: number; label: string }> = [
@@ -197,7 +204,7 @@ export function Settings() {
         <div className="chead">
           <div>
             <h2>Coding Agent 集成</h2>
-            <div className="desc">开启即安装上报 hooks 并计入统计</div>
+            <div className="desc">开启后读取该 Agent 的本地会话数据并计入统计</div>
           </div>
           <span className={savedTick === 'agents' ? 'savetick show' : 'savetick'}>已保存 ✓</span>
           <button className="btn" type="button" disabled={detecting} onClick={() => void runDetect()}>
@@ -256,12 +263,13 @@ export function Settings() {
         <div>
           {QUOTA_PROVIDERS.map((provider) => {
             const override = settings.providerOverrides.find((o) => o.providerId === provider.id);
-            const enabled = override?.enabled ?? true;
+            const enabled = override?.enabled ?? (provider.id !== 'antigravity');
+            const name = override?.displayName;
             return (
               <QuotaProviderRow
                 key={provider.id}
                 provider={provider}
-                savedName={override?.displayName ?? provider.name}
+                savedName={name && name !== provider.name ? name : (provider.shortName ?? provider.name)}
                 enabled={enabled}
                 onSave={(name) => {
                   apply(settingsStore.applyPatch({ providerDisplayNames: { [provider.id]: name } }), 'quota');
