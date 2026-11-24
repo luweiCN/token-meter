@@ -139,11 +139,15 @@ extension AntigravityUsageProvider {
             try check(posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, tty, O_RDWR, 0))
             try check(posix_spawn_file_actions_adddup2(&actions, STDIN_FILENO, STDOUT_FILENO))
             try check(posix_spawn_file_actions_adddup2(&actions, STDIN_FILENO, STDERR_FILENO))
+            #if compiler(>=6.2)
             if #available(macOS 26.0, *) {
                 try check(posix_spawn_file_actions_addchdir(&actions, home.path))
             } else {
                 try check(posix_spawn_file_actions_addchdir_np(&actions, home.path))
             }
+            #else
+            try check(posix_spawn_file_actions_addchdir_np(&actions, home.path))
+            #endif
             var argv = arguments.map { strdup($0) } + [nil]
             defer { argv.forEach { free($0) } }
             guard argv.dropLast().allSatisfy({ $0 != nil }) else { throw POSIXError(.ENOMEM) }
