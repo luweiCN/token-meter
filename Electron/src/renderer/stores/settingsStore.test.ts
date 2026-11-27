@@ -51,6 +51,7 @@ const codexSnapshot: SettingsSnapshot = {
     usage: 'tok',
     windowOrder: 'longFirst',
     showPeakBadge: true,
+    showPeakSection: true,
     peakBadgeStyle: 'dotWord'
   },
   enabledAgentKinds: ['claudeCode', 'codex'],

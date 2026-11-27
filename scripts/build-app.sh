@@ -25,7 +25,10 @@ npm run build --prefix "$ROOT_DIR/Electron"
 rm -rf "$BUILD_APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$SWIFT_BIN_DIR/TokenMeterApp" "$MACOS_DIR/TokenMeterApp"
+cp "$SWIFT_BIN_DIR/TokenMeterIndex" "$MACOS_DIR/TokenMeterIndex"
 cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
+CLI_VERSION="${TOKEN_METER_CLI_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$CONTENTS_DIR/Info.plist")}"
+TOKEN_METER_CLI_VERSION="$CLI_VERSION" "$ROOT_DIR/scripts/build-cli.sh" "$MACOS_DIR/token-meter"
 # hooks 上报脚本：Claude/Codex 的 hook 条目直接引用 bundle 内路径（Muxy 同款做法），
 # OMP 的 TS 扩展由注入器从这里拷到 ~/.omp/agent/extensions/。
 cp -R "$ROOT_DIR/Resources/hooks" "$RESOURCES_DIR/hooks"

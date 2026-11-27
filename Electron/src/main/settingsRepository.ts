@@ -20,6 +20,7 @@ export interface MenubarAppearance {
   usage: MenubarUsageTail;
   windowOrder: MenubarWindowOrder;
   showPeakBadge: boolean;
+  showPeakSection: boolean;
   peakBadgeStyle: PeakBadgeStyle;
   pinnedBalanceProviderId?: string;
 }
@@ -70,6 +71,7 @@ export interface SettingsPatch {
   menubarUsage?: MenubarUsageTail;
   menubarWindowOrder?: MenubarWindowOrder;
   menubarShowPeakBadge?: boolean;
+  menubarShowPeakSection?: boolean;
   menubarPeakBadgeStyle?: PeakBadgeStyle;
   displayCurrency?: DisplayCurrency;
   /// providerId → 菜单栏显示（写 show_in_menu_bar；独立于 enabled 的数据启停）。
@@ -171,6 +173,7 @@ export class SettingsRepository {
         usage: this.enumSetting('menubar.usage', MENUBAR_USAGE_TAILS, 'tok'),
         windowOrder: this.enumSetting('menubar.windowOrder', MENUBAR_WINDOW_ORDERS, 'longFirst'),
         showPeakBadge: (this.settingInt('menubar.showPeakBadge') ?? 1) !== 0,
+        showPeakSection: (this.settingInt('menubar.showPeakSection') ?? 1) !== 0,
         peakBadgeStyle: this.enumSetting('menubar.peakBadgeStyle', PEAK_BADGE_STYLES, 'dotWord'),
         pinnedBalanceProviderId: this.settingString('menubar.pinnedBalanceProviderId') || undefined
       },
@@ -269,6 +272,9 @@ export class SettingsRepository {
       }
       if (validatedPatch.menubarShowPeakBadge !== undefined) {
         this.setSetting('menubar.showPeakBadge', String(validatedPatch.menubarShowPeakBadge ? 1 : 0), 'int', nextVersion);
+      }
+      if (validatedPatch.menubarShowPeakSection !== undefined) {
+        this.setSetting('menubar.showPeakSection', String(validatedPatch.menubarShowPeakSection ? 1 : 0), 'int', nextVersion);
       }
       if (validatedPatch.menubarPeakBadgeStyle !== undefined) {
         this.setSetting('menubar.peakBadgeStyle', JSON.stringify(validatedPatch.menubarPeakBadgeStyle), 'string', nextVersion);
@@ -551,6 +557,12 @@ function validateSettingsPatch(patch: unknown): SettingsPatch {
     }
     validated.menubarShowPeakBadge = candidate.menubarShowPeakBadge;
   }
+  if ('menubarShowPeakSection' in candidate) {
+    if (typeof candidate.menubarShowPeakSection !== 'boolean') {
+      throw new Error('menubarShowPeakSection must be a boolean');
+    }
+    validated.menubarShowPeakSection = candidate.menubarShowPeakSection;
+  }
   if ('menubarPeakBadgeStyle' in candidate) {
     if (
       typeof candidate.menubarPeakBadgeStyle !== 'string' ||
@@ -640,6 +652,7 @@ function hasPatchChanges(patch: SettingsPatch) {
     patch.menubarUsage !== undefined ||
     patch.menubarWindowOrder !== undefined ||
     patch.menubarShowPeakBadge !== undefined ||
+    patch.menubarShowPeakSection !== undefined ||
     patch.menubarPeakBadgeStyle !== undefined ||
     patch.displayCurrency !== undefined ||
     patch.providerMenubarVisible !== undefined ||

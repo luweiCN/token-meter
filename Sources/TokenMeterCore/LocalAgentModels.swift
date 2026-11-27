@@ -68,3 +68,34 @@ public struct SourceFileFingerprint: Codable, Equatable {
         self.tailHash = tailHash
     }
 }
+
+package extension LocalAgentKind {
+    var sourceKind: SourceKind {
+        switch self {
+        case .claudeCode:
+            .claudeJSONL
+        case .codex:
+            .codexJSONL
+        case .opencode:
+            .opencodeSQLite
+        case .omp:
+            .ompJSONL
+        case .reasonix:
+            .reasonixStats
+        case .dsh:
+            .dshJSONL
+        case .grok:
+            .grokJSONL
+        case .qwenCode:
+            .qwenJSONL
+        case .qoder:
+            .qoderJSONL
+        case .workbuddy:
+            .workbuddyJSONL
+        case .antigravityCLI:
+            .antigravitySQLite
+        case .geminiCLI:
+            .geminiChat
+        }
+    }
+}

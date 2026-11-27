@@ -4,6 +4,83 @@ import XCTest
 
 @MainActor
 final class QuotaDisplayModelTests: XCTestCase {
+    func testSuccessfulAbsoluteUsageAppearsAsPlainText() {
+        let total = UsageMetric(id: "total", label: "累计", kind: .tokens, usedPercent: nil,
+                                remainingPercent: nil, resetText: nil, status: .ok,
+                                detail: "2 sessions · 1517 tokens", usedAmount: "1517", unit: "tokens")
+        let snapshot = ProviderUsageSnapshot(providerId: "local-sqlite", displayName: "OpenCode",
+            status: .ok, fetchedAt: Date(), summary: "  2 sessions · 1.5K tokens  ", message: nil,
+            groups: [.init(id: "local-sqlite", title: "OpenCode", subtitle: nil, items: [total])])
+        let model = QuotaDisplayModel(snapshot: snapshot)
+        XCTAssertEqual(model.plainSummary, "2 sessions · 1.5K tokens")
+        XCTAssertEqual(model.summaryText, model.plainSummary)
+        XCTAssertTrue(model.plainSummaryHelp?.contains("1517 tokens") == true)
+        XCTAssertTrue(model.rings.isEmpty && model.bars.isEmpty)
+        XCTAssertFalse(model.hasDetails)
+    }
+
+    func testAmountOnlyWindowsKeepGroupLabelsUnitsAndUnabridgedNumbersBesidePercentages() throws {
+        let raw = "9007199254740993.1234567890123"
+        let withUnit = try JSONDecoder().decode(UsageMetric.self, from: Data("""
+            {"id":"bucket","label":"WTU","kind":"quota","status":"ok","remainingAmount":"\(raw)","unit":"WTU","detail":"剩余 \(raw) WTU"}
+            """.utf8))
+        let withoutUnit = UsageMetric(id: "bucket", label: "次数", kind: .quota, usedPercent: nil, remainingPercent: nil,
+            resetText: nil, status: .ok, detail: "剩余 0", remainingAmount: "0")
+        let groups: [UsageGroup] = [
+            .init(id: "gemini", title: "Gemini", subtitle: nil, items: [withUnit]),
+            .init(id: "3p", title: "Claude/GPT", subtitle: nil, items: [withoutUnit])
+        ]
+        func model(_ withWindow: Bool) -> QuotaDisplayModel {
+            let percent = UsageGroup(id: "other", title: "其他", subtitle: nil, items: [metric(id: "5h", used: 25, windowMinutes: 300)])
+            return QuotaDisplayModel(snapshot: .init(providerId: "antigravity", displayName: "AGY", status: .ok,
+                fetchedAt: Date(), summary: "剩余 \(raw) WTU", message: nil, groups: withWindow ? groups + [percent] : groups))
+        }
+        for withWindow in [false, true] {
+            let card = model(withWindow)
+            let details = card.creditDetails
+            XCTAssertEqual(details.map(\.label), ["Gemini WTU", "Claude/GPT 次数"])
+            XCTAssertEqual(Set(details.map(\.id)).count, 2)
+            XCTAssertEqual(details[0].exactValue, raw + " WTU")
+            XCTAssertTrue(details[0].help.contains(raw))
+            XCTAssertLessThan(details[0].value.count, details[0].exactValue.count)
+            XCTAssertEqual(details[1].value, "0")
+            XCTAssertTrue(card.hasDetails)
+            XCTAssertTrue(card.rings.isEmpty)
+            XCTAssertEqual(card.bars.count, withWindow ? 1 : 0)
+            XCTAssertEqual(card.plainSummary, withWindow ? nil : "2 项额度")
+        }
+    }
+
+    func testAmountRowsDoNotRepeatAVisibleWalletOrInventUnreportedAmounts() {
+        let wallet = UsageMetric(id: "prepaid", label: "账户余额", kind: .balance, usedPercent: nil, remainingPercent: nil,
+            resetText: nil, status: .ok, detail: nil, remainingAmount: "12.500", unit: "credits")
+        let counted = UsageMetric(id: "counts", label: "计次", kind: .quota, usedPercent: nil, remainingPercent: nil,
+            resetText: nil, status: .ok, detail: nil, usedAmount: "0", totalAmount: "123")
+        let card = QuotaDisplayModel(snapshot: .init(providerId: "codex", displayName: "Codex", status: .ok,
+            fetchedAt: Date(), summary: "12.5 积分", message: nil,
+            groups: [.init(id: "codex", title: "Codex", subtitle: nil, items: [wallet, counted])],
+            accountCredits: .codex(.amount(12.5))))
+        XCTAssertEqual(card.creditDetails.map(\.label), ["计次 · 已用", "计次 · 总额"])
+        XCTAssertEqual(card.creditDetails.map(\.value), ["0", "123"])
+        XCTAssertNil(card.plainSummary)
+        XCTAssertTrue(card.rings.isEmpty && card.bars.isEmpty)
+    }
+
+    func testPlainSummaryLeavesAccountBalancesPercentagesAndErrorsToTheirOwnViews() {
+        func snapshot(_ status: UsageStatus = .ok, metrics: [UsageMetric] = [],
+                      wallet: AccountCredits? = nil) -> ProviderUsageSnapshot {
+            .init(providerId: "custom", displayName: "Custom", status: status, fetchedAt: Date(),
+                  summary: "余额详情", message: nil,
+                  groups: [.init(id: "custom", title: "Custom", subtitle: nil, items: metrics)],
+                  accountCredits: wallet)
+        }
+        XCTAssertNil(QuotaDisplayModel(snapshot: snapshot(.error)).plainSummary)
+        XCTAssertNil(QuotaDisplayModel(snapshot: snapshot(wallet: .codex(.amount(12)))).plainSummary)
+        let window = QuotaDisplayModel(snapshot: snapshot(metrics: [metric(id: "5h", used: 10, windowMinutes: 300)]))
+        XCTAssertNil(window.plainSummary)
+        XCTAssertEqual(window.summaryText, "5h 90%")
+    }
+
     func testCompactBalanceKeepsTheExactValueAndDistinguishesSmallAmountsFromZero() throws {
         let amount = try XCTUnwrap(Decimal(string: "12345.67891234"))
         let balance = try XCTUnwrap(AccountCredits.codex(.amount(amount)).displayBalance)
@@ -15,11 +92,11 @@ final class QuotaDisplayModelTests: XCTestCase {
         for absent in [CodexCreditBalance.amount(0), .amount(-1), .unavailable, .noCredits] {
             XCTAssertNil(AccountCredits.codex(absent).displayBalance)
         }
-        let zero = ClaudeCreditAmount(minorUnits: 0, currency: "USD")
+        let zero = ClaudeCreditAmount(value: 0, currency: "USD")
         let extra = ClaudeExtraUsage(enabled: true, used: zero, monthlyLimit: zero)
         XCTAssertNil(AccountCredits.claude(prepaid: zero, extraUsage: extra).displayBalance)
         XCTAssertNil(AccountCredits.claude(prepaid: nil, extraUsage: extra).displayBalance)
-        let prepaid = try XCTUnwrap(ClaudeCreditAmount(minorUnits: 1234, currency: "USD"))
+        let prepaid = ClaudeCreditAmount(value: 12.34, currency: "USD")
         XCTAssertEqual(AccountCredits.claude(prepaid: prepaid, extraUsage: nil).displayBalance?.full, prepaid.displayText)
     }
 
@@ -52,7 +129,7 @@ final class QuotaDisplayModelTests: XCTestCase {
                 summary: nil, message: nil, groups: [], accountCredits: credits
             ))
         }
-        let prepaid = ClaudeCreditAmount(minorUnits: 1500, currency: "USD")
+        let prepaid = ClaudeCreditAmount(value: 15, currency: "USD")
         XCTAssertFalse(model(.claude(prepaid: prepaid, extraUsage: nil)).hasDetails)
         let extra = ClaudeExtraUsage(enabled: false, used: prepaid, monthlyLimit: nil)
         let expanded = model(.claude(prepaid: prepaid, extraUsage: extra))

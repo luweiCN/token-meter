@@ -7,6 +7,7 @@ import { MenubarPreviewBar } from '../components/MenubarPreview.js';
 import { Input } from '../components/ui/input.js';
 import { showToast } from '../components/toast.js';
 import { formatBytes, formatRelative, parseUtcTimestamp } from '../format.js';
+import { QUOTA_PROVIDERS, quotaProviderLabel } from '../providers.js';
 import { settingsStore, useSettings } from '../stores/settingsStore.js';
 import type { SettingsApplyRequest } from '../stores/settingsStore.js';
 import { applyThemePref, storedThemePref, type ThemePref } from '../theme.js';
@@ -26,19 +27,6 @@ const AGENT_KINDS: Array<{ id: string; label: string; how: string }> = [
   { id: 'workbuddy', label: 'WorkBuddy', how: '自动统计 ~/.workbuddy/projects 与本地 Credits' },
   { id: 'antigravityCLI', label: 'Antigravity CLI', how: '读取 agy 本地会话的模型用量' },
   { id: 'geminiCLI', label: 'Gemini CLI', how: '读取 Gemini CLI 保存的会话用量' }
-];
-
-/// 供应商额度接入（OpenDesign 稿 B 区）。keyed = 支持应用内填 API Key（存钥匙串，
-/// 优先于环境变量）；login = 走 WebView 登录流程（OpenCode Go）。
-const QUOTA_PROVIDERS: Array<{ id: string; name: string; shortName?: string; pill: string; how: string; src: string; keyed?: boolean; login?: boolean }> = [
-  { id: 'codex', name: 'Codex', pill: '自动接入', how: '自动读取本机登录凭证', src: '~/.codex/auth.json' },
-  { id: 'claude-code', name: 'Claude Code', pill: '自动接入', how: '自动读取本机登录凭证', src: '钥匙串 · Claude Code-credentials' },
-  { id: 'antigravity', name: 'Antigravity', shortName: 'AGY', pill: 'CLI 接入', how: '自动查询已登录账号的 Gemini 和 Claude/GPT 额度', src: 'Antigravity CLI · /usage' },
-  { id: 'zhipu', name: '智谱 GLM', pill: '环境变量', how: 'API Key · 应用内填写或读取环境变量', src: 'ZHIPU_API_KEY', keyed: true },
-  { id: 'opencode-go', name: 'OpenCode Go', pill: '自动接入', how: 'WebView 登录 opencode.ai · 登录态一年有效', src: '~/.config/opencode/opencode-quota/opencode-go.json', login: true },
-  { id: 'command-code', name: 'Command Code', pill: 'API Key', how: 'Studio API Key · 不依赖 Command Code CLI', src: 'COMMAND_CODE_API_KEY · ~/.commandcode/auth.json', keyed: true },
-  { id: 'grok', name: 'Grok Build', pill: '自动接入', how: '自动读取本机登录凭证', src: '~/.grok/auth.json' },
-  { id: 'qoder', name: 'Qoder', pill: '自动接入', how: '通过本机 Qoder CLI 读取 Credits 额度', src: '~/.qoder-cn/bin/qoderclicn' }
 ];
 
 const SCAN_INTERVALS: Array<{ seconds: number; label: string }> = [
@@ -264,12 +252,11 @@ export function Settings() {
           {QUOTA_PROVIDERS.map((provider) => {
             const override = settings.providerOverrides.find((o) => o.providerId === provider.id);
             const enabled = override?.enabled ?? (provider.id !== 'antigravity');
-            const name = override?.displayName;
             return (
               <QuotaProviderRow
                 key={provider.id}
                 provider={provider}
-                savedName={name && name !== provider.name ? name : (provider.shortName ?? provider.name)}
+                savedName={quotaProviderLabel(provider.id, override?.displayName)}
                 enabled={enabled}
                 onSave={(name) => {
                   apply(settingsStore.applyPatch({ providerDisplayNames: { [provider.id]: name } }), 'quota');
@@ -441,7 +428,7 @@ export function Settings() {
         <div className="chead" style={{ marginBottom: 10 }}>
           <div>
             <h2>菜单栏外观</h2>
-            <div className="desc">托盘常驻区的样式、元素与每家窗口</div>
+            <div className="desc">配置菜单栏样式、峰/谷标识和弹窗时段显示</div>
           </div>
           <span className="mbcur num">{currentStyleName(settings)}</span>
           <button

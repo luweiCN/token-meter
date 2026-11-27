@@ -161,12 +161,7 @@ Grok 的桶是**含子集**的：`inputTokens` 含 cache read，`outputTokens` �
 
 ### 2.5 定价
 
-当前随包 LiteLLM 快照没有 `grok-4.6` / `grok-4.6-build`。实现时按 [xAI 官方牌价](https://docs.x.ai) 查证后写入 `scripts/pricing-overrides.json`，键至少覆盖：
-
-- `grok-4.6`
-- `grok-4.6-build`
-
-两键在官方未拆价时用同一组 input / cacheRead / output。`CostCalculator` 按 `ModelNameNormalizer.canonical` 匹配（取 `/` 最后一段，不剥 `-build`）。匹配不到就 `cost_source = unknown`，不允许家族兜底。
+牌价以 [docs/pricing.md](../../pricing.md) 为准。Grok 基础价写在 `scripts/pricing-overrides.json` 的裸键上（`grok-4.6`、`grok-4.7`）。会话里的 `grok-4.6-build` 这类末尾 `-build` 不单独登记：没有专属价时 `CostCalculator` 回退到基础键。`model_canonical` 仍保留 `-build`。匹配不到就 `cost_source = unknown`，不允许家族兜底。
 
 ---
 

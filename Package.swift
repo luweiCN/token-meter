@@ -12,6 +12,7 @@ let package = Package(
             name: "TokenMeterCore",
             targets: ["TokenMeterCore"]
         ),
+        .executable(name: "TokenMeterIndex", targets: ["TokenMeterIndex"]),
         .executable(
             name: "TokenMeterApp",
             targets: ["TokenMeterApp"]
@@ -32,10 +33,10 @@ let package = Package(
                 .process("Resources")
             ],
             linkerSettings: [
-                .linkedLibrary("sqlite3"),
-                .linkedFramework("WebKit")
+                .linkedLibrary("sqlite3")
             ]
         ),
+        .executableTarget(name: "TokenMeterIndex", dependencies: ["TokenMeterCore"]),
         .executableTarget(
             name: "TokenMeterApp",
             dependencies: [

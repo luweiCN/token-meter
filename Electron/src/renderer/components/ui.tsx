@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react';
 
 /// 项目统一基础组件(设计稿 components.html,类名与稿同名)。
 /// 原生 <select>/<input type=time> 的系统控件跟不上设计语言,全部自绘;
@@ -187,12 +187,14 @@ export function TimeField({
 
 /// 自定义下拉:点击开合、点外/Esc 关闭。选中项 accent 勾 + 加重。
 export function Select<T extends string | number>({
+  id,
   value,
   options,
   onChange,
   ariaLabel,
   placeholder = '请选择'
 }: {
+  id?: string;
   value: T | null;
   options: Array<SelectOption<T>>;
   onChange: (value: T | null) => void;
@@ -202,12 +204,23 @@ export function Select<T extends string | number>({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const listId = useId();
   useDismiss(open, rootRef, () => setOpen(false));
 
   const current = options.find((o) => o.value === value);
 
+  useEffect(() => {
+    if (!open) return;
+    const selected = menu.current?.querySelector<HTMLButtonElement>('[aria-selected="true"]')
+      ?? menu.current?.querySelector<HTMLButtonElement>('[role="option"]');
+    selected?.focus({ preventScroll: true });
+  }, [open]);
+
   const pick = (next: T | null) => {
     setOpen(false);
+    trigger.current?.focus();
     if (next !== value) onChange(next);
   };
 
@@ -216,6 +229,7 @@ export function Select<T extends string | number>({
       key={key}
       type="button"
       role="option"
+      tabIndex={-1}
       aria-selected={selected}
       className={`sel-opt${selected ? ' on' : ''}`}
       onClick={onPick}
@@ -226,12 +240,33 @@ export function Select<T extends string | number>({
   );
 
   return (
-    <div className={`sel${open ? ' open' : ''}`} ref={rootRef}>
+    <div className={`sel${open ? ' open' : ''}`} ref={rootRef}
+      onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false); }}
+      onKeyDown={e => {
+        if (open && e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen(false);
+          trigger.current?.focus();
+          return;
+        }
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+        e.preventDefault();
+        if (!open) { setOpen(true); return; }
+        const items = Array.from(menu.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []);
+        const index = items.findIndex(item => item === document.activeElement);
+        const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1
+          : index + (e.key === 'ArrowDown' ? 1 : -1);
+        items[Math.min(Math.max(next, 0), items.length - 1)]?.focus();
+      }}>
       <button
+        ref={trigger}
+        id={id}
         type="button"
         className="sel-btn"
         aria-haspopup="listbox"
         aria-expanded={open}
+        aria-controls={open ? listId : undefined}
         aria-label={ariaLabel}
         onClick={() => setOpen((o) => !o)}
       >
@@ -239,7 +274,7 @@ export function Select<T extends string | number>({
         <Chevron />
       </button>
       {open ? (
-        <div className="sel-pop" role="listbox" aria-label={ariaLabel} style={{ display: 'block' }}>
+        <div className="sel-pop" ref={menu} id={listId} role="listbox" aria-label={ariaLabel} style={{ display: 'block' }}>
           {placeholder !== null ? option(placeholder, value === null, () => pick(null), '__all') : null}
           {options.map((o) => option(o.label, o.value === value, () => pick(o.value), String(o.value)))}
         </div>

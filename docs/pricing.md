@@ -14,7 +14,9 @@ TokenMeter 保留来源上报的 Token 和 USD 成本；需要本地换算时，
 
 上下文选档依据见[阿里云分档规则](https://www.alibabacloud.com/help/en/model-studio/model-pricing#tiered-pricing-rules)。缓存费用应分别核对[阿里云缓存规则](https://www.alibabacloud.com/help/en/model-studio/context-cache)及 [Claude 价卡](https://platform.claude.com/docs/en/about-claude/pricing)，不能使用跨厂商统一比例。上游明确给出的 OpenAI 同档缓存写入价复用于两种 TTL，已有独立 1 小时价时仍优先使用独立价。
 
-定价键的供应商前缀与用量模型名使用不同归一规则：第三方托管价不能冒充同名官方价。匹配规则以 `CostCalculator.pricingKeyCanonical` 为准；保留在上游快照中的键不代表它一定参与官方模型的本地计价。
+定价键的供应商前缀与用量模型名使用不同归一规则：第三方托管价不能冒充同名官方价。匹配规则以 `CostCalculator.pricingKeyCanonical` 为准；保留在上游快照中的键不代表它一定参与官方模型的本地计价。官方 Grok 目录键带 `xai/` 前缀，这个前缀在定价键白名单里。
+
+Grok Build 把会话模型写成基础名加末尾 `-build`（`grok-4.7-build`）。有专属价用专属价；没有则按去掉这一个后缀的基础模型计价。展示名和 `model_canonical` 仍保留 `-build`。`grok-4.7-build-fast` 以 `-fast` 结尾，不回退。`grok-build` 是产品名，也不回退。
 
 ## 快照与兼容
 

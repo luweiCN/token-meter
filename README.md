@@ -2,7 +2,7 @@
 
 [English](README.en.md) | 简体中文
 
-**macOS 菜单栏里的 coding agent 用量仪表盘** —— 实时统计 Claude Code、Codex CLI 等本地 AI 编程工具的 token 用量、花费与订阅额度，全程本地、零上传。
+**macOS 菜单栏里的 coding agent 用量仪表盘** —— 实时统计 Claude Code、Codex CLI 等本地 AI 编程工具的 token 用量、花费与订阅额度。跨设备同步由用户配对后开启。
 
 ![菜单栏](docs/screenshots/menubar.png)
 
@@ -71,29 +71,27 @@
 | Codex | `~/.codex/auth.json` |
 | Antigravity（AGY） | 在设置中开启后，用已登录的 CLI 自动查询额度。展开可查看 Gemini、Claude/GPT 和模型专属窗口。[使用与额度规则](docs/antigravity-quota.md) |
 | 智谱 GLM | 应用内填写（存钥匙串）或 `ZHIPU_API_KEY` |
-| OpenCode Go | 设置页「登录 OpenCode Go」（WebView 登录，登录态一年有效） |
+| OpenCode Go | 在设置中登录 OpenCode 账户，或使用 Go API Key |
 | Command Code | 应用内填写 Studio API Key（存钥匙串）、`COMMAND_CODE_API_KEY` 或 `~/.commandcode/auth.json`；无需安装 CLI |
 | Grok Build | `~/.grok/auth.json`（`grok login`） |
 | Qoder | 本机 Qoder CLI 登录态；通过官方 `get_usage_info` 控制接口读取套餐、加购与组织共享 Credits |
 
 ## 架构
 
-```
-┌─ 菜单栏 App（Swift / AppKit + SwiftUI）
-│   ├─ 增量扫描 agent 会话日志 → SQLite 派生库（可随时删除重建）
-│   ├─ hooks 实时上报（会话开始/心跳/结束，秒级 live 状态）
-│   ├─ 订阅额度 API 轮询（≥5 分钟，防上游限流）
-│   └─ Unix socket IPC
-└─ 主界面（Electron + React）
-    └─ 读同一个 SQLite，事件驱动刷新
-```
+跨平台 CLI 常驻采集账户额度、读取 OpenClaw 与 Hermes 的本机会话，并向已配对的设备提供签名汇总。Mac 上的其他 Agent 会话继续由随包的索引器写入本机 SQLite。SwiftUI 菜单栏从 CLI 发布的快照显示额度，手动刷新也交给 CLI。Electron 使用本机账本显示明细，并通过 CLI 查询和管理设备。
 
 - **成本计算**：GitHub Action 每日从 LiteLLM 生成并校验定价快照；应用每小时核对校验和，价格变化时下载并原子替换缓存，失败时继续使用旧缓存或随包快照。支持按请求输入长度选择多档价格，缺失价格明确记为未知，详见[定价契约](docs/pricing.md)
-- **口径一致**：菜单栏「今日」、弹窗、主界面各页全部从同一张消息级事件表（`usage_events`）派生
+- **多设备统计**：菜单栏和弹窗使用已同步的设备汇总。[统计口径](docs/device-sync.md)
+
+## 命令行与多机同步
+
+Mac、Linux、Windows 可运行同一个命令行服务，采集 OpenClaw 和 Hermes Agent，在主界面「设备 → 添加设备」创建邀请，另一台可粘贴链接、输入配对码，或在兼容客户端扫码。配对支持不同网络。菜单栏按当天用量显示机器、Agent、费用和缓存命中率，两台及以上有用量才显示机器栏。安装、自启、自动更新和配对步骤见[设备与命令行](docs/device-sync.md)。
 
 ## 安装
 
-目前从源码构建（需要 macOS 13+、Xcode 命令行工具、Node.js LTS）：
+从 [GitHub Releases](https://github.com/luweiCN/token-meter/releases) 下载与你的 Mac 架构匹配的 ZIP，解压后把 TokenMeter 拖入「应用程序」。`arm64` 对应 Apple Silicon。命令行安装见[设备与命令行](docs/device-sync.md)。
+
+从源码构建需要 macOS 13+、带 macOS 15 或更新 SDK 的 Xcode、Node.js LTS，以及 `go.mod` 指定的 Go。
 
 ```bash
 git clone https://github.com/luweiCN/token-meter.git
@@ -120,7 +118,7 @@ scripts/reconcile-with-ccusage.sh           # 与 ccusage 独立对账（全程�
 
 ## 隐私
 
-- **全部本地**：无账号、无遥测、无任何数据上传
+- 限额查询使用本机登录态。配对的设备以端到端加密连接交换用量汇总。登录凭据和对话保存在来源设备。
 - **只读数据源**：绝不写入、修改 agent 的会话日志；派生数据库删除即重建
 - **只统计元数据**：token 数、模型名、时间戳——提示词与回复正文从不入库
 

@@ -185,7 +185,7 @@ final class TokenMeterIPCServer {
         case "ping":
             return IPCResponse(id: request.id, ok: true, result: ["status": "ok"], error: nil)
         case "codex.resetCredits.status":
-            return IPCResponse(id: request.id, ok: true, result: ["message": store.codexResetAutomationMessage], error: nil)
+            return IPCResponse(id: request.id, ok: true, result: ["message": await store.codexResetAutomationMessage()], error: nil)
         case "settingsChanged":
             guard let versionText = request.params?["version"], let version = Int(versionText), version > 0 else {
                 return IPCResponse(id: request.id, ok: false, result: nil, error: "invalid settings version")
@@ -216,8 +216,12 @@ final class TokenMeterIPCServer {
             }
         case "quota.refresh":
             // 绕过节流立即刷新额度（OpenCode Go 登录态写盘后由设置页触发）。
-            await store.refreshNow()
-            return IPCResponse(id: request.id, ok: true, result: ["status": "refreshed"], error: nil)
+            do {
+                try await store.refreshNow(providerID: request.params?["providerId"])
+                return IPCResponse(id: request.id, ok: true, result: ["status": "refreshed"], error: nil)
+            } catch {
+                return IPCResponse(id: request.id, ok: false, result: nil, error: error.localizedDescription)
+            }
         case "credentials.set":
             let params = request.params ?? [:]
             guard let providerId = params["providerId"], !providerId.isEmpty else {

@@ -1,0 +1,20 @@
+name: CLI
+on:
+  push:
+    paths: ['CLI/**', 'internal/**', 'cmd/token-meter-relay/**', 'go.mod', 'go.sum', 'pricing_embed.go', 'Sources/TokenMeterCore/Resources/litellm-pricing.json', 'Sources/TokenMeterCore/Resources/account-providers.json', '.github/workflows/cli.yml']
+  pull_request:
+    paths: ['CLI/**', 'internal/**', 'cmd/token-meter-relay/**', 'go.mod', 'go.sum', 'pricing_embed.go', 'Sources/TokenMeterCore/Resources/litellm-pricing.json', 'Sources/TokenMeterCore/Resources/account-providers.json', '.github/workflows/cli.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go test ./...

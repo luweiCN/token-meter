@@ -33,6 +33,15 @@ final class ProviderConfigLoaderTests: XCTestCase {
         XCTAssertNil(qoder.credential)
     }
 
+    func testExistingConfigCanEnableAntigravityWithoutAutomaticallyPollingIt() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data(#"{"providers":[]}"#.utf8).write(to: file)
+        let config = try ProviderConfigLoader.load(from: file)
+        XCTAssertEqual(config.providers.map(\.type), [.antigravity])
+        XCTAssertFalse(try XCTUnwrap(config.providers.first).enabled)
+    }
+
     func testDecodesExampleConfig() throws {
         let json = """
         {

@@ -99,6 +99,21 @@ final class LocalAgentScannerTests: XCTestCase {
         XCTAssertEqual(event.int("credits_picos"), 250_000_000_000)
     }
 
+    func testEmptyQoderSourceDoesNotRequestTheModelCatalogue() async throws {
+        let home = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let projects = home.appendingPathComponent(".qoder-cn/projects", isDirectory: true)
+        try FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        let database = try migratedDatabase(rootKind: .qoderJSONL, rootPath: projects.path)
+        let scanner = LocalAgentScanner(database: database, qoderModelCatalogLoader: { _ in
+            XCTFail("空目录不应启动 CLI 读取模型目录")
+            return []
+        })
+
+        try await scanner.scanRoot(id: 1)
+        XCTAssertTrue(try database.query("SELECT * FROM model_catalog").isEmpty)
+    }
+
     func testQoderScanPersistsOfficialModelCatalogForCliAndDesktop() async throws {
         let home = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: home) }
@@ -1519,7 +1534,7 @@ final class LocalAgentScannerTests: XCTestCase {
 
         let database = try SQLiteDatabase(path: ":memory:")
         try TokenMeterDatabaseMigrator.migrate(database)
-        try LocalAgentScanner.seedDefaultScanRoots(database: database, homeDirectory: home)
+        try LocalAgentScanner.seedDefaultScanRoots(database: database, homeDirectory: home, environment: [:])
         let scanner = LocalAgentScanner(database: database)
         for row in try database.query("SELECT id FROM scan_roots WHERE kind = ? ORDER BY id", [.text(SourceKind.codexJSONL.rawValue)]) {
             try await scanner.scanRoot(id: try XCTUnwrap(row.int("id")))

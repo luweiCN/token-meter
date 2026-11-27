@@ -33,10 +33,12 @@ public struct SQLiteRow: Equatable {
 }
 
 public final class SQLiteDatabase {
+    package let path: String
     private var handle: OpaquePointer?
     private var snapshotDirectory: URL?
 
     public init(path: String, readOnly: Bool = false) throws {
+        self.path = path
         let flags = (readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE) | SQLITE_OPEN_FULLMUTEX
         try open(path, flags: flags)
         try execute("PRAGMA busy_timeout = 5000")

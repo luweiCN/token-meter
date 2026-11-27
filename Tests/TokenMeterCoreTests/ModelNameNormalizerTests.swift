@@ -104,5 +104,9 @@ final class ModelNameNormalizerTests: XCTestCase {
         XCTAssertEqual(ModelNameNormalizer.canonical("codex/gpt-5.6-sol-fast"), "gpt-5.6-sol-fast")
         XCTAssertEqual(ModelNameNormalizer.canonical("grok-4-fast"), "grok-4-fast")
         XCTAssertEqual(ModelNameNormalizer.canonical("gpt-5.5-xhigh"), "gpt-5.5")
+        // Build 后缀只影响计价回退，不并进行。否则菜单栏会把 grok-4.7-build 显示成 grok-4.7。
+        XCTAssertEqual(ModelNameNormalizer.canonical("grok-4.7-build"), "grok-4.7-build")
+        XCTAssertEqual(ModelNameNormalizer.canonical("grok-4.7-build-fast"), "grok-4.7-build-fast")
+        XCTAssertEqual(ModelNameNormalizer.canonical("xai/grok-4.7-build"), "grok-4.7-build")
     }
 }

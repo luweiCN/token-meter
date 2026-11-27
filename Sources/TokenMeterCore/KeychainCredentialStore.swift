@@ -11,20 +11,9 @@ public enum KeychainCredentialStore {
         case unexpectedStatus(OSStatus)
     }
 
-    public static func token(for providerId: String, service: String = defaultService) -> String? {
-        var query = baseQuery(providerId: providerId, service: service)
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        let token = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return token.isEmpty ? nil : token
-    }
-
     public static func hasToken(for providerId: String, service: String = defaultService) -> Bool {
-        token(for: providerId, service: service) != nil
+        let query = baseQuery(providerId: providerId, service: service)
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
     /// nil 或空串 = 删除该 provider 的 Key。
@@ -32,14 +21,17 @@ public enum KeychainCredentialStore {
         let trimmed = token?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let query = baseQuery(providerId: providerId, service: service)
 
-        let deleteStatus = SecItemDelete(query as CFDictionary)
-        guard deleteStatus == errSecSuccess || deleteStatus == errSecItemNotFound else {
-            throw KeychainError.unexpectedStatus(deleteStatus)
+        if trimmed.isEmpty {
+            let status = SecItemDelete(query as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else { throw KeychainError.unexpectedStatus(status) }
+            return
         }
-        guard !trimmed.isEmpty else { return }
 
-        var attributes = query
-        attributes[kSecValueData as String] = Data(trimmed.utf8)
+        let update = [kSecValueData as String: Data(trimmed.utf8)]
+        let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+        if status == errSecSuccess { return }
+        guard status == errSecItemNotFound else { throw KeychainError.unexpectedStatus(status) }
+        let attributes = query.merging(update) { _, new in new }
         let addStatus = SecItemAdd(attributes as CFDictionary, nil)
         guard addStatus == errSecSuccess else {
             throw KeychainError.unexpectedStatus(addStatus)

@@ -35,26 +35,6 @@ struct MBTheme: Equatable {
         ok: Color(hex: 0x0F9D6E), warn: Color(hex: 0x9A7500), danger: Color(hex: 0xC92A2A),
         tintWarn: Color(hex: 0x9A7500).opacity(0.12), tintDanger: Color(hex: 0xC92A2A).opacity(0.1)
     )
-
-    /// agent 系列色 s1-s4（与主窗口图例一致）。名单外的 provider 用 muted。
-    func seriesColor(_ providerId: String) -> Color {
-        switch providerId {
-        case "claude-code": return accent
-        case "codex": return self == .light ? Color(hex: 0x7A4FE0) : Color(hex: 0xA277FF)
-        case "omp": return ok
-        case "opencode": return warn
-        case "reasonix": return self == .light ? Color(hex: 0xC2542E) : Color(hex: 0xFF7A5C)
-        case "dsh": return self == .light ? Color(hex: 0x1E90FF) : Color(hex: 0x4A9EFF)
-        case "grok": return self == .light ? Color(hex: 0x111111) : Color(hex: 0xE6E6E6)
-        case "qwen-code": return self == .light ? Color(hex: 0x1E6FBB) : Color(hex: 0x4A9EFF)
-        case "qoder-cli": return self == .light ? Color(hex: 0xB45F06) : Color(hex: 0xFF9F43)
-        case "qoder-desktop": return self == .light ? Color(hex: 0xA83C96) : Color(hex: 0xF368E0)
-        case "workbuddy": return self == .light ? Color(hex: 0x2563A8) : Color(hex: 0x54A0FF)
-        case "antigravity-cli": return self == .light ? Color(hex: 0x087B70) : Color(hex: 0x4FD8C6)
-        case "gemini-cli": return self == .light ? Color(hex: 0x514CC0) : Color(hex: 0xA6A1FF)
-        default: return muted
-        }
-    }
 }
 
 extension Color {
@@ -153,6 +133,8 @@ enum MenuBarProviderName {
         case "omp": return "OMP"
         case "opencode": return "OpenCode"
         case "reasonix": return "Reasonix"
+        case "openclaw": return "OpenClaw"
+        case "hermes": return "Hermes Agent"
         case "dsh": return "DeepSeek Harness"
         case "grok": return "Grok Build"
         case "qwen-code": return "千问 Code"
@@ -203,6 +185,7 @@ struct PopoverView: View {
     let maxPanelHeight: CGFloat
     let onPreferredHeightChange: (CGFloat) -> Void
     var onOpenMainInterface: () -> Void = {}
+    var onOpenSettings: () -> Void = {}
     var onThemeChange: () -> Void = {}
 
     private var theme: MBTheme { themeName == "light" ? .light : .dark }
@@ -235,16 +218,26 @@ struct PopoverView: View {
                 PanelHead(store: store, themeName: $themeName)
                 TodayBlock(
                     summary: store.todaySummary,
-                    monthActivity: store.monthActivity,
+                    monthActivity: store.overviewStats == nil ? nil : store.monthActivity,
                     displayCurrency: store.displayCurrency,
                     usdToCny: store.exchangeRate.usdToCny,
-                    modelBreakdown: { store.modelBreakdown(for: $0) }
+                    modelBreakdown: { store.modelBreakdown(for: $0) },
+                    deviceBreakdown: { store.deviceBreakdown(for: $0) }
                 )
-                OverviewTilesView(
-                    stats: store.overviewStats,
-                    displayCurrency: store.displayCurrency,
-                    usdToCny: store.exchangeRate.usdToCny
-                )
+                if let stats = store.overviewStats {
+                    OverviewTilesView(
+                        stats: stats,
+                        displayCurrency: store.displayCurrency,
+                        usdToCny: store.exchangeRate.usdToCny
+                    )
+                } else {
+                    Text("设备历史汇总暂不可用")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(theme.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 12)
+                }
                 SourceLine(text: sourceLineText)
                 PanelDivider()
             }
@@ -272,34 +265,27 @@ struct PopoverView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Color.clear.frame(height: 6)
 
-                    if store.peakPricingRows.contains(where: { $0.tier.phase(at: Date()) != .notYetEffective }) {
+                    if store.settingsSnapshot?.menuBarAppearance.showPeakSection != false,
+                       store.peakPricingRows.contains(where: { $0.tier.phase(at: Date()) != .notYetEffective }) {
                         SectionBlock(title: "峰谷时段") {
                             PeakPricingSection(rows: store.peakPricingRows)
                         }
                         PanelDivider()
                     }
 
-                    if !store.todaySummary.perProvider.isEmpty {
-                        SectionBlock(title: "Agent") {
-                            VStack(spacing: 0) {
-                                ForEach(store.todaySummary.perProvider, id: \.providerId) { row in
-                                    ProviderRow(
-                                        row: row,
-                                        displayCurrency: store.displayCurrency,
-                                        usdToCny: store.exchangeRate.usdToCny
-                                    )
-                                }
-                            }
-                        }
-                        PanelDivider()
-                    }
-
-                    if !store.todaySummary.perModel.isEmpty {
-                        ModelListBlock(
-                            summary: store.todaySummary,
+                    let machines = store.dailyNodeSummary?.visibleMachines ?? []
+                    let models = store.dailyModels
+                    if !machines.isEmpty || !store.dailyAgents.isEmpty || models?.rows.isEmpty == false {
+                        DailyUsageGrid(
+                            machines: machines,
+                            agents: store.dailyAgents,
+                            models: models,
                             displayCurrency: store.displayCurrency,
                             usdToCny: store.exchangeRate.usdToCny
                         )
+                        if let models, models.total.unknownCost > 0 {
+                            UnknownNote(summary: models)
+                        }
                         PanelDivider()
                     }
 
@@ -310,7 +296,7 @@ struct PopoverView: View {
                                     QuotaGroupView(
                                         snapshot: snapshot,
                                         isExpanded: resolvedExpandedProviderId == snapshot.providerId,
-                                        isRefreshing: snapshot.providerId == store.antigravityConfig?.id && store.isRefreshingAntigravity,
+                                        isRefreshing: store.isRefreshingQuota(for: snapshot.providerId),
                                         onToggleExpanded: {
                                             expandedProviderId = resolvedExpandedProviderId == snapshot.providerId
                                                 ? "" : snapshot.providerId
@@ -321,10 +307,6 @@ struct PopoverView: View {
                                 }
                             }
                         }
-                    }
-
-                    if store.todaySummary.unknownEvents > 0 {
-                        UnknownNote(count: store.todaySummary.unknownEvents)
                     }
 
                     // 尾部不再垫高（用户裁定：面板要比精确贴合再紧一点）。
@@ -347,10 +329,7 @@ struct PopoverView: View {
 
             VStack(spacing: 0) {
                 PanelDivider()
-                FootBar(
-                    isScanPaused: $store.isScanPaused,
-                    onOpenMainInterface: onOpenMainInterface
-                )
+                FootBar(store: store, onOpenMainInterface: onOpenMainInterface, onOpenSettings: onOpenSettings)
             }
             .background(theme.surface)
             .readHeight { height in
@@ -492,47 +471,56 @@ private extension View {
 }
 
 private struct TodayBlock: View {
-    let summary: MenuBarTodaySummary
-    let monthActivity: [DayActivity]
+    let summary: MenuTodayUsage
+    let monthActivity: [DayActivity]?
     let displayCurrency: DisplayCurrency
     let usdToCny: Double
-    let modelBreakdown: (String) -> [DayModelUsage]
+    let modelBreakdown: (String) -> [DailyModelSummary.Row]
+    let deviceBreakdown: (String) -> [DayDeviceUsage]
     @Environment(\.mbTheme) private var theme
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    Text(PopoverTokenAmount(tokens: summary.tokens, unreportedEvents: Int64(summary.tokenUnreportedEvents)).dailyText)
+                    Text(summary.usage.tokenAmount.dailyText)
                         .font(.system(size: 32, weight: .bold))
                         .foregroundStyle(theme.fg)
                         .monospacedDigit()
-                        .rollingNumber(value: summary.tokens)
+                        .rollingNumber(value: summary.usage.tokens)
                     Text("tokens")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(theme.fg2)
                 }
 
-                (Text("花费 ")
-                    + Text(MenuBarNumberFormat.money(summary.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny))
-                        .foregroundColor(theme.fg2)
-                    + Text(" · ")
-                    + Text("\(summary.sessions)").foregroundColor(theme.fg2)
-                    + Text(" 个会话"))
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(theme.muted)
-                    .monospacedDigit()
-                    .rollingNumber(value: "\(summary.costUsdMicros)|\(summary.sessions)")
+                HStack(spacing: 0) {
+                    Text("花费 ")
+                    Text(verbatim: summary.usage.formattedCost(currency: displayCurrency, usdToCny: usdToCny))
+                        .foregroundStyle(theme.fg2)
+                    if let sessions = summary.sessions {
+                        Text(" · ")
+                        Text(verbatim: "\(sessions)").foregroundStyle(theme.fg2)
+                        Text(" 个会话")
+                    }
+                }
+                .font(.system(size: 11.5))
+                .foregroundStyle(theme.muted)
+                .monospacedDigit()
+                .rollingNumber(value: summary)
+                .accessibilityElement(children: .combine)
             }
 
             Spacer(minLength: 4)
 
-            MonthHeatmapView(
-                days: monthActivity,
-                displayCurrency: displayCurrency,
-                usdToCny: usdToCny,
-                modelBreakdown: modelBreakdown
-            )
+            if let monthActivity {
+                MonthHeatmapView(
+                    days: monthActivity,
+                    displayCurrency: displayCurrency,
+                    usdToCny: usdToCny,
+                    modelBreakdown: modelBreakdown,
+                    deviceBreakdown: deviceBreakdown
+                )
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(EdgeInsets(top: 0, leading: 16, bottom: 12, trailing: 16))
@@ -547,18 +535,18 @@ private struct TodayBlock: View {
 /// 顶部总览右侧的当月热力图。7 列固定为周一…周日，行数随当月 1 号的星期偏移与
 /// 天数动态 4–6 行（1 号前的空位与月末后的空位留白），与系统日历完全对齐；
 /// 颜色对应固定日 Token 区间，同样的用量在不同月份同色。悬浮单点弹详情浮窗：
-/// Token/花费/会话/事件四指标 + 当天按模型的消耗明细，箭头指向锚点、系统自动避让。
+/// 展示当天的 Token、花费、可用的会话和事件数，以及按模型和设备拆分的用量。
 /// 还没到的日期不响应悬浮、也不弹浮窗。顶部一行极淡的「一二三四五六日」作列标题，
 /// 不抢视觉但让「第几列是周几」一目了然。
 private struct MonthHeatmapView: View {
     let days: [DayActivity]
     let displayCurrency: DisplayCurrency
     let usdToCny: Double
-    let modelBreakdown: (String) -> [DayModelUsage]
+    let modelBreakdown: (String) -> [DailyModelSummary.Row]
+    let deviceBreakdown: (String) -> [DayDeviceUsage]
     @Environment(\.mbTheme) private var theme
 
     @State private var hoveredDay: Int?
-    @State private var hoveredBreakdown: [DayModelUsage] = []
     @State private var pendingClose: DispatchWorkItem?
 
     private static let columns = 7
@@ -644,20 +632,25 @@ private struct MonthHeatmapView: View {
                         .stroke(theme.accent, lineWidth: 1)
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(dayLabel(dayNumber)))
+            .accessibilityValue(Text(PopoverTokenAmount(tokens: tokens, unreportedEvents: activity?.tokenUnreportedEvents ?? 0).detail))
             .onHover { hovering in
                 if isFuture { return }
                 if hovering {
                     pendingClose?.cancel()
                     hoveredDay = dayNumber
-                    hoveredBreakdown = modelBreakdown(dayText(dayNumber))
+                    let date = dayText(dayNumber)
+                    let models = modelBreakdown(date)
+                    let devices = deviceBreakdown(date)
                     HeatmapDetailPopover.shared.show(below: NSEvent.mouseLocation) {
-                            detailCard(day: dayNumber)
-                                .environment(\.mbTheme, theme)
-                        }
-                    } else if hoveredDay == dayNumber {
-                        scheduleClose(dayNumber)
+                        detailCard(day: dayNumber, models: models, devices: devices)
+                            .environment(\.mbTheme, theme)
                     }
+                } else if hoveredDay == dayNumber {
+                    scheduleClose(dayNumber)
                 }
+            }
     }
 
     /// 离开格子后延迟一小拍再关：给鼠标从格子挪进浮窗留出时间，浮窗的 onHover 会取消关闭。
@@ -666,7 +659,6 @@ private struct MonthHeatmapView: View {
         let work = DispatchWorkItem {
             if hoveredDay == day {
                 hoveredDay = nil
-                hoveredBreakdown = []
                 HeatmapDetailPopover.shared.hide()
             }
         }
@@ -675,8 +667,9 @@ private struct MonthHeatmapView: View {
     }
 
     @ViewBuilder
-    private func detailCard(day: Int) -> some View {
+    private func detailCard(day: Int, models: [DailyModelSummary.Row], devices: [DayDeviceUsage]) -> some View {
         let activity = byDay[dayText(day)]
+        let usage = activity.map(DailyUsage.init(activity:)) ?? .zero
         VStack(spacing: 0) {
             arrow
 
@@ -686,11 +679,11 @@ private struct MonthHeatmapView: View {
                     .foregroundStyle(theme.fg)
 
                 HStack(alignment: .top, spacing: 8) {
-                    stat("Token", UsageFormatter.compactTokens(activity?.tokens ?? 0))
-                    stat("花费", MenuBarNumberFormat.money(
-                        activity?.costUsdMicros ?? 0, currency: displayCurrency, usdToCny: usdToCny
-                    ))
-                    stat("会话", "\(activity?.sessions ?? 0)")
+                    stat("Token", usage.tokenAmount.dailyText)
+                    stat("花费", usage.formattedCost(currency: displayCurrency, usdToCny: usdToCny))
+                    if activity?.includesAllSessionCounts != false {
+                        stat("会话", "\(activity?.sessions ?? 0)")
+                    }
                     stat("事件", "\(activity?.events ?? 0)")
                 }
 
@@ -704,7 +697,7 @@ private struct MonthHeatmapView: View {
                         .font(.system(size: 10))
                         .foregroundStyle(theme.fg2)
                     Spacer(minLength: 4)
-                    let cache = activity?.cacheUsage ?? PromptCacheUsage()
+                    let cache = usage.cacheUsage
                     Text("缓存命中 \(cache.percentText)")
                         .font(.system(size: 10))
                         .monospacedDigit()
@@ -714,37 +707,23 @@ private struct MonthHeatmapView: View {
 
                 Rectangle().fill(theme.border).frame(height: 1)
 
-                if hoveredBreakdown.isEmpty {
+                if models.isEmpty {
                     Text("当天无模型明细")
                         .font(.system(size: 11))
                         .foregroundStyle(theme.muted)
                         .padding(.vertical, 4)
                 } else {
-                    Grid(alignment: .trailing, horizontalSpacing: 6, verticalSpacing: 4) {
-                        GridRow {
-                            Text("模型").frame(maxWidth: .infinity, alignment: .leading)
-                            Text("Token")
-                            Text("花费")
-                            Text("命中率")
-                        }
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(theme.muted)
+                    usageTable("模型", rows: models, name: \.id, usage: \.usage)
+                }
 
-                        ForEach(hoveredBreakdown) { row in
-                            GridRow {
-                                Text(verbatim: row.model)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                Text(verbatim: UsageFormatter.compactTokens(row.tokens))
-                                Text(MenuBarNumberFormat.money(row.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny))
-                                Text(verbatim: row.cacheUsage.percentText)
-                                    .accessibilityLabel(row.cacheUsage.detail)
-                            }
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .monospacedDigit()
-                            .foregroundStyle(theme.fg2)
-                        }
+                if !devices.isEmpty {
+                    Rectangle().fill(theme.border).frame(height: 1)
+                    let table = usageTable("设备", rows: devices, name: \.name, usage: \.usage)
+                    if devices.count > 6 {
+                        ScrollView { table }
+                            .frame(height: 140)
+                    } else {
+                        table
                     }
                 }
             }
@@ -758,6 +737,38 @@ private struct MonthHeatmapView: View {
                 pendingClose?.cancel()
             } else {
                 scheduleClose(day)
+            }
+        }
+    }
+
+    private func usageTable<Row: Identifiable>(
+        _ title: LocalizedStringKey, rows: [Row], name: KeyPath<Row, String>, usage: KeyPath<Row, DailyUsage>
+    ) -> some View {
+        Grid(alignment: .trailing, horizontalSpacing: 6, verticalSpacing: 4) {
+            GridRow {
+                Text(title).frame(maxWidth: .infinity, alignment: .leading)
+                Text("Token")
+                Text("花费")
+                Text("命中率")
+            }
+            .font(.system(size: 9.5))
+            .foregroundStyle(theme.muted)
+
+            ForEach(rows) { row in
+                let usage = row[keyPath: usage]
+                GridRow {
+                    Text(verbatim: row[keyPath: name])
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(verbatim: usage.tokenAmount.dailyText)
+                    Text(verbatim: usage.formattedCost(currency: displayCurrency, usdToCny: usdToCny))
+                    Text(verbatim: usage.cacheUsage.percentText)
+                        .accessibilityLabel(usage.cacheUsage.detail)
+                }
+                .font(.system(size: 10.5, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(theme.fg2)
             }
         }
     }
@@ -826,29 +837,26 @@ private struct MonthHeatmapView: View {
     }
 }
 
-// MARK: - .tiles：总计 / 本月 / 本周三张并排卡（吸顶头部内，主界面同口径，今日不重复）
+// MARK: - .tiles：总计 / 本月 / 本周三张并排卡
 
 private struct OverviewTilesView: View {
-    let stats: OverviewStats
+    let stats: MenuUsagePeriods
     let displayCurrency: DisplayCurrency
     let usdToCny: Double
     @Environment(\.mbTheme) private var theme
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            tile(title: "总计", bucket: stats.total)
-            tile(title: "本月", bucket: stats.month)
-            tile(title: "本周", bucket: stats.week)
+            tile(title: "总计", usage: stats.total)
+            tile(title: "本月", usage: stats.month)
+            tile(title: "本周", usage: stats.week)
         }
         .padding(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
     }
 
-    private func tile(
-        title: String,
-        bucket: OverviewStatsBucket
-    ) -> some View {
-        let amount = PopoverTokenAmount(tokens: bucket.tokens, unreportedEvents: bucket.tokenUnreportedEvents)
-        let cache = bucket.cacheUsage
+    private func tile(title: String, usage: DailyUsage) -> some View {
+        let amount = usage.tokenAmount
+        let cache = usage.cacheUsage
         let details = [title, amount.detail, cache.detail].joined(separator: "\n")
         return VStack(alignment: .leading, spacing: 3) {
             Text(title)
@@ -860,7 +868,7 @@ private struct OverviewTilesView: View {
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
-            Text(MenuBarNumberFormat.money(bucket.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny))
+            Text(verbatim: usage.formattedCost(currency: displayCurrency, usdToCny: usdToCny))
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundStyle(theme.fg2)
                 .monospacedDigit()
@@ -1004,7 +1012,7 @@ private struct PanelDivider: View {
     }
 }
 
-/// .sec：区块容器 + uppercase 小标题。
+/// 弹窗区块与标题。
 private struct SectionBlock<Content: View>: View {
     let title: String
     @ViewBuilder var content: Content
@@ -1012,7 +1020,7 @@ private struct SectionBlock<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title.uppercased())
+            Text(verbatim: title)
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(theme.muted)
                 .kerning(0.5)
@@ -1132,129 +1140,160 @@ private struct PeakPhaseRow: View {
     }
 }
 
-// MARK: - .prow：今日按服务商行
-
-private struct ProviderRow: View {
-    let row: MenuBarTodaySummary.ProviderToday
-    let displayCurrency: DisplayCurrency
-    let usdToCny: Double
+private struct DisclosureChevron: View {
+    let isExpanded: Bool
     @Environment(\.mbTheme) private var theme
 
     var body: some View {
-        HStack(spacing: 9) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(theme.seriesColor(row.providerId))
-                .frame(width: 8, height: 8)
-
-            Text(MenuBarProviderName.label(row.providerId))
-                .font(.system(size: 12.5))
-                .foregroundStyle(theme.fg)
-                .lineLimit(1)
-
-            Spacer(minLength: 8)
-
-            Text(PopoverTokenAmount(tokens: row.tokens, unreportedEvents: Int64(row.tokenUnreportedEvents)).dailyText)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(theme.fg)
-                .monospacedDigit()
-                .rollingNumber(value: row.tokens)
-
-            if row.creditEvents > 0 {
-                Text(MenuBarNumberFormat.credits(row.creditsPicos))
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(theme.fg2)
-                    .monospacedDigit()
-                    .fixedSize()
-            }
-
-            Text("\(MenuBarNumberFormat.money(row.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny)) · \(row.sessions) 会话")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(theme.muted)
-                .monospacedDigit()
-                .fixedSize()
-                .rollingNumber(value: "\(row.costUsdMicros)|\(row.sessions)")
-        }
-        .padding(.vertical, 5)
+        Image(systemName: "chevron.right")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(theme.muted)
+            .frame(width: 14, height: 14)
+            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            .accessibilityHidden(true)
     }
 }
 
-// MARK: - .sec 模型：今日按模型 Top5，可展开全部
-
-/// 表格只折叠明细，合计始终包含当天的全部模型。
-private struct ModelListBlock: View {
-    let summary: MenuBarTodaySummary
-    let displayCurrency: DisplayCurrency
-    let usdToCny: Double
+private struct UsageTableHeader: View {
+    let title: String
+    var count = 0
+    var expanded: Binding<Bool>?
     @Environment(\.mbTheme) private var theme
-    @State private var expanded = false
-
-    private static let visibleCount = 5
 
     var body: some View {
-        let models = summary.perModel
-        VStack(spacing: 2) {
-            Grid(alignment: .trailing, horizontalSpacing: 8, verticalSpacing: 8) {
-                GridRow {
-                    Text("今日模型")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text("Token")
-                    Text("花费")
-                    Text("缓存命中")
+        GridRow(alignment: .firstTextBaseline) {
+            Group {
+                if let expanded, count > PopoverUsageList.previewCount {
+                    disclosureButton(expanded: expanded)
+                } else {
+                    titleLabel
                 }
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(theme.muted)
+            }
+            .frame(maxWidth: .infinity, minHeight: 14, alignment: .leading)
+            Text("Token")
+            Text("花费")
+            Text("缓存命中")
+        }
+        .font(.system(size: 10.5, weight: .semibold))
+        .foregroundStyle(theme.muted)
+        .lineLimit(1)
+    }
 
-                ForEach(expanded ? models : Array(models.prefix(Self.visibleCount)), id: \.model) { row in
-                    modelRow(
-                        row.model, amount: PopoverTokenAmount(tokens: row.tokens, unreportedEvents: Int64(row.tokenUnreportedEvents)),
-                        cost: row.costUsdMicros, cache: row.cacheUsage
-                    )
+    private var titleLabel: some View {
+        Text(verbatim: title)
+            .foregroundStyle(theme.fg)
+    }
+
+    private func disclosureButton(expanded: Binding<Bool>) -> some View {
+        let shown = PopoverUsageList.visibleCount(count, expanded: expanded.wrappedValue)
+        let action = expanded.wrappedValue ? "收起\(title)" : "展开全部\(title)"
+        // 不用 Button：菜单栏打开时系统会给第一个按钮套强调色，Agent 就会和模型看起来不是同一层。
+        return HStack(spacing: 4) {
+            titleLabel
+            Text(verbatim: "\(shown)/\(count)")
+                .monospacedDigit()
+                .foregroundStyle(theme.muted)
+            DisclosureChevron(isExpanded: expanded.wrappedValue)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { expanded.wrappedValue.toggle() }
+        .help(action)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: action))
+        .accessibilityValue(Text(verbatim: "显示 \(shown) 项，共 \(count) 项"))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { expanded.wrappedValue.toggle() }
+    }
+}
+
+private struct DailyUsageGrid: View {
+    let machines: [NodeDeviceSummary]
+    let agents: [DailyAgentRow]
+    let models: DailyModelSummary?
+    let displayCurrency: DisplayCurrency
+    let usdToCny: Double
+    @AppStorage(PopoverUsageList.agents.rawValue) private var agentsExpanded = false
+    @AppStorage(PopoverUsageList.models.rawValue) private var modelsExpanded = false
+    @Environment(\.mbTheme) private var theme
+
+    var body: some View {
+        Grid(alignment: .trailing, horizontalSpacing: 8, verticalSpacing: 5) {
+            if !machines.isEmpty {
+                UsageTableHeader(title: "机器")
+                ForEach(machines) { device in
+                    usageRow(device.usage) {
+                        let lastSeen = device.observed.formatted(date: .abbreviated, time: .shortened)
+                        let info = device.partialSources > 0 ? " · \(device.partialSources) 个来源未更新" : ""
+                        Text(verbatim: device.name)
+                            .lineLimit(1).truncationMode(.middle)
+                            .help("\(device.name)\(device.local ? "（本机）" : "") · 最后采集 \(lastSeen)\(info)")
+                    }
+                }
+            }
+            if !agents.isEmpty {
+                UsageTableHeader(title: "Agent", count: agents.count, expanded: $agentsExpanded)
+                    .padding(.top, machines.isEmpty ? 0 : 4)
+                ForEach(agents.prefix(PopoverUsageList.visibleCount(agents.count, expanded: agentsExpanded))) { row in
+                    usageRow(row.usage) { AgentNameCell(row: row) }
+                }
+            }
+            if let models, !models.rows.isEmpty {
+                UsageTableHeader(title: "模型", count: models.rows.count, expanded: $modelsExpanded)
+                    .padding(.top, machines.isEmpty && agents.isEmpty ? 0 : 4)
+                ForEach(models.rows.prefix(PopoverUsageList.visibleCount(
+                    models.rows.count, expanded: modelsExpanded
+                ))) { row in
+                    modelRow(row.id, usage: row.usage)
                 }
 
                 Rectangle().fill(theme.border).frame(height: 1).gridCellUnsizedAxes(.horizontal)
-                modelRow(
-                    "今日合计", amount: PopoverTokenAmount(tokens: summary.tokens, unreportedEvents: Int64(summary.tokenUnreportedEvents)),
-                    cost: summary.costUsdMicros, cache: summary.cacheUsage
-                )
-            }
-
-            if models.count > Self.visibleCount {
-                Button {
-                    expanded.toggle()
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(expanded ? "收起" : "展开全部 \(models.count) 个模型")
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 8, weight: .semibold))
-                            .rotationEffect(.degrees(expanded ? -90 : 90))
-                            .animation(.easeOut(duration: 0.15), value: expanded)
-                    }
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(theme.muted)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
+                modelRow("合计", usage: models.total)
             }
         }
-        .padding(EdgeInsets(top: 10, leading: 16, bottom: 12, trailing: 16))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
     }
 
-    private func modelRow(_ name: String, amount: PopoverTokenAmount, cost: Int64, cache: PromptCacheUsage) -> some View {
+    private func usageRow(_ metrics: DailyUsage, @ViewBuilder name: () -> some View) -> some View {
         GridRow {
-            Text(verbatim: name)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .help(name)
+            name().frame(maxWidth: .infinity, alignment: .leading)
+            Text(verbatim: metrics.tokenAmount.dailyText).help(metrics.tokenAmount.detail)
+            Text(verbatim: metrics.formattedCost(currency: displayCurrency, usdToCny: usdToCny))
+                .help(metrics.unknownCost > 0 ? "部分用量未能计价" : "花费")
+            Text(verbatim: metrics.cacheUsage.percentText).help(metrics.cacheUsage.detail)
+        }
+        .lineLimit(1)
+        .font(.system(size: 11, design: .monospaced)).monospacedDigit()
+        .foregroundStyle(theme.fg)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func modelRow(_ name: String, usage: DailyUsage) -> some View {
+        let amount = usage.tokenAmount
+        let cache = usage.cacheUsage
+        return GridRow {
+            HStack(spacing: 4) {
+                Group {
+                    if name != "合计" {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(theme.muted)
+                            .frame(width: 7, height: 7)
+                    }
+                }
+                .frame(width: 14, height: 7)
+                .accessibilityHidden(true)
+                Text(verbatim: name)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .help(name)
             Text(verbatim: amount.dailyText)
                 .rollingNumber(value: amount.tokens)
                 .help(amount.detail)
-            Text(MenuBarNumberFormat.money(cost, currency: displayCurrency, usdToCny: usdToCny))
+            Text(usage.formattedCost(currency: displayCurrency, usdToCny: usdToCny))
                 .foregroundStyle(theme.fg2)
-                .rollingNumber(value: cost)
+                .rollingNumber(value: usage.costMicros)
             Text(verbatim: cache.percentText)
                 .help(cache.detail)
                 .accessibilityLabel(Text(verbatim: cache.detail))
@@ -1262,6 +1301,34 @@ private struct ModelListBlock: View {
         .font(.system(size: 11, design: .monospaced))
         .monospacedDigit()
         .foregroundStyle(theme.fg)
+    }
+}
+
+private struct AgentNameCell: View {
+    let row: DailyAgentRow
+    @Environment(\.mbTheme) private var theme
+
+    var body: some View {
+        let label = MenuBarProviderName.label(row.id)
+        let sessions = row.sessions.map { "\($0) 会话" }
+        let credits = row.creditsPicos.map(MenuBarNumberFormat.credits)
+        HStack(alignment: .center, spacing: 4) {
+            AgentBrandMark(providerId: row.id)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(verbatim: label)
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.fg)
+                    .truncationMode(.middle)
+                if let sessions {
+                    Text(verbatim: sessions).fixedSize(horizontal: true, vertical: false)
+                }
+                if let credits { Text(verbatim: credits) }
+            }
+        }
+        .font(.system(size: 10))
+        .foregroundStyle(theme.muted)
+        .lineLimit(1)
+        .help([label, sessions, credits].compactMap { $0 }.joined(separator: " · "))
     }
 }
 
@@ -1300,6 +1367,14 @@ struct QuotaDisplayModel {
         let tone: UsageMetricTone
     }
 
+    struct DetailRow: Identifiable {
+        let id: [String]
+        let label: String
+        let value: String
+        let exactValue: String
+        var help: String { "\(label) · \(exactValue)" }
+    }
+
     /// 登录过期时悬浮在感叹号上的操作说明。
     static let grokLoginHelp = "登录已过期。打开终端运行 grok login，完成后点重试或等待下次自动刷新。"
 
@@ -1309,7 +1384,9 @@ struct QuotaDisplayModel {
     let needsLogin: Bool
     let statusHelp: String?
     let staleMinutes: Int?
-    let summaryText: String
+    var summaryText: String { plainSummary ?? summarySegments.map(\.text).joined(separator: " · ") }
+    let plainSummary: String?
+    let plainSummaryHelp: String?
     let summarySegments: [SummarySegment]
     let alertMessage: String?
     let alertTime: String?
@@ -1318,7 +1395,7 @@ struct QuotaDisplayModel {
     let rings: [Ring]
     let bars: [Bar]
     let resetCredits: ResetCreditSummary?
-    let creditDetails: [(label: String, value: String)]
+    let creditDetails: [DetailRow]
 
     var hasDetails: Bool {
         staleMinutes != nil || alertMessage != nil || !rings.isEmpty || !bars.isEmpty
@@ -1333,13 +1410,13 @@ struct QuotaDisplayModel {
         // Fable 等 scoped 额度）只写「7d」分不清是谁的额度；主组（组名与
         // provider 同名）保持只用窗口标签。
         let labeledMetrics = snapshot.groups.flatMap { group in
-            group.items.map { metric -> (label: String, metric: UsageMetric, isPrimary: Bool) in
+            group.items.map { metric -> (label: String, metric: UsageMetric, isPrimary: Bool, groupID: String) in
                 let window = Self.shortWindowLabel(metric)
                 let isGoogle = snapshot.providerId == AntigravityQuota.providerID
                 let isPrimary = isGoogle ? group.id == "gemini"
                     : (snapshot.providerId == "codex" ? group.id == "codex" : group.title == snapshot.displayName)
                 let label = (isPrimary && !isGoogle) || group.title == window ? window : "\(group.title) \(window)"
-                return (label, metric, isPrimary)
+                return (label, metric, isPrimary, group.id)
             }
         }
         let warnStatuses: [UsageStatus] = [.warning, .error]
@@ -1464,8 +1541,6 @@ struct QuotaDisplayModel {
                 return SummarySegment(text: "\(label) \(Int(ring.percent.rounded()))%", tone: ring.tone)
             }
         }
-        summaryText = summarySegments.map(\.text).joined(separator: " · ")
-
         // 额度用尽已经由红色环与标题告警完整表达，不再额外堆一张大号“额度提醒”卡。
         // 其它无法从指标本身读出的告警仍保留消息卡。
         let warningRepresentedByQuota = snapshot.status == .warning
@@ -1481,20 +1556,82 @@ struct QuotaDisplayModel {
         }
 
         resetCredits = snapshot.resetCredits
-        if snapshot.providerId == AntigravityQuota.providerID {
-            creditDetails = labeledMetrics.compactMap { entry in
-                guard entry.metric.remainingPercent == nil, let quantity = entry.metric.detail else { return nil }
-                return (entry.label, quantity)
+        let quantities = labeledMetrics.flatMap { entry -> [DetailRow] in
+            let m = entry.metric
+            guard m.usedPercent == nil, m.remainingPercent == nil else { return [] }
+            let fields = [("剩余", m.remainingAmount), ("已用", m.usedAmount), ("总额", m.totalAmount)]
+                .compactMap { field, value in value.flatMap { $0.isEmpty ? nil : (field, $0) } }
+            if fields.isEmpty, snapshot.providerId == AntigravityQuota.providerID, let detail = m.detail {
+                return [DetailRow(id: [entry.groupID, m.id], label: entry.label, value: detail, exactValue: detail)]
             }
-        } else if case let .claude(_, extra?) = snapshot.accountCredits {
-            creditDetails = [
+            return fields.compactMap { field, raw in
+                if field == "剩余", Self.duplicatesWallet(m, raw: raw, wallet: snapshot.accountCredits) { return nil }
+                let label = fields.count == 1 && field == "剩余" ? entry.label : "\(entry.label) · \(field)"
+                let unit = m.unit.flatMap { $0.isEmpty ? nil : " " + $0 } ?? ""
+                return DetailRow(id: [entry.groupID, m.id, field], label: label,
+                                 value: Self.compactAmount(raw) + unit, exactValue: raw + unit)
+            }
+        }
+        var extras: [DetailRow] = []
+        if case let .claude(_, extra?) = snapshot.accountCredits {
+            extras = [
                 ("额外用量", extra.enabled == false ? "已关闭" : nil),
                 ("本月额外已用", extra.used?.displayText),
                 ("每月支出上限", extra.monthlyLimit?.displayText)
-            ].compactMap { label, value in value.map { (label, $0) } }
-        } else {
-            creditDetails = []
+            ].compactMap { label, value in
+                value.map { DetailRow(id: ["account", label], label: label, value: $0, exactValue: $0) }
+            }
         }
+        let canUseHeader = summarySegments.isEmpty && snapshot.status == .ok && !isWarn
+            && snapshot.accountCredits?.displayBalance == nil && extras.isEmpty && (resetCredits?.availableCount ?? 0) == 0
+        let summary = snapshot.summary?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if canUseHeader, quantities.count == 1, let row = quantities.first {
+            if labeledMetrics.count == 1, labeledMetrics[0].metric.kind == .tokens, let summary, !summary.isEmpty {
+                plainSummary = summary
+            } else {
+                plainSummary = "\(row.label) \(row.value)"
+            }
+            plainSummaryHelp = row.help
+            creditDetails = []
+        } else {
+            creditDetails = quantities + extras
+            let windows = Set(quantities.map { Array($0.id.prefix(2)) })
+            if canUseHeader, windows.count > 1 {
+                plainSummary = "\(windows.count) 项额度"
+            } else {
+                plainSummary = canUseHeader && creditDetails.isEmpty && snapshot.providerId != AntigravityQuota.providerID
+                    ? summary.flatMap { $0.isEmpty ? nil : $0 } : nil
+            }
+            plainSummaryHelp = plainSummary
+        }
+    }
+
+    private static func compactAmount(_ raw: String) -> String {
+        guard raw.count > 14 else { return raw }
+        if let number = Double(raw), number.isFinite, number != 0 {
+            return String(format: "%.6g", locale: Locale(identifier: "en_US_POSIX"), number)
+        }
+        return "\(raw.prefix(8))…\(raw.suffix(4))"
+    }
+
+    private static func duplicatesWallet(_ metric: UsageMetric, raw: String, wallet: AccountCredits?) -> Bool {
+        guard metric.kind == .balance, wallet?.displayBalance != nil else { return false }
+        let unit = metric.unit?.lowercased() ?? ""
+        let amount: Decimal
+        switch wallet {
+        case .codex(.amount(let value)) where ["credits", "credit", "积分"].contains(unit):
+            amount = value
+        case .claude(let prepaid?, _) where prepaid.currency.lowercased() == unit:
+            amount = prepaid.value
+        default:
+            return false
+        }
+        var normalized = raw
+        if normalized.contains(".") {
+            while normalized.last == "0" { normalized.removeLast() }
+            if normalized.last == "." { normalized.removeLast() }
+        }
+        return NSDecimalNumber(decimal: amount).stringValue == normalized
     }
 
     /// 「智谱 GLM」→「智」；「Claude Code」→「Cl」（稿：badge 双字符/单汉字）。
@@ -1574,9 +1711,7 @@ private struct QuotaGroupView: View {
         VStack(spacing: 0) {
             summaryRow
                 .contextMenu {
-                    if snapshot.providerId == AntigravityQuota.providerID {
-                        Button("刷新额度", action: onRetry).disabled(isRefreshing)
-                    }
+                    Button("刷新额度", action: onRetry).disabled(isRefreshing)
                 }
 
             if isExpanded && model.hasDetails {
@@ -1611,9 +1746,7 @@ private struct QuotaGroupView: View {
                         if let credits = model.resetCredits, credits.availableCount > 0 {
                             ResetCardsGroup(summary: credits)
                         }
-                        ForEach(model.creditDetails, id: \.label) { row in
-                            creditDetail(row.label, value: row.value)
-                        }
+                        ForEach(model.creditDetails, content: creditDetail)
                     }
                     .padding(EdgeInsets(top: 10, leading: 12, bottom: 12, trailing: 12))
                     .opacity(model.staleMinutes != nil ? 0.9 : 1)
@@ -1628,14 +1761,18 @@ private struct QuotaGroupView: View {
         )
     }
 
-    private func creditDetail(_ label: String, value: String) -> some View {
+    private func creditDetail(_ row: QuotaDisplayModel.DetailRow) -> some View {
         HStack(spacing: 8) {
-            Text(label).foregroundStyle(theme.fg2)
+            Text(verbatim: row.label).foregroundStyle(theme.fg2)
+                .lineLimit(1).truncationMode(.middle)
             Spacer(minLength: 4)
-            Text(value).monospacedDigit().foregroundStyle(theme.fg)
+            Text(verbatim: row.value).monospacedDigit().foregroundStyle(theme.fg)
+                .lineLimit(1).truncationMode(.middle)
         }
         .font(.system(size: 12))
-        .accessibilityElement(children: .combine)
+        .background(PopoverToolTip(text: row.help).accessibilityHidden(true))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: row.help))
     }
 
     @ViewBuilder private var summaryRow: some View {
@@ -1685,23 +1822,29 @@ private struct QuotaGroupView: View {
 
             // 摘要各段跟随环的 tone（tmux 同款：健康绿/超速黄/用尽红），
             // 展开与收起都显示——展开后它就是标题行的速览。
-            model.summarySegments.enumerated().reduce(Text("")) { acc, pair in
-                acc
-                    + Text(pair.offset > 0 ? " · " : "").foregroundColor(theme.muted)
-                    + Text(pair.element.text)
-                        .foregroundColor(summaryToneColor(pair.element.tone, theme: theme))
+            if let text = model.plainSummary {
+                Text(verbatim: text)
+                    .font(.system(size: 11))
+                    .foregroundStyle(theme.fg2)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .background(PopoverToolTip(text: model.plainSummaryHelp ?? text).accessibilityHidden(true))
+                    .accessibilityLabel(Text(verbatim: model.plainSummaryHelp ?? text))
+            } else {
+                model.summarySegments.enumerated().reduce(Text("")) { acc, pair in
+                    acc
+                        + Text(pair.offset > 0 ? " · " : "").foregroundColor(theme.muted)
+                        + Text(pair.element.text)
+                            .foregroundColor(summaryToneColor(pair.element.tone, theme: theme))
+                }
+                .font(.system(size: 10, design: .monospaced))
+                .monospacedDigit()
+                .lineLimit(1)
+                .layoutPriority(1)
             }
-            .font(.system(size: 10, design: .monospaced))
-            .monospacedDigit()
-            .lineLimit(1)
-            .layoutPriority(1)
 
             if model.hasDetails {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(theme.muted)
-                    .frame(width: 14, height: 14)
-                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                DisclosureChevron(isExpanded: isExpanded)
                     .animation(.easeOut(duration: 0.15), value: isExpanded)
             }
         }
@@ -2099,11 +2242,7 @@ private struct ResetCardsGroup: View {
                             .help("最快到期的重置卡")
                     }
 
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(theme.muted)
-                        .frame(width: 14, height: 14)
-                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                    DisclosureChevron(isExpanded: expanded)
                         .animation(.easeOut(duration: 0.15), value: expanded)
                 }
                 .padding(EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 10))
@@ -2188,23 +2327,31 @@ private struct ResetCardRow: View {
 // MARK: - .unk 底注 与 .foot 操作行
 
 private struct UnknownNote: View {
-    let count: Int
+    let summary: DailyModelSummary
     @Environment(\.mbTheme) private var theme
 
     var body: some View {
+        let details = summary.rows
+            .filter { $0.usage.unknownCost > 0 }
+            .map { "\($0.id) · \($0.usage.unknownCost) 条" }
+            .joined(separator: "\n")
         HStack(spacing: 5) {
-            Circle().fill(theme.warn).frame(width: 6, height: 6)
-            Text("今日 \(count) 条事件价格未知，未计入金额")
+            Circle().fill(theme.warn).frame(width: 6, height: 6).accessibilityHidden(true)
+            Text("\(summary.total.unknownCost) 条用量未能计价，未计入花费")
                 .font(.system(size: 10.5))
                 .foregroundStyle(theme.muted)
         }
+        .background(PopoverToolTip(text: details))
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(Text(verbatim: details))
         .padding(EdgeInsets(top: 0, leading: 16, bottom: 10, trailing: 16))
     }
 }
 
 private struct FootBar: View {
-    @Binding var isScanPaused: Bool
+    @ObservedObject var store: ProviderStore
     let onOpenMainInterface: () -> Void
+    let onOpenSettings: () -> Void
     @Environment(\.mbTheme) private var theme
 
     var body: some View {
@@ -2219,42 +2366,36 @@ private struct FootBar: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-        .focusable(false)
+            .focusable(false)
 
             // 标签式开关：同高描边钮，暂停中转 warn
             Button {
-                isScanPaused.toggle()
+                store.isScanPaused.toggle()
             } label: {
-                Text(isScanPaused ? "恢复扫描" : "暂停扫描")
+                Text(store.isScanPaused ? "恢复扫描" : "暂停扫描")
                     .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(isScanPaused ? theme.warn : theme.fg2)
+                    .foregroundStyle(store.isScanPaused ? theme.warn : theme.fg2)
                     .padding(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
                     .background(
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(isScanPaused ? theme.tintWarn : Color.clear)
+                            .fill(store.isScanPaused ? theme.tintWarn : Color.clear)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(isScanPaused ? theme.warn.opacity(0.55) : theme.border, lineWidth: 1)
+                            .stroke(store.isScanPaused ? theme.warn.opacity(0.55) : theme.border, lineWidth: 1)
                     )
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-        .focusable(false)
+            .focusable(false)
 
             Spacer()
 
-            Button(action: onOpenMainInterface) {
+            FootButton(action: onOpenSettings) {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 11))
-                    .foregroundStyle(theme.fg2)
-                    .frame(width: 25, height: 25)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.surface2.opacity(0.6)))
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-        .focusable(false)
-            .help("设置")
+            .accessibilityLabel("打开设置")
+            .help("打开设置")
         }
         .padding(EdgeInsets(top: 10, leading: 14, bottom: 12, trailing: 14))
     }

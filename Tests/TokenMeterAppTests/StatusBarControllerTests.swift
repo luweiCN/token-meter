@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import TokenMeterApp
 @testable import TokenMeterCore
@@ -77,6 +78,48 @@ final class StatusBarControllerTests: XCTestCase {
         XCTAssertEqual(controller.titleForTesting, expected.accessibilityTitle)
     }
 
+    func testSyncRefreshesTodayInTheStatusItemAndPopover() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let node = directory.appendingPathComponent("node", isDirectory: true)
+        try FileManager.default.createDirectory(at: node, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = ProviderStore(
+            config: TokenMeterConfig(menuBar: MenuBarConfig(primaryProviderId: nil), providers: []),
+            databaseURL: directory.appendingPathComponent("tokenmeter.sqlite")
+        )
+        let controller = StatusBarController(store: store, popover: SpyPopover())
+        await store.reloadTodaySummary()
+
+        let today = MonthActivityRepository.dayText(Date())
+        let snapshot = """
+        {"day":"\(today)","devices":[
+          {"id":"mac","name":"Mac","local":true,"active":true,"observed":1,
+           "tokens":1000000,"costMicros":250000,"input":1000000,"cacheRead":0,"cacheWrite":0,"unknownCost":0,"unknownTokens":0},
+          {"id":"remote","name":"Remote","local":false,"active":true,"observed":1,
+           "tokens":3000000,"costMicros":750000,"input":0,"cacheRead":3000000,"cacheWrite":0,"unknownCost":0,"unknownTokens":0}
+        ],"agents":[]}
+        """
+        let snapshotURL = DesktopNode.summaryURL(in: node)
+        let refreshed = expectation(description: "menu usage published after the device cache changed")
+        let watcher = SnapshotWatcher(file: snapshotURL) {
+            Task { @MainActor in
+                await store.reloadDailyNodeSummary()
+                refreshed.fulfill()
+            }
+        }
+        defer { withExtendedLifetime(watcher) {} }
+        try Data(snapshot.utf8).write(to: snapshotURL, options: .atomic)
+        await fulfillment(of: [refreshed], timeout: 3)
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        XCTAssertEqual(store.todaySummary.usage.tokens, 4_000_000)
+        XCTAssertEqual(store.todaySummary.usage.costMicros, 1_000_000)
+        XCTAssertNil(store.todaySummary.sessions)
+        XCTAssertNil(store.overviewStats)
+        XCTAssertEqual(controller.projectionForTesting.tail, .text(UsageFormatter.compactTokens(4_000_000)))
+        XCTAssertEqual(controller.titleForTesting, controller.projectionForTesting.accessibilityTitle)
+    }
+
     func testContextMenuContainsOpenMainInterfaceAndQuit() throws {
         let controller = StatusBarController(
             store: makeStore(),
@@ -146,6 +189,24 @@ final class StatusBarControllerTests: XCTestCase {
         XCTAssertTrue(popover.contentViewController === first)
     }
 
+    func testPopoverSettingsShortcutClosesPopoverAndOpensSettings() throws {
+        let launcher = RecordingMainInterfaceLauncher()
+        let popover = SpyPopover()
+        let controller = StatusBarController(
+            store: makeStore(),
+            mainInterfaceLauncher: launcher,
+            popover: popover
+        )
+        controller.showPopoverForTesting()
+        let hosting = try XCTUnwrap(popover.contentViewController as? NSHostingController<PopoverView>)
+
+        hosting.rootView.onOpenSettings()
+
+        XCTAssertFalse(popover.isShown)
+        XCTAssertEqual(launcher.settingsOpenCount, 1)
+        XCTAssertEqual(launcher.openCount, 0)
+    }
+
     func testPopoverClosesWhenAppResignsActive() throws {
         // TokenMeter 是 LSUIElement，实测 popover 的 .transient 不总能在切到
         // 另一个 App（比如仪表盘的 Electron 窗口）时自动收起。显式监听失活
@@ -171,6 +232,16 @@ final class StatusBarControllerTests: XCTestCase {
         XCTAssertEqual(spyPopover.performCloseCallCount, 1)
     }
 
+    func testOnlyDeviceInvitationsAreForwardedToTheDashboard() throws {
+        for value in ["tokenmeter://pair#invitation", "TokenMeter://PAIR#invitation"] {
+            XCTAssertTrue(ElectronMainInterfaceLauncher.isPairingInvitation(try XCTUnwrap(URL(string: value))))
+        }
+        for value in ["https://pair/", "tokenmeter://settings/", "tokenmeter://user@pair/",
+                      "tokenmeter://pair:443/", "tokenmeter://pair/#" + String(repeating: "a", count: 2048)] {
+            XCTAssertFalse(ElectronMainInterfaceLauncher.isPairingInvitation(try XCTUnwrap(URL(string: value))))
+        }
+    }
+
     func testElectronLauncherUsesPreparedElectronCliWithoutUserShell() throws {
         let electronDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -191,6 +262,10 @@ final class StatusBarControllerTests: XCTestCase {
             ]
         )
         XCTAssertTrue(try XCTUnwrap(command.environment["PATH"]).contains(".volta/bin"))
+        let settingsCommand = ElectronMainInterfaceLauncher.launchCommand(
+            electronDirectory: electronDirectory, openSettings: true
+        )
+        XCTAssertEqual(settingsCommand.arguments, command.arguments + ["--open-settings"])
     }
 
     func testElectronDirectoryPrefersBundledResourcesBeforeRepositoryWorkingDirectory() throws {
@@ -236,9 +311,14 @@ final class StatusBarControllerTests: XCTestCase {
 
 private final class RecordingMainInterfaceLauncher: MainInterfaceLaunching {
     private(set) var openCount = 0
+    private(set) var settingsOpenCount = 0
 
     func openMainInterface() {
         openCount += 1
+    }
+
+    func openSettings() {
+        settingsOpenCount += 1
     }
 }
 

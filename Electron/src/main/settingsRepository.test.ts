@@ -110,6 +110,7 @@ describe('SettingsRepository', () => {
         usage: 'tok',
         windowOrder: 'longFirst',
         showPeakBadge: true,
+        showPeakSection: true,
         peakBadgeStyle: 'dotWord'
       },
       displayCurrency: 'cny',
@@ -297,6 +298,7 @@ describe('SettingsRepository', () => {
         usage: 'tok',
         windowOrder: 'longFirst',
         showPeakBadge: true,
+        showPeakSection: true,
         peakBadgeStyle: 'dotWord'
       });
     });
@@ -313,6 +315,17 @@ describe('SettingsRepository', () => {
 
       expect(() => repo.update({ menubarShowPeakBadge: 'yes' } as never, 5)).toThrow(/menubarShowPeakBadge/);
       expect(() => repo.update({ menubarPeakBadgeStyle: 'banner' } as never, 5)).toThrow(/menubarPeakBadgeStyle/);
+    });
+
+    it('persists the popover peak-hours section independently of the menu bar badge', () => {
+      const { db, repo } = openRepo();
+      repo.update({ menubarShowPeakSection: false }, 3);
+      const restored = new SettingsRepository(db);
+      expect(restored.get().menubarAppearance).toMatchObject({ showPeakSection: false, showPeakBadge: true });
+      restored.update({ menubarShowPeakBadge: false }, 4);
+      restored.update({ menubarShowPeakSection: true }, 5);
+      expect(repo.get().menubarAppearance).toMatchObject({ showPeakSection: true, showPeakBadge: false });
+      expect(() => repo.update({ menubarShowPeakSection: 'false' } as never, 6)).toThrow(/menubarShowPeakSection/);
     });
 
     it('adds menubar columns to a legacy overrides table (idempotent)', () => {

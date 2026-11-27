@@ -1,9 +1,36 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { PairEvent, PairRequest } from './shared/pairing.js';
 import type { ModelsFilter, SessionsFilter, SettingsPatch } from './renderer/api.js';
 
 
 contextBridge.exposeInMainWorld('tokenMeter', {
+  devices: { query: (host: string, from: string) => ipcRenderer.invoke('devices:usage', host, from) },
+  pairing: {
+    start: (id: string, request: PairRequest) => ipcRenderer.invoke('pair:start', id, request),
+    decide: (id: string, approve: boolean) => ipcRenderer.invoke('pair:decide', id, approve),
+    cancel: (id: string) => ipcRenderer.invoke('pair:cancel', id),
+    copy: (id: string, field: 'code' | 'url') => ipcRenderer.invoke('pair:copy', id, field),
+    list: () => ipcRenderer.invoke('pair:list'),
+    remove: (id: string) => ipcRenderer.invoke('pair:remove', id),
+    takeInvitation: () => ipcRenderer.invoke('pair:pending'),
+    onUpdate: (callback: (id: string, update: PairEvent) => void) => {
+      const listener = (_event: unknown, id: string, update: PairEvent) => callback(id, update);
+      ipcRenderer.on('pair:update', listener);
+      return () => ipcRenderer.removeListener('pair:update', listener);
+    },
+    onInvitation: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('pair:link', listener);
+      return () => ipcRenderer.removeListener('pair:link', listener);
+    }
+  },
   settings: {
+    takeOpenRequest: () => ipcRenderer.invoke('settings:takeOpenRequest'),
+    onOpenRequested: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('settings:openRequested', listener);
+      return () => ipcRenderer.removeListener('settings:openRequested', listener);
+    },
     get: () => ipcRenderer.invoke('settings:get'),
     update: (patch: SettingsPatch, expectedVersion: number) => ipcRenderer.invoke('settings:update', patch, expectedVersion)
   },

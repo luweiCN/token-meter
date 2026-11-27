@@ -30,14 +30,13 @@ public enum TokenMeterPaths {
         baseDirectory(homeDirectory: homeDirectory).appendingPathComponent("tokenmeter.sqlite")
     }
 
-    public static func legacyConfigURL(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        baseDirectory(homeDirectory: homeDirectory).appendingPathComponent("config.json")
+    /// The menu app and the headless indexer ship beside the device CLI.
+    package static var cliExecutableURL: URL? {
+        Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("token-meter")
     }
 
-    public static func legacySnapshotCacheURL(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        baseDirectory(homeDirectory: homeDirectory)
-            .appendingPathComponent("cache", isDirectory: true)
-            .appendingPathComponent("provider-snapshots.json")
+    package static func accountSnapshotsURL(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        baseDirectory(homeDirectory: homeDirectory).appendingPathComponent("cache/provider-snapshots.json")
     }
 
     /// 用户自定义模型定价（覆盖随包 LiteLLM 快照）。手写 JSON，无 UI。

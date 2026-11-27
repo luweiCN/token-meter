@@ -195,15 +195,15 @@
       "cacheReadPerMTok": 0.5,
       "cacheWrite5mPerMTok": 0.0,
       "cacheWrite1hPerMTok": 0.0,
-      "note": "xAI 官方牌价（docs.x.ai，2026-08 公开表）：grok-4.6 <200K prompt 为 input $2 / cached $0.50 / output $6 per 1M；缓存写入无单独档位记 0。实现时若官网拆价再改"
+      "note": "xAI 官方牌价（docs.x.ai，2026-08 公开表）：grok-4.6 <200K prompt 为 input $2 / cached $0.50 / output $6 per 1M；缓存写入无单独档位记 0。裸键排在 xai/grok-4.6 之前，所以这份平价盖过上游长上下文档。Grok Build 的 grok-4.6-build 没有专属价，由 CostCalculator 回退到这个键"
     },
-    "grok-4.6-build": {
+    "grok-4.7": {
       "inputPerMTok": 2.0,
       "outputPerMTok": 6.0,
       "cacheReadPerMTok": 0.5,
       "cacheWrite5mPerMTok": 0.0,
       "cacheWrite1hPerMTok": 0.0,
-      "note": "与 grok-4.6 同价（Grok Build 会话 modelUsage 键为 grok-4.6-build）；官网未拆价"
+      "note": "与 grok-4.6 同一张平价：input $2 / cached $0.50 / output $6 per 1M（docs.x.ai 短上下文，2026-11-25）。缓存写入无单独档位记 0。裸键盖过上游 xai/grok-4.7 的长上下文档。grok-4.7-build 由 CostCalculator 回退到这个键，不再单独登记；grok-4.7-build-fast 不回退"
     }
   }
 }

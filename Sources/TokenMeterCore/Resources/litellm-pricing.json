@@ -16739,7 +16739,7 @@
       "inputPerMTok": 2.0,
       "outputPerMTok": 6.0
     },
-    "grok-4.6-build": {
+    "grok-4.7": {
       "cacheReadPerMTok": 0.5,
       "cacheWrite1hPerMTok": 0.0,
       "cacheWrite5mPerMTok": 0.0,
@@ -28028,6 +28028,6 @@
     }
   },
   "schemaVersion": 2,
-  "snapshotVersion": "ffaa12e4a1fc",
+  "snapshotVersion": "93a718607953",
   "source": "litellm"
 }

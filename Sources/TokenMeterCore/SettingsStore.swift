@@ -116,17 +116,14 @@ public final class SettingsStore {
             usage: string("menubar.usage").flatMap(MenuBarUsageTail.init(rawValue:)) ?? .tok,
             windowOrder: string("menubar.windowOrder").flatMap(MenuBarWindowOrder.init(rawValue:)) ?? .longFirst,
             showPeakBadge: flag("menubar.showPeakBadge"),
+            showPeakSection: flag("menubar.showPeakSection"),
             peakBadgeStyle: string("menubar.peakBadgeStyle").flatMap(PeakBadgeStyle.init(rawValue:)) ?? .dotWord,
             pinnedBalanceProviderId: string("menubar.pinnedBalanceProviderId").flatMap { $0.isEmpty ? nil : $0 }
         )
     }
 
     public func setPinnedBalanceProvider(_ providerId: String?) throws {
-        // 与 Electron 共用版本计数；在同一条写语句内取号，避免刷新页面和固定操作争用旧版本。
-        try database.execute("""
-            INSERT OR REPLACE INTO settings (key, value_json, value_type, version, updated_by)
-            SELECT 'menubar.pinnedBalanceProviderId', ?, 'string', coalesce(max(version), 0) + 1, 'swift' FROM settings
-            """, [.text(jsonString(providerId ?? ""))])
+        try set("menubar.pinnedBalanceProviderId", value: .text(providerId ?? ""), updatedBy: .swift)
     }
 
     public func apply(
@@ -171,7 +168,7 @@ public final class SettingsStore {
         Int(try database.query("SELECT coalesce(max(version), 0) AS version FROM settings")[0].int("version") ?? 0)
     }
 
-    private func set(_ key: String, value: SQLiteValue, version: Int, updatedBy: SettingsUpdatedBy) throws {
+    private func set(_ key: String, value: SQLiteValue, version: Int? = nil, updatedBy: SettingsUpdatedBy) throws {
         let valueJSON: String
         let valueType: String
         switch value {
@@ -188,12 +185,13 @@ public final class SettingsStore {
             valueJSON = "null"
             valueType = "json"
         }
+        // 单项修改在写语句内分配版本，确保菜单栏与 Electron 并发写入时共用同一序列。
         try database.execute(
             """
             INSERT OR REPLACE INTO settings(key, value_json, value_type, version, updated_by)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, coalesce(?, (SELECT coalesce(max(version), 0) + 1 FROM settings)), ?)
             """,
-            [.text(key), .text(valueJSON), .text(valueType), .int(Int64(version)), .text(updatedBy.rawValue)]
+            [.text(key), .text(valueJSON), .text(valueType), version.map { .int(Int64($0)) } ?? .null, .text(updatedBy.rawValue)]
         )
     }
 

@@ -523,19 +523,18 @@ export function MenubarAppearance({ onBack }: { onBack: () => void }) {
         <div className="chead">
           <div>
             <h2>峰/谷标识</h2>
-            <div className="desc">有峰谷定价的模型时显示，不依赖某一家额度接入 · 高峰黄色 / 空闲绿色</div>
+            <div className="desc">显示 DeepSeek 等模型的当前计费时段。高峰为黄色，低谷为绿色。</div>
           </div>
-          <span className={savedTick ? 'savetick show' : 'savetick'}>已保存 ✓</span>
         </div>
         <div className="setrow">
           <button
             type="button"
             className={appearance.showPeakBadge ? 'sw on' : 'sw'}
             aria-pressed={appearance.showPeakBadge}
-            aria-label="显示峰谷标识"
+            aria-labelledby="peak-badge-label"
             onClick={() => apply({ menubarShowPeakBadge: !appearance.showPeakBadge })}
           />
-          <span>在菜单栏显示</span>
+          <span id="peak-badge-label">在顶部菜单栏显示峰/谷标识</span>
           <div className="grow" />
           <div className="seg" role="group" aria-label="峰谷标识样式">
             {([
@@ -556,6 +555,16 @@ export function MenubarAppearance({ onBack }: { onBack: () => void }) {
               </button>
             ))}
           </div>
+        </div>
+        <div className="setrow">
+          <button
+            type="button"
+            className={appearance.showPeakSection ? 'sw on' : 'sw'}
+            aria-pressed={appearance.showPeakSection}
+            aria-labelledby="peak-section-label"
+            onClick={() => apply({ menubarShowPeakSection: !appearance.showPeakSection })}
+          />
+          <span id="peak-section-label">在菜单栏弹窗中显示峰谷时段</span>
         </div>
       </div>
 

@@ -153,6 +153,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.menuBarAppearance.style, .rings)
         XCTAssertEqual(snapshot.menuBarAppearance.windowOrder, .longFirst)
         XCTAssertTrue(snapshot.menuBarAppearance.showPeakBadge)
+        XCTAssertTrue(snapshot.menuBarAppearance.showPeakSection)
         XCTAssertEqual(snapshot.menuBarAppearance.peakBadgeStyle, .dotWord)
     }
 

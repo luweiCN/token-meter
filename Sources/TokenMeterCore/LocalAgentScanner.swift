@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 public final class LocalAgentScanner {
@@ -51,12 +52,11 @@ public final class LocalAgentScanner {
     }
 
     private static func loadQoderModelCatalog(homeDirectory: URL) throws -> [QoderModelCatalogEntry] {
-        guard let executable = QoderUsageProvider.resolveExecutable(homeDirectory: homeDirectory) else {
+        guard let cli = TokenMeterPaths.cliExecutableURL, FileManager.default.isExecutableFile(atPath: cli.path) else {
             return []
         }
-        return try QoderModelCatalogParser.parse(
-            data: QoderUsageProvider.fetchModelCatalogData(executable: executable)
-        )
+        let data = try executableOutput(cli, arguments: ["--home", homeDirectory.path, "qoder-models"], timeout: 30)
+        return try JSONDecoder().decode([QoderModelCatalogEntry].self, from: data)
     }
 
     public static func seedDefaultScanRoots(
@@ -84,6 +84,13 @@ public final class LocalAgentScanner {
                 ]
             )
         }
+    }
+
+    package static func enabledRoots(in database: SQLiteDatabase, settings: SettingsSnapshot?) throws -> [SQLiteRow] {
+        let kinds = settings.map { Set($0.enabledAgentKinds.compactMap(LocalAgentKind.init(rawValue:)).map(\.sourceKind)) }
+            ?? Set(SourceKind.allCases)
+        return try database.query("SELECT id, kind, display_name FROM scan_roots WHERE enabled = 1 AND scan_mode != 'disabled' ORDER BY display_name")
+            .filter { $0.string("kind").flatMap(SourceKind.init(rawValue:)).map(kinds.contains) == true }
     }
 
     public func scanRoot(id rootId: Int64) async throws {
@@ -159,12 +166,16 @@ public final class LocalAgentScanner {
         writer.updateCostCalculator(calculator)
 
         let usedKeys = try usedPricingKeys()
-        let usedAffected = affected.intersection(usedKeys)
+        let usedAffected = CostCalculator.usageKeysAffected(by: affected, usedKeys: usedKeys)
         for key in usedAffected.sorted() {
+            let pricedAs = CostCalculator.pricingCandidates(for: key)
+            let forceIgnoringReported = pricedAs.contains { candidate in
+                ignoredReported.contains(candidate) || canonicalModels[candidate]?.tiered != nil
+            }
             try reprojectPricing(
                 canonicalModel: key,
                 calculator: calculator,
-                forceIgnoringReported: ignoredReported.contains(key) || canonicalModels[key]?.tiered != nil
+                forceIgnoringReported: forceIgnoringReported
             )
         }
         if !usedAffected.isEmpty {
@@ -396,6 +407,11 @@ public final class LocalAgentScanner {
     private func withExclusiveScan<T>(_ operation: () throws -> T) throws -> T {
         guard scanLock.try() else { throw LocalAgentScannerError.scanAlreadyInProgress }
         defer { scanLock.unlock() }
+        guard database.path != ":memory:" else { return try operation() }
+        let fd = open(database.path + ".scan-lock", O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { close(fd) }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { throw LocalAgentScannerError.scanAlreadyInProgress }
         return try operation()
     }
 
@@ -428,7 +444,7 @@ public final class LocalAgentScanner {
                 try scanOpenCodeRoot(root, runId: runId, progress: progress, reporter: reporter)
             }
 
-            if root.kind == .qoderJSONL {
+            if root.kind == .qoderJSONL, progress.filesSeen > 0 {
                 // 模型目录失败不能让本地会话扫描失败；旧目录仍可用，首次失败则诚实显示原始 ID。
                 try? refreshQoderModelCatalogIfNeeded(projectsRoot: root.rootURL)
             }
@@ -2099,7 +2115,7 @@ public final class LocalAgentScanner {
     }
 }
 
-enum LocalAgentScannerError: Error, Equatable {
+package enum LocalAgentScannerError: Error, Equatable {
     case scanAlreadyInProgress
 }
 
@@ -2186,4 +2202,17 @@ private struct FileMetadata {
     let mtimeNanoseconds: Int64
     let inode: Int64?
     let dev: Int64?
+}
+
+struct QoderModelCatalogEntry: Decodable, Equatable {
+    let value: String
+    let modelId: String?
+    let displayName: String
+    let source: String?
+    let isEnabled: Bool?
+
+    var sourceModelIds: [String] {
+        if let modelId, modelId != value { return [value, modelId] }
+        return [value]
+    }
 }

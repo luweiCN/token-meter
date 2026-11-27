@@ -182,6 +182,15 @@ const allowedIpcChannels: Record<string, true> = {
   'credentials:set': true,
   'credentials:state': true,
   'dashboard:overview': true,
+  'devices:usage': true,
+  'pair:start': true,
+  'pair:decide': true,
+  'pair:cancel': true,
+  'pair:copy': true,
+  'pair:list': true,
+  'pair:remove': true,
+  'pair:pending': true,
+
   'overview:query': true,
   'overview:subagentBreakdown': true,
   'overview:dayModelBreakdown': true,
@@ -203,6 +212,7 @@ const allowedIpcChannels: Record<string, true> = {
   'sessions:query': true,
   'sessions:trend': true,
   'settings:get': true,
+  'settings:takeOpenRequest': true,
   'settings:update': true,
   'window:setButtonsVisible': true
 };
@@ -211,6 +221,8 @@ const allowedPreloadApiShape: Record<string, string[]> = {
   agents: ['detect'],
   credentials: ['set', 'state'],
   dashboard: ['queryOverview'],
+  devices: ['query'],
+  pairing: ['start', 'decide', 'cancel', 'copy', 'list', 'remove', 'takeInvitation', 'onInvitation', 'onUpdate'],
   overview: ['dayModelBreakdown', 'dayProjectBreakdown', 'onInvalidate', 'onSessionEvent', 'query', 'subagentBreakdown'],
   index: ['isScanning', 'onScanProgress', 'setRootEnabled', 'startFullReindex', 'status'],
   models: ['query', 'trend'],
@@ -218,7 +230,7 @@ const allowedPreloadApiShape: Record<string, string[]> = {
   opencodeGo: ['login', 'logout', 'status'],
   projects: ['detail', 'list'],
   sessions: ['projects', 'query', 'trend'],
-  settings: ['get', 'update'],
+  settings: ['get', 'onOpenRequested', 'takeOpenRequest', 'update'],
   windowControls: ['setButtonsVisible']
 };
 

@@ -2,6 +2,9 @@ import { app, BrowserWindow } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerIpcHandlers } from './ipc.js';
+import { isPairURL, isRecord } from '../shared/pairing.js';
+import { queueInvitation } from './pairInvitation.js';
+import { queueSettingsOpen } from './settingsNavigation.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -10,20 +13,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 if (process.env.VITE_DEV_SERVER_URL) {
   app.setPath('userData', `${app.getPath('userData')}-dev`);
 }
-
-// 同一份 userData 只允许一个实例：重复启动（连点两次「打开应用」）的
-// 第二个实例同样会撞 singleton 白屏——拿不到锁就退出，把已有窗口带到前台。
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
-}
-app.on('second-instance', () => {
-  const window = getMainWindow();
-  if (window) {
-    if (window.isMinimized()) window.restore();
-    window.show();
-    window.focus();
-  }
-});
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -81,13 +70,27 @@ export function focusMainWindow(): void {
 }
 
 export function registerAppLifecycle(): void {
-  if (!app.requestSingleInstanceLock()) {
+  const incoming = process.env.TOKENMETER_PAIR_INVITATION;
+  delete process.env.TOKENMETER_PAIR_INVITATION;
+  const invitation = isPairURL(incoming) ? incoming : undefined;
+  const openSettings = process.argv.includes('--open-settings');
+  const launchData = {
+    ...(invitation ? { invitation } : {}),
+    ...(openSettings ? { openSettings } : {})
+  };
+  if (!app.requestSingleInstanceLock(launchData)) {
     app.quit();
     return;
   }
-
-  app.on('second-instance', () => {
+  if (invitation) queueInvitation(invitation);
+  if (openSettings) queueSettingsOpen();
+  app.on('second-instance', (_event, _argv, _directory, data: unknown) => {
+    const added = isRecord(data) && queueInvitation(data.invitation);
+    const requested = isRecord(data) && data.openSettings === true;
+    if (requested) queueSettingsOpen();
     focusMainWindow();
+    if (added) mainWindow?.webContents.send('pair:link');
+    if (requested) mainWindow?.webContents.send('settings:openRequested');
   });
 
   app.whenReady().then(() => {

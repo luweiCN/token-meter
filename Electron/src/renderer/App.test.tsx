@@ -83,7 +83,13 @@ interface DashboardOverview {
 }
 
 interface TokenMeterApi {
+  pairing: {
+    takeInvitation: Mock<() => Promise<string | null>>;
+    onInvitation: Mock<(callback: () => void) => () => void>;
+  };
   settings: {
+    takeOpenRequest: Mock<() => Promise<boolean>>;
+    onOpenRequested: Mock<(callback: () => void) => () => void>;
     get: Mock<() => Promise<SettingsSnapshot>>;
     update: Mock<(patch: SettingsPatch, expectedVersion: number) => Promise<SettingsApplyRequest>>;
   };
@@ -148,6 +154,7 @@ const settingsSnapshot: SettingsSnapshot = {
     usage: 'tok',
     windowOrder: 'longFirst',
     showPeakBadge: true,
+    showPeakSection: true,
     peakBadgeStyle: 'dotWord'
   },
   enabledAgentKinds: ['claudeCode', 'codex'],
@@ -272,7 +279,13 @@ function expectNoEnglishScaffold() {
 
 function installTokenMeterApi(): TokenMeterApi {
   const api: TokenMeterApi = {
+    pairing: {
+      takeInvitation: vi.fn(async () => null),
+      onInvitation: vi.fn(() => () => {})
+    },
     settings: {
+      takeOpenRequest: vi.fn(async () => false),
+      onOpenRequested: vi.fn(() => () => {}),
       get: vi.fn<() => Promise<SettingsSnapshot>>(),
       update: vi.fn<(patch: SettingsPatch, expectedVersion: number) => Promise<SettingsApplyRequest>>()
     },
@@ -390,6 +403,24 @@ describe('AppShell renderer routes', () => {
     expectNoEnglishScaffold();
   });
 
+  it('opens Settings when launched by the menu bar shortcut', async () => {
+    api.settings.takeOpenRequest.mockResolvedValueOnce(true);
+    render(<AppShell />);
+
+    expect(await screen.findByRole('heading', { name: '设置', level: 1 })).toBeTruthy();
+  });
+
+  it('opens Settings in an existing window when the menu bar shortcut is clicked', async () => {
+    render(<AppShell />);
+    await screen.findByRole('heading', { name: '总览', level: 1 });
+
+    api.settings.takeOpenRequest.mockResolvedValueOnce(true);
+    const [[onOpenRequested]] = api.settings.onOpenRequested.mock.calls;
+    onOpenRequested();
+
+    expect(await screen.findByRole('heading', { name: '设置', level: 1 })).toBeTruthy();
+  });
+
   it('refreshes the sidebar index summary when the window regains focus', async () => {
     api.index.status.mockResolvedValueOnce(indexStatusResult).mockResolvedValue(healthyIndexStatusResult);
     render(<AppShell />);
@@ -404,6 +435,32 @@ describe('AppShell renderer routes', () => {
     await waitFor(() => {
       expect(api.index.status.mock.calls.length).toBeGreaterThanOrEqual(2);
     });
+  });
+
+  it('updates the menu bar badge independently of the popover section from Settings', async () => {
+    const user = userEvent.setup();
+    render(<AppShell />);
+    await user.click(screen.getByRole('button', { name: '设置' }));
+    await user.click(await screen.findByRole('button', { name: '菜单栏外观' }));
+    const section = screen.getByRole('button', { name: '在菜单栏弹窗中显示峰谷时段' });
+    const badge = screen.getByRole('button', { name: '在顶部菜单栏显示峰/谷标识' });
+    expect(section.getAttribute('aria-pressed')).toBe('true');
+    expect(badge.getAttribute('aria-pressed')).toBe('true');
+
+    const version = settingsSnapshot.version + 1;
+    api.settings.update.mockImplementationOnce(async () => {
+      api.settings.get.mockResolvedValue({
+        ...settingsSnapshot,
+        version,
+        menubarAppearance: { ...settingsSnapshot.menubarAppearance, showPeakBadge: false }
+      });
+      return { requestedVersion: version, status: 'applied' };
+    });
+    await user.click(badge);
+
+    expect(api.settings.update).toHaveBeenCalledWith({ menubarShowPeakBadge: false }, settingsSnapshot.version);
+    await waitFor(() => expect(badge.getAttribute('aria-pressed')).toBe('false'));
+    expect(section.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('shows a loading indicator beside the last scan time while a scan is active', async () => {

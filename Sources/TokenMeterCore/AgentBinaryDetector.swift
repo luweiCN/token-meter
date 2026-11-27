@@ -48,13 +48,16 @@ public enum AgentBinaryDetector {
         }
     }
 
-    /// 登录 shell 的 PATH + 常见安装点兜底（GUI app 的 PATH 不含用户 shell 配置；
-    /// Codex standalone 装点与 CodexUsageProvider.searchDirectories 同一结论）。
+    private static let loginSearchPath: [String] = {
+        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        guard let output = try? executableOutput(
+            URL(fileURLWithPath: shell), arguments: ["-l", "-c", "/usr/bin/printenv PATH"], timeout: 5
+        ), let path = String(data: output, encoding: .utf8) else { return [] }
+        return path.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ":").map(String.init)
+    }()
+
     static func searchDirectories(homeDirectory: String) -> [String] {
-        var directories: [String] = []
-        if let path = LoginShellEnvironment.value(for: "PATH") {
-            directories += path.split(separator: ":").map(String.init)
-        }
+        var directories = loginSearchPath
         directories += [
             "\(homeDirectory)/.local/bin",
             "\(homeDirectory)/.grok/bin",
@@ -96,7 +99,7 @@ public enum AgentBinaryDetector {
     /// `<binary> --version` 输出的第一行（如 "omp/16.4.8"、"1.17.18"）。
     /// 版本拿不到不算致命——found 仍为真，版本留空。
     static func version(of executablePath: String) -> String? {
-        guard let data = try? runProcess(executable: executablePath, arguments: ["--version"], timeout: 5),
+        guard let data = try? executableOutput(URL(fileURLWithPath: executablePath), arguments: ["--version"], timeout: 5),
               let text = String(data: data, encoding: .utf8) else {
             return nil
         }

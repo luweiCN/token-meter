@@ -2,6 +2,8 @@
 
 本文是 TokenMeter 对本地 agent 数据的权威口径。实现只消费这里列出的、已能说明语义与去重关系的字段；文件或字段不存在时不猜测。详细供应商文案仍以产品官方文档为准。
 
+OpenClaw 和 Hermes Agent 由跨平台设备服务采集，来源及记账口径见[设备与命令行](device-sync.md#数据口径)。
+
 ## 共同口径
 
 - TokenMeter 只读来源文件和来源 SQLite；`~/.token-meter/tokenmeter.sqlite` 是可删除重建的派生库。
@@ -25,6 +27,8 @@
 ## Antigravity CLI
 
 TokenMeter 只读 `~/.gemini/antigravity-cli/conversations/<会话 ID>.db` 及其已提交的 WAL。每个 `gen_metadata` 条目是一轮生成，按响应 ID 去重。没有响应 ID 的记录按会话内的生成序号区分。步骤元数据提供响应时间，旧格式可提供生成时间。订阅额度刷新和初始化留下的无用量记录会被跳过。CLI 可以在编辑器关闭时采集，聊天正文不写入 TokenMeter。[Tokscale 的会话库解析](https://github.com/junhoyeo/tokscale/blob/b265e836c58f085f50a836525aa60b8d45bd8d57/crates/tokscale-core/src/sessions/antigravity_cli.rs)
+
+菜单栏的会话数只计当天有用量、用户可见的主会话。TokenMeter 按扫描来源读取该配置目录的 `cache/conversation_metadata.json`，用 `is_internal` 识别内部会话，再用 `conversation_summaries.db` 的父会话和嵌套深度识别子会话。已有账本可以直接使用这两份索引。当天存在无法分类的会话时，菜单隐藏会话数。Token、费用和缓存命中率仍包含所有已采集的生成记录。
 
 生成元数据分别提供未缓存输入、缓存读取、缓存写入和总输出。推理是总输出的一部分。缺少缓存写入期限时，沿用账本的默认缓存写入项。内部路由 ID 与 Google 返回的模型展示名吻合时，可用公开模型价格估算；无法匹配时费用保持未知。套餐的实际积分消耗由 Google 决定。[Google API 价格](https://aistudio.google.com/docs/pricing)
 

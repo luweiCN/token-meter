@@ -1,6 +1,21 @@
 import Foundation
 import TokenMeterCore
 
+enum PopoverUsageList: String {
+    case agents = "menubarAgentsExpanded"
+    case models = "menubarModelsExpanded"
+
+    static let previewCount = 5
+
+    static func visibleCount(_ total: Int, expanded: Bool) -> Int {
+        expanded ? total : min(total, previewCount)
+    }
+
+    func savedRowCount(_ total: Int) -> Int {
+        Self.visibleCount(total, expanded: UserDefaults.standard.bool(forKey: rawValue))
+    }
+}
+
 struct PopoverTokenAmount {
     let tokens: Int64
     var unreportedEvents: Int64 = 0

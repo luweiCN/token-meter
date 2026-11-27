@@ -7,43 +7,6 @@ public enum UsageStatus: String, Codable, Equatable {
     case unknown
 }
 
-public struct UsageSnapshot: Equatable {
-    public let providerId: String
-    public let displayName: String
-    public let status: UsageStatus
-    public let label: String
-    public let used: Double?
-    public let remaining: Double?
-    public let total: Double?
-    public let unit: String?
-    public let fetchedAt: Date
-    public let message: String?
-
-    public init(
-        providerId: String,
-        displayName: String,
-        status: UsageStatus,
-        label: String,
-        used: Double?,
-        remaining: Double?,
-        total: Double?,
-        unit: String?,
-        fetchedAt: Date,
-        message: String?
-    ) {
-        self.providerId = providerId
-        self.displayName = displayName
-        self.status = status
-        self.label = label
-        self.used = used
-        self.remaining = remaining
-        self.total = total
-        self.unit = unit
-        self.fetchedAt = fetchedAt
-        self.message = message
-    }
-}
-
 public enum UsageMetricKind: String, Codable, Equatable {
     case quota
     case balance
@@ -61,6 +24,10 @@ public struct UsageMetric: Codable, Equatable {
     public let detail: String?
     public let resetAt: Date?
     public let windowDurationMinutes: Int?
+    public let usedAmount: String?
+    public let remainingAmount: String?
+    public let totalAmount: String?
+    public let unit: String?
 
     public init(
         id: String,
@@ -72,7 +39,11 @@ public struct UsageMetric: Codable, Equatable {
         status: UsageStatus,
         detail: String?,
         resetAt: Date? = nil,
-        windowDurationMinutes: Int? = nil
+        windowDurationMinutes: Int? = nil,
+        usedAmount: String? = nil,
+        remainingAmount: String? = nil,
+        totalAmount: String? = nil,
+        unit: String? = nil
     ) {
         self.id = id
         self.label = label
@@ -84,6 +55,10 @@ public struct UsageMetric: Codable, Equatable {
         self.detail = detail
         self.resetAt = resetAt
         self.windowDurationMinutes = windowDurationMinutes
+        self.usedAmount = usedAmount
+        self.remainingAmount = remainingAmount
+        self.totalAmount = totalAmount
+        self.unit = unit
     }
 }
 

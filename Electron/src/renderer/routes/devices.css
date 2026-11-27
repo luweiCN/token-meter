@@ -1,0 +1,72 @@
+.device-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.device-sections {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.device-sections > :last-child {
+  margin-bottom: 0;
+}
+
+.device-sections > p,
+.device-empty {
+  margin: 0;
+}
+
+.device-sections > .device-stats {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.device-filters .sel {
+  max-width: 100%;
+}
+
+.device-filters .sel-btn {
+  max-width: min(100%, 30ch);
+}
+
+.device-filters .sel-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-filters .sel-btn svg {
+  flex: none;
+}
+
+.device-filters .sel-pop {
+  width: max-content;
+  max-width: min(42ch, 100vw - 260px);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.device-filters .sel-opt,
+.device-view .device-name,
+.device-view .device-model,
+.device-quota-reading {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.device-view td.num,
+.device-view time {
+  white-space: nowrap;
+}
+
+.device-detail td {
+  line-height: 1.2;
+}
+
+.device-missing {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--warn);
+}

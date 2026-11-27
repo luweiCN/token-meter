@@ -23,11 +23,13 @@ final class MenuBarTodaySummaryTests: XCTestCase {
         );
         CREATE TABLE agent_sessions (
           id INTEGER PRIMARY KEY, source_kind TEXT NOT NULL, source_session_key TEXT NOT NULL,
-          provider_id TEXT, status TEXT NOT NULL DEFAULT 'active', root_session_key TEXT
+          provider_id TEXT, status TEXT NOT NULL DEFAULT 'active', root_session_key TEXT, scan_root_id INTEGER
         );
-        CREATE TABLE session_rollup (
-          session_id INTEGER PRIMARY KEY, first_event_epoch_ms INTEGER NOT NULL,
-          last_event_epoch_ms INTEGER NOT NULL
+        CREATE TABLE scan_roots (id INTEGER PRIMARY KEY, root_path TEXT NOT NULL);
+        CREATE TABLE usage_events (session_id INTEGER, observed_epoch_ms INTEGER);
+        CREATE TABLE daily_active_sessions (
+          usage_date TEXT, provider_id TEXT, root_session_key TEXT, sessions_count INTEGER,
+          PRIMARY KEY (usage_date, provider_id, root_session_key)
         );
         """)
     }
@@ -45,14 +47,20 @@ final class MenuBarTodaySummaryTests: XCTestCase {
         )
     }
 
-    private func seedSession(_ id: Int64, provider: String, lastEventMs: Int64, root: String? = nil) throws {
+    private func seedSession(_ id: Int64, provider: String, lastEventMs: Int64, root: String? = nil,
+                             key: String? = nil, scanRoot: Int64 = 1) throws {
+        let rawKey = key ?? "s\(id)"
         try database.execute(
-            "INSERT INTO agent_sessions(id, source_kind, source_session_key, provider_id, root_session_key) VALUES (?,?,?,?,?)",
-            [.int(id), .text("k"), .text("s\(id)"), .text(provider), root.map { .text($0) } ?? .null]
+            "INSERT INTO agent_sessions(id, source_kind, source_session_key, provider_id, root_session_key, scan_root_id) VALUES (?,?,?,?,?,?)",
+            [.int(id), .text("k"), .text(rawKey), .text(provider), root.map { .text($0) } ?? .null, .int(scanRoot)]
         )
+        try database.execute("INSERT INTO usage_events VALUES (?,?)", [.int(id), .int(lastEventMs)])
         try database.execute(
-            "INSERT INTO session_rollup(session_id, first_event_epoch_ms, last_event_epoch_ms) VALUES (?,?,?)",
-            [.int(id), .int(lastEventMs - 60_000), .int(lastEventMs)]
+            """
+            INSERT INTO daily_active_sessions VALUES (date(? / 1000, 'unixepoch', 'localtime'),?,?,1)
+            ON CONFLICT(usage_date, provider_id, root_session_key) DO UPDATE SET sessions_count=sessions_count+1
+            """,
+            [.int(lastEventMs), .text(provider), .text("k:" + (root ?? rawKey))]
         )
     }
 
@@ -74,6 +82,81 @@ final class MenuBarTodaySummaryTests: XCTestCase {
         XCTAssertEqual(summary.perProvider.map(\.providerId), ["claude-code", "codex"])   // tokens 降序
         XCTAssertEqual(summary.perProvider[0].sessions, 1)
         XCTAssertEqual(summary.perProvider[1].sessions, 0)
+        XCTAssertTrue(summary.sessionCountIsComplete)
+    }
+
+    func testOneActiveConversationWhenOnlyItsChildrenRunToday() throws {
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+        try seedDaily("codex", tokens: 200, cost: 15)
+        try seedSession(1, provider: "codex", lastEventMs: 1)
+        try seedSession(2, provider: "codex", lastEventMs: nowMs, root: "s1")
+        try seedSession(3, provider: "codex", lastEventMs: nowMs, root: "s1")
+        let summary = MenuBarTodaySummaryRepository.load(from: database, now: now)
+        XCTAssertEqual(summary.perProvider.first?.knownSessionCount, 1)
+        XCTAssertEqual(summary.sessions, 1)
+        XCTAssertTrue(summary.sessionCountIsComplete)
+    }
+
+    func testAntigravityCountsOnlyVisibleTopLevelConversationsAndRetainsAllUsage() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let parent = UUID().uuidString.lowercased()
+        let child = UUID().uuidString.lowercased()
+        let helper = UUID().uuidString.lowercased()
+        let prior = UUID().uuidString.lowercased()
+        let future = UUID().uuidString.lowercased()
+        let cache = folder.appendingPathComponent("cache", isDirectory: true)
+        let conversations = folder.appendingPathComponent("conversations", isDirectory: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: conversations, withIntermediateDirectories: true)
+        let cacheFile = cache.appendingPathComponent("conversation_metadata.json")
+        let metadata = ["conversations": [parent: ["is_internal": false], child: ["is_internal": false], helper: ["is_internal": true]]]
+        try JSONEncoder().encode(metadata).write(to: cacheFile)
+        let upstream = try SQLiteDatabase(path: folder.appendingPathComponent("conversation_summaries.db").path)
+        try upstream.execute("""
+            CREATE TABLE conversation_summaries(conversation_id TEXT, parent_conversation_id TEXT, nesting_depth INTEGER);
+            CREATE TABLE conversation_parents(conversation_id TEXT, parent_id TEXT);
+            """)
+        try upstream.execute("INSERT INTO conversation_summaries VALUES (?, '', 0), (?, ?, 1)", [.text(parent), .text(child), .text(parent)])
+        try upstream.execute("INSERT INTO conversation_parents VALUES (?,?)", [.text(child), .text(parent)])
+        try upstream.close()
+        try database.execute("INSERT INTO scan_roots VALUES (1, ?)", [.text(conversations.path)])
+        let nowMs = Int64(now.timeIntervalSince1970 * 1000)
+        let agent = SourceKind.antigravitySQLite.defaultProviderId
+        try seedDaily(agent, tokens: 500, cost: 700)
+        try seedDaily("codex", tokens: 100, cost: 200)
+        try seedSession(1, provider: agent, lastEventMs: nowMs, key: parent)
+        try seedSession(2, provider: agent, lastEventMs: nowMs, key: child)
+        try seedSession(3, provider: agent, lastEventMs: nowMs, key: helper)
+        try seedSession(4, provider: agent, lastEventMs: 1, key: prior)
+        try seedSession(5, provider: agent, lastEventMs: nowMs + 2 * 86_400_000, key: future)
+        try seedSession(6, provider: "codex", lastEventMs: nowMs)
+        try database.execute("INSERT INTO usage_events VALUES (1,?)", [.int(nowMs + 1)])
+
+        var summary = MenuBarTodaySummaryRepository.load(from: database, now: now)
+        XCTAssertEqual(summary.perProvider.first?.knownSessionCount, 1)
+        XCTAssertTrue(summary.sessionCountIsComplete)
+        XCTAssertEqual(summary.sessions, 2)
+        XCTAssertEqual(summary.tokens, 600)
+        XCTAssertEqual(summary.costUsdMicros, 900)
+
+        // A second active source with unavailable metadata does not erase
+        // known spend or turn its missing session count into a displayed zero.
+        try seedSession(7, provider: agent, lastEventMs: nowMs, key: UUID().uuidString.lowercased(), scanRoot: 99)
+        summary = MenuBarTodaySummaryRepository.load(from: database, now: now)
+        XCTAssertNil(summary.perProvider.first?.knownSessionCount)
+        XCTAssertFalse(summary.sessionCountIsComplete)
+        XCTAssertEqual(summary.perProvider.last?.knownSessionCount, 1)
+        XCTAssertEqual(summary.tokens, 600)
+        XCTAssertEqual(summary.costUsdMicros, 900)
+
+        try database.execute("UPDATE agent_sessions SET status='deleted' WHERE id IN (1,2,7)")
+        summary = MenuBarTodaySummaryRepository.load(from: database, now: now)
+        XCTAssertEqual(summary.perProvider.first?.knownSessionCount, 0)
+        XCTAssertTrue(summary.sessionCountIsComplete)
+        XCTAssertEqual(summary.sessions, 1)
+        XCTAssertEqual(summary.perProvider.first?.tokens, 500)
     }
 
     func testAggregatesTodayPerModelSortedByTokens() throws {

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 interface MockBrowserWindow {
   readonly options: BrowserWindowConstructorOptions;
+  readonly webContents: { send: ReturnType<typeof vi.fn> };
   readonly closeHandlers: Array<() => void>;
   closed: boolean;
   minimized: boolean;
@@ -17,7 +18,7 @@ interface MockBrowserWindow {
 
 interface AppHandler {
   readonly event: string;
-  readonly handler: () => void;
+  readonly handler: (...args: unknown[]) => void;
 }
 
 const mockElectron = vi.hoisted(() => ({
@@ -37,6 +38,7 @@ const mockIpc = vi.hoisted(() => ({
 function makeWindow(options: BrowserWindowConstructorOptions): MockBrowserWindow {
   const window: MockBrowserWindow = {
     options,
+    webContents: { send: vi.fn() },
     closeHandlers: [],
     closed: false,
     minimized: false,
@@ -67,7 +69,7 @@ function closeWindow(window: MockBrowserWindow): void {
   }
 }
 
-function findAppHandler(event: string): () => void {
+function findAppHandler(event: string): (...args: unknown[]) => void {
   const match = mockElectron.appHandlers.find((entry) => entry.event === event);
   expect(match, `${event} handler should be registered`).toBeDefined();
   return match?.handler ?? (() => undefined);
@@ -96,6 +98,8 @@ vi.mock('./ipc.js', () => ({
   registerIpcHandlers: mockIpc.registerIpcHandlers
 }));
 
+import { takeInvitation } from './pairInvitation.js';
+import { takeSettingsOpen } from './settingsNavigation.js';
 import { createWindow, getMainWindow, registerAppLifecycle } from './main.js';
 
 describe('Electron main window lifecycle', () => {
@@ -108,6 +112,7 @@ describe('Electron main window lifecycle', () => {
     mockElectron.whenReadyCallbacks.length = 0;
     mockElectron.windows.length = 0;
     mockElectron.lockResult = true;
+    takeSettingsOpen();
     vi.clearAllMocks();
   });
 
@@ -158,6 +163,52 @@ describe('Electron main window lifecycle', () => {
     expect(window.restore).not.toHaveBeenCalled();
     expect(window.show).toHaveBeenCalledOnce();
     expect(window.focus).toHaveBeenCalledOnce();
+  });
+
+  it('routes a native pairing invite to the existing window without retaining it in the environment', () => {
+    const invite = 'tokenmeter://pair/7K3MQ9#v1.0123456789abcdef0123456789abcdef';
+    process.env.TOKENMETER_PAIR_INVITATION = invite;
+    registerAppLifecycle();
+    expect(process.env.TOKENMETER_PAIR_INVITATION).toBeUndefined();
+    expect(mockElectron.requestSingleInstanceLock).toHaveBeenLastCalledWith({ invitation: invite });
+    expect(takeInvitation()).toBe(invite);
+    expect(takeInvitation()).toBeNull();
+    createWindow();
+    findAppHandler('second-instance')({}, [], '', { invitation: invite });
+    expect(mockElectron.windows[0].webContents.send).toHaveBeenCalledWith('pair:link');
+    expect(takeInvitation()).toBe(invite);
+    findAppHandler('second-instance')({}, [], '', { invitation: 'https://example.org/' });
+    expect(takeInvitation()).toBeNull();
+  });
+
+  it('queues a settings shortcut before the first window loads', () => {
+    const argv = process.argv;
+    try {
+      process.argv = [...argv, '--open-settings'];
+      registerAppLifecycle();
+    } finally {
+      process.argv = argv;
+    }
+
+    expect(mockElectron.requestSingleInstanceLock).toHaveBeenCalledWith({ openSettings: true });
+    expect(getMainWindow()).toBeNull();
+    expect(takeSettingsOpen()).toBe(true);
+    expect(takeSettingsOpen()).toBe(false);
+  });
+
+  it('focuses an existing window and notifies it of the settings shortcut', () => {
+    registerAppLifecycle();
+    createWindow();
+    const window = mockElectron.windows[0];
+
+    findAppHandler('second-instance')({}, [], '', { openSettings: true });
+
+    expect(window.focus).toHaveBeenCalledTimes(2);
+    expect(window.webContents.send).toHaveBeenCalledWith('settings:openRequested');
+    expect(takeSettingsOpen()).toBe(true);
+    findAppHandler('second-instance')({}, [], '', { openSettings: 'true' });
+    expect(window.webContents.send).toHaveBeenCalledOnce();
+    expect(takeSettingsOpen()).toBe(false);
   });
 
   it('creates a new window when macOS activates the app with no open windows', () => {

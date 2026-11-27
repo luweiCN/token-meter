@@ -155,8 +155,16 @@ final class MenuBarQuotaModelTests: XCTestCase {
     }
 
     func testCodexUsesEveryPrimaryWindowBeforeSwitchingToCreditsAcrossStyles() throws {
-        let json = Data(#"{"rateLimits":{"limitName":"ChatGPT","primary":{"usedPercent":99.8,"windowDurationMins":300},"secondary":{"usedPercent":10,"windowDurationMins":10080},"credits":{"balance":"12.34567"}},"rateLimitsByLimitId":{"spark":{"primary":{"usedPercent":100,"windowDurationMins":300}}}}"#.utf8)
-        let quota = try CodexUsageParser.parse(data: json, providerId: "codex", displayName: "Codex").renamed(to: "工作")
+        var quota = snapshot("codex", "Codex", groups: [
+            UsageGroup(id: "codex", title: "ChatGPT", subtitle: nil, items: [
+                metric(id: "codex-primary", used: 99.8, windowMinutes: 300),
+                metric(id: "codex-secondary", used: 10, windowMinutes: 10080)
+            ]),
+            UsageGroup(id: "spark", title: "Spark", subtitle: nil, items: [
+                metric(id: "spark-primary", used: 100, windowMinutes: 300)
+            ])
+        ]).renamed(to: "工作")
+        quota.accountCredits = .codex(.amount(12.34567))
         var exhausted = twoWindowSnapshot("codex", "工作", shortRemaining: 85, longRemaining: 0)
         exhausted.accountCredits = quota.accountCredits
         let claude = twoWindowSnapshot(shortRemaining: 11, longRemaining: 25)
@@ -203,8 +211,12 @@ final class MenuBarQuotaModelTests: XCTestCase {
     }
 
     func testCodexReportedQuotaWithoutDurationStillPrecedesCredits() throws {
-        let data = Data(#"{"rateLimits":{"primary":{"usedPercent":40},"credits":{"balance":"9"}}}"#.utf8)
-        let snapshot = try CodexUsageParser.parse(data: data, providerId: "codex", displayName: "Codex")
+        let window = UsageMetric(id: "codex-primary", label: "额度", kind: .quota, usedPercent: 40,
+                                 remainingPercent: 60, resetText: nil, status: .ok, detail: nil)
+        var snapshot = snapshot("codex", "Codex", groups: [
+            UsageGroup(id: "codex", title: "Codex", subtitle: nil, items: [window])
+        ])
+        snapshot.accountCredits = .codex(.amount(9))
         let projection = MenuBarQuotaModel.projection(snapshots: [snapshot], settings: nil, todaySummary: .empty)
         XCTAssertEqual(projection.accessibilityTitle, "Codex 额度 60%")
         XCTAssertTrue(projection.accountReadouts.isEmpty)
@@ -212,7 +224,7 @@ final class MenuBarQuotaModelTests: XCTestCase {
 
     func testLegacyClaudePinKeepsPrepaidMoneySeparateFromWindows() throws {
         var claude = twoWindowSnapshot(shortRemaining: 0, longRemaining: 55)
-        let prepaid = try XCTUnwrap(ClaudeCreditAmount(minorUnits: 1_200, currency: "USD"))
+        let prepaid = ClaudeCreditAmount(value: 12, currency: "USD")
         claude.accountCredits = .claude(prepaid: prepaid, extraUsage: nil)
         for style in MenuBarStyleId.allCases {
             let shown = MenuBarQuotaModel.projection(snapshots: [claude], settings: settings(style: style, pinnedId: "claude-code"), todaySummary: .empty)
@@ -450,15 +462,14 @@ final class MenuBarQuotaModelTests: XCTestCase {
             fetchedAt: Date(timeIntervalSince1970: 100)
         )
         let failedRefresh = ProviderUsageSnapshot(
-            providerId: "grok",
-            displayName: "Grok Build",
-            status: .error,
-            fetchedAt: Date(timeIntervalSince1970: 4_000),
+            providerId: lastSuccess.providerId,
+            displayName: lastSuccess.displayName,
+            status: .warning,
+            fetchedAt: lastSuccess.fetchedAt,
             summary: nil,
             message: "额度接口暂时不可用",
-            groups: []
+            groups: lastSuccess.groups
         )
-        let merged = ProviderSnapshotCache.merge(previous: [lastSuccess], refreshed: [failedRefresh])
 
         let beforeFailure = MenuBarQuotaModel.projection(
             snapshots: [lastSuccess],
@@ -467,14 +478,14 @@ final class MenuBarQuotaModelTests: XCTestCase {
             now: Date(timeIntervalSince1970: 200)
         )
         let afterFailure = MenuBarQuotaModel.projection(
-            snapshots: merged,
+            snapshots: [failedRefresh],
             settings: nil,
             todaySummary: .empty,
             now: Date(timeIntervalSince1970: 4_000)
         )
 
         XCTAssertEqual(afterFailure.cells, beforeFailure.cells)
-        XCTAssertEqual(QuotaDisplayModel(snapshot: merged[0], now: Date(timeIntervalSince1970: 4_000)).staleMinutes, 65)
+        XCTAssertEqual(QuotaDisplayModel(snapshot: failedRefresh, now: Date(timeIntervalSince1970: 4_000)).staleMinutes, 65)
     }
 
     // MARK: - 按家隐藏与尾巴
@@ -498,8 +509,9 @@ final class MenuBarQuotaModelTests: XCTestCase {
     }
 
     func testTailTokCostOffAndZeroHidden() {
-        let summary = MenuBarTodaySummary(
-            tokens: 3_400_000, costUsdMicros: 196_440_000, sessions: 3, unknownEvents: 0, perProvider: []
+        let summary = MenuTodayUsage(
+            usage: DailyUsage(tokens: 3_400_000, unknownTokens: 0, costMicros: 196_440_000, unknownCost: 0, cacheUsage: .init()),
+            sessions: 3
         )
         var projection = MenuBarQuotaModel.projection(snapshots: [], settings: settings(usage: .tok), todaySummary: summary)
         XCTAssertEqual(projection.tail, .text("3.4M"))
@@ -515,8 +527,9 @@ final class MenuBarQuotaModelTests: XCTestCase {
     }
 
     func testTailCostUsesDisplayCurrencyAndRate() {
-        let summary = MenuBarTodaySummary(
-            tokens: 0, costUsdMicros: 196_440_000, sessions: 0, unknownEvents: 0, perProvider: []
+        let summary = MenuTodayUsage(
+            usage: DailyUsage(tokens: 0, unknownTokens: 0, costMicros: 196_440_000, unknownCost: 0, cacheUsage: .init()),
+            sessions: 0
         )
         // 人民币：$196.44 × 6.76 = ¥1327.93（四舍五入两位）。
         let projection = MenuBarQuotaModel.projection(

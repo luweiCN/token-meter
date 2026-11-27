@@ -1,0 +1,26 @@
+{
+  "menuBar": { "primaryProviderId": "codex" },
+  "providers": [
+    { "id": "codex", "type": "codex", "displayName": "Codex", "enabled": true },
+    { "id": "claude-code", "type": "claudeCode", "displayName": "Claude Code", "enabled": true },
+    { "id": "opencode-go", "type": "opencodeGo", "displayName": "OpenCode Go", "enabled": true },
+    {
+      "id": "command-code", "type": "commandCode", "displayName": "Command Code", "enabled": true,
+      "credential": { "environmentVariable": "COMMAND_CODE_API_KEY" },
+      "endpoint": "https://api.commandcode.ai"
+    },
+    {
+      "id": "zhipu", "type": "zhipu", "displayName": "智谱", "enabled": true,
+      "credential": { "environmentVariable": "ZHIPU_API_KEY" },
+      "endpoint": "https://bigmodel.cn/api/monitor/usage/quota/limit"
+    },
+    {
+      "id": "zhipu-http", "type": "zhipu", "displayName": "智谱 HTTP", "enabled": false,
+      "credential": { "environmentVariable": "ZHIPU_API_KEY" },
+      "endpoint": "https://bigmodel.cn/api/monitor/usage/quota/limit"
+    },
+    { "id": "grok", "type": "grok", "displayName": "Grok Build", "enabled": true },
+    { "id": "antigravity", "type": "antigravity", "displayName": "AGY", "enabled": false },
+    { "id": "qoder", "type": "qoder", "displayName": "Qoder", "enabled": true }
+  ]
+}

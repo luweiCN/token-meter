@@ -1,0 +1,158 @@
+.pair-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: var(--scrim);
+}
+
+.dlg.pair-dialog {
+  position: fixed;
+  z-index: 61;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(460px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  color: var(--fg);
+}
+
+.pair-dialog p {
+  margin: 10px 0;
+}
+
+.pair-head,
+.pair-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pair-head {
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.pair-head h2 {
+  margin: 0;
+  font: 650 17px/1.3 var(--font-d);
+}
+
+.pair-dialog .pair-tabs {
+  margin-bottom: 18px;
+}
+
+.pair-form,
+.pair-field {
+  display: grid;
+  min-width: 0;
+}
+
+.pair-form {
+  gap: 18px;
+}
+
+.pair-field {
+  gap: 6px;
+}
+
+.pair-field label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pair-field p,
+.pair-form .pair-actions {
+  margin: 0;
+}
+
+.pair-field .sel-btn {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.pair-field .field {
+  min-height: 30px;
+}
+
+.pair-field .sel-pop {
+  box-sizing: border-box;
+}
+
+.pair-form .pair-field:has(#pair-join-role) .sel-pop {
+  top: auto;
+  bottom: calc(100% + 5px);
+}
+
+.pair-invite {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pair-invite svg {
+  flex-shrink: 0;
+  border-radius: 5px;
+}
+
+.pair-details {
+  flex: 1;
+  min-width: 200px;
+}
+
+.pair-code {
+  display: block;
+  color: var(--fg);
+  font: 600 21px/1.5 var(--mono);
+  letter-spacing: .025em;
+  user-select: text;
+  white-space: nowrap;
+}
+
+.pair-dialog .pair-meta,
+.pair-verify > span,
+.pair-trust span {
+  font-size: 12px;
+  color: var(--fg2);
+}
+
+.pair-actions {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.pair-details .pair-actions {
+  justify-content: flex-start;
+}
+
+.pair-cancel {
+  margin-top: 16px;
+}
+
+.pair-verify > span,
+.pair-trust span {
+  display: block;
+  margin-top: 3px;
+}
+
+.pair-trust {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+
+.pair-trust p {
+  flex-basis: 100%;
+}
+
+.pair-trust strong,
+.pair-verify strong {
+  overflow-wrap: anywhere;
+}

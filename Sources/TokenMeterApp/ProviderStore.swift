@@ -25,48 +25,58 @@ struct PeakPricingRow: Equatable, Identifiable {
 
 @MainActor
 final class ProviderStore: ObservableObject {
-    @Published private(set) var snapshots: [UsageSnapshot] = []
     @Published private(set) var providerSnapshots: [ProviderUsageSnapshot] = []
-    @Published private(set) var isRefreshing = false
     @Published private(set) var notificationAuthorizationState: UsageNotificationAuthorizationState = .unknown
     @Published private(set) var settingsSnapshot: SettingsSnapshot?
     @Published private(set) var localIndexStatusText: String = "本地会话索引未启动"
-    /// 弹窗头部「今日」汇总（OpenDesign 稿）；本地索引每次更新后重查。
-    @Published private(set) var todaySummary: MenuBarTodaySummary = .empty
+    @Published private(set) var dailyNodeSummary: NodeDailySummary?
+    @Published private(set) var dailyAgents: [DailyAgentRow] = []
+    @Published private(set) var dailyModels: DailyModelSummary?
+    private let nodeDirectory: URL?
+    private var nodeSummaryGeneration = 0
+    private struct LocalUsageSummary {
+        let date: Date
+        let today: MenuBarTodaySummary
+        let month: [DayActivity]
+        let overview: OverviewStats
+    }
+    private var localUsage: LocalUsageSummary?
+    /// 菜单栏数字和弹窗头部共用同一份今日汇总。
+    @Published private(set) var todaySummary: MenuTodayUsage = .empty
     /// 当月每日用量（弹窗头部热力图）；与 todaySummary 同步刷新。
     @Published private(set) var monthActivity: [DayActivity] = []
-    /// 总计/当月/本周三卡（主界面同口径）；与 todaySummary 同步刷新。
-    @Published private(set) var overviewStats = OverviewStats.empty
+    /// 较早的设备快照只包含当日汇总。
+    @Published private(set) var overviewStats: MenuUsagePeriods? = .local(.empty)
     @Published private(set) var localIndexUpdatedAt: Date?
     /// 当前显示汇率（USD→CNY）。启动先读缓存/兜底，随后按需刷新。
     @Published private(set) var exchangeRate: ExchangeRate
-    /// 弹窗底部「暂停扫描」（OpenDesign 稿）：暂停期间定时器照跳，但两类刷新都短路。
+    /// 与后台共用暂停标记，暂停时也取消本次从菜单发起的刷新。
     @Published var isScanPaused = false {
         didSet {
-            if isScanPaused { stopAntigravityRefresh() }
-            else if oldValue { refreshAntigravityIfNeeded() }
+            if isScanPaused { pendingRefresh?.task.cancel() }
+            if databaseURL == TokenMeterPaths.databaseURL() { DesktopNode.setPaused(isScanPaused) }
         }
     }
     /// refreshLocalAgentIndex 的 in-flight 互斥（MainActor 串行，但 await 让出时可重入）。
     private var isRefreshingLocalIndex = false
 
-    let config: TokenMeterConfig
-    private let providers: [UsageProvider]
-    let antigravityConfig: ProviderConfig?
-    private let antigravityProvider: AntigravityUsageProvider?
-    private let queryAntigravity: (AntigravityUsageProvider) async throws -> Void
-    private var antigravityGeneration = 0
-    var antigravityConnectionError: String?
-    private var antigravityRefreshTask: Task<Void, Never>?
-    private var antigravityForceRequested = false
-    private var antigravityLastAttempt: Date?
-    private var antigravityQueryError: AntigravityQueryError?
-    @Published private(set) var isRefreshingAntigravity = false
-    private let codexAccountClient = CodexAccountClient()
-    private var codexResetAutomation: CodexResetAutomation?
-    private var codexResetTask: Task<Void, Never>?
-    private var refreshGate = RefreshGate(minimumInterval: 300)
-    private let snapshotCacheURL: URL
+    private let config: TokenMeterConfig
+    let accountFeed: DesktopAccountFeed
+    private var readGeneration = 0
+    private struct PendingRefresh {
+        let providerID: String?
+        let task: Task<Void, Error>
+    }
+    @Published private var pendingRefresh: PendingRefresh?
+    @Published private var refreshErrors: [String: String] = [:]
+
+    var isRefreshing: Bool { pendingRefresh != nil }
+
+    func isRefreshingQuota(for providerID: String) -> Bool {
+        guard let pendingRefresh else { return false }
+        return pendingRefresh.providerID == nil || pendingRefresh.providerID == providerID
+    }
+
     private weak var notificationCenter: UsageNotificationDelivering?
     private let database: SQLiteDatabase?
     private let databaseURL: URL?
@@ -85,12 +95,12 @@ final class ProviderStore: ObservableObject {
     ]
 
     convenience init() {
-        self.init(config: ProviderStore.loadConfig())
+        self.init(config: ProviderConfigLoader.current())
     }
 
     convenience init(notificationCenter: UsageNotificationDelivering?) {
         self.init(
-            config: ProviderStore.loadConfig(),
+            config: ProviderConfigLoader.current(),
             notificationCenter: notificationCenter,
             databaseURL: TokenMeterPaths.databaseURL()
         )
@@ -105,14 +115,12 @@ final class ProviderStore: ObservableObject {
     }
 
     init(config: TokenMeterConfig, notificationCenter: UsageNotificationDelivering? = nil, databaseURL: URL?,
-         antigravityCache: URL = AntigravityQuota.cacheURL(),
-         queryAntigravity: @escaping (AntigravityUsageProvider) async throws -> Void = { try await $0.refreshQuota() }) {
+         accountFeed: DesktopAccountFeed? = nil) {
         self.config = config
-        self.antigravityConfig = config.providers.first { $0.type == .antigravity }
-        self.antigravityProvider = antigravityConfig.map { AntigravityUsageProvider(config: $0, cache: antigravityCache) }
-        self.queryAntigravity = queryAntigravity
-        self.providers = ProviderRegistry.makeProviders(from: config).filter { !($0 is AntigravityUsageProvider) }
-        self.snapshotCacheURL = ProviderStore.snapshotCacheURL()
+        self.nodeDirectory = databaseURL?.deletingLastPathComponent().appendingPathComponent("node", isDirectory: true)
+        let directory = databaseURL?.deletingLastPathComponent() ?? TokenMeterPaths.baseDirectory()
+        self.accountFeed = accountFeed ?? DesktopAccountFeed(home: directory.lastPathComponent == ".token-meter"
+            ? directory.deletingLastPathComponent() : directory)
         self.notificationCenter = notificationCenter
 
         var openedDatabase: SQLiteDatabase?
@@ -148,20 +156,7 @@ final class ProviderStore: ObservableObject {
                 self.localIndexStatusText = "本地会话索引不可用"
             }
         }
-        if let databaseURL, settingsSnapshot != nil,
-           let journalDatabase = try? SQLiteDatabase(path: databaseURL.path) {
-            codexResetAutomation = CodexResetAutomation(
-                client: codexAccountClient,
-                store: CodexResetRedemptionStore(database: journalDatabase)
-            )
-        }
-        // 额度 API 刷新与本地扫描解耦：扫描便宜、跟 autoRefreshSeconds（可到 60s）；
-        // 额度接口敏感（Claude oauth/usage 实测高频会持续 429），至少 5 分钟一次。
-        refreshGate = RefreshGate(minimumInterval: max(300, TimeInterval(settingsSnapshot?.autoRefreshSeconds ?? 300)))
-
-        let cachedSnapshots = (try? ProviderSnapshotDiskCache.read(from: snapshotCacheURL)) ?? []
-        self.providerSnapshots = cachedSnapshots.filter { $0.providerId != antigravityConfig?.id }
-        self.snapshots = providerSnapshots.map(\.legacySnapshot)
+        if databaseURL == TokenMeterPaths.databaseURL() { isScanPaused = FileManager.default.fileExists(atPath: DesktopNode.directory.appendingPathComponent("index-paused").path) }
     }
 
     /// 金额显示币种（设置页写入，Swift 只读）。默认人民币。
@@ -213,161 +208,80 @@ final class ProviderStore: ObservableObject {
         .sorted { $0.brandName < $1.brandName }
     }
 
-    /// 设置页的供应商启停（provider_config_overrides.enabled）。没写过 override 的默认启用。
+    /// 设置页的启停首选项优先于供应商定义的默认值。
     func isProviderEnabled(_ providerId: String) -> Bool {
         guard let enabled = settingsSnapshot?.providerOverrides
             .first(where: { $0.providerId == providerId })?.enabled else {
-            if let source = antigravityConfig, source.id == providerId { return source.enabled }
-            return true
+            return config.providers.first { $0.id == providerId }?.enabled ?? false
         }
         return enabled
     }
 
     /// 弹窗与状态栏消费的展示投影：过滤停用的供应商 + 应用别名（displayName override）。
-    /// 底层 providerSnapshots 保持固有名与全集——磁盘缓存与通知对比都用它，
-    /// 启停/别名改动（settingsSnapshot 变化）即时反映，无需重新取数。
+    /// 后台快照保留供应商原名，用于通知对比。启停和别名只改变展示。
     var displayProviderSnapshots: [ProviderUsageSnapshot] {
-        let visible = providerSnapshots.filter { isProviderEnabled($0.providerId) }
-        guard let overrides = settingsSnapshot?.providerOverrides, !overrides.isEmpty else {
-            return visible
-        }
-        var names: [String: String] = [:]
-        for override in overrides {
-            if let name = override.displayName, !name.isEmpty {
-                names[override.providerId] = override.providerId == antigravityConfig?.id
-                    ? AntigravityUsageProvider.menuName(name) : name
+        providerSnapshots.filter { isProviderEnabled($0.providerId) }.map { source in
+            let snapshot: ProviderUsageSnapshot
+            if let error = refreshErrors[source.providerId] {
+                snapshot = ProviderUsageSnapshot(providerId: source.providerId, displayName: source.displayName,
+                    status: source.groups.isEmpty ? .error : .warning, fetchedAt: source.fetchedAt,
+                    summary: source.summary, message: error, groups: source.groups,
+                    resetCredits: source.resetCredits, accountCredits: source.accountCredits)
+            } else {
+                snapshot = source
             }
-        }
-        guard !names.isEmpty else { return visible }
-        return visible.map { snapshot in
-            names[snapshot.providerId].map(snapshot.renamed(to:)) ?? snapshot
+            guard let name = settingsSnapshot?.providerOverrides.first(where: { $0.providerId == source.providerId })?.displayName,
+                  !name.isEmpty else { return snapshot }
+            let isGoogle = config.providers.first { $0.id == source.providerId }?.type == .antigravity
+            return snapshot.renamed(to: isGoogle ? AntigravityQuota.menuName(name) : name)
         }
     }
 
-    func refresh() async {
-        refreshAntigravityIfNeeded()
-        // 启动时重置卡检查可能先取得账户查询权。等它结束后仍要完成本轮额度刷新。
-        while let resetTask = codexResetTask {
-            await resetTask.value
+    func reloadAccountSnapshots() async {
+        readGeneration += 1
+        let generation = readGeneration
+        let file = accountFeed.snapshotURL
+        guard let current = await Task.detached(priority: .utility, operation: {
+            try? ProviderSnapshotDiskCache.read(from: file)
+        }).value, generation == readGeneration, current != providerSnapshots else { return }
+
+        let events = UsageNotificationEventDetector.events(previous: providerSnapshots,
+            current: current.filter { isProviderEnabled($0.providerId) },
+            usedThresholdPercent: settingsSnapshot?.quotaUsedThresholdPercent ?? 0)
+        for snapshot in current where !refreshErrors.isEmpty &&
+            providerSnapshots.first(where: { $0.providerId == snapshot.providerId }) != snapshot {
+            refreshErrors[snapshot.providerId] = nil
         }
-        guard !Task.isCancelled, !isScanPaused, !isRefreshing else {
-            return
-        }
-
-        guard refreshGate.shouldRefresh() else {
-            return
-        }
-
-        isRefreshing = true
-        let previousProviderSnapshots = providerSnapshots
-        var nextProviderSnapshots: [ProviderUsageSnapshot] = []
-
-        for provider in providers where isProviderEnabled(provider.id) {
-            let snapshot = await provider.fetchProviderUsage()
-            nextProviderSnapshots.append(snapshot)
-        }
-
-        let mergedProviderSnapshots = ProviderSnapshotCache.merge(
-            previous: providerSnapshots,
-            refreshed: nextProviderSnapshots
-        )
-        let notificationEvents = UsageNotificationEventDetector.events(
-            previous: previousProviderSnapshots,
-            current: mergedProviderSnapshots,
-            usedThresholdPercent: settingsSnapshot?.quotaUsedThresholdPercent ?? 0
-        )
-        providerSnapshots = mergedProviderSnapshots + providerSnapshots.filter { $0.providerId == antigravityConfig?.id }
-        snapshots = providerSnapshots.map(\.legacySnapshot)
-        try? ProviderSnapshotDiskCache.write(mergedProviderSnapshots, to: snapshotCacheURL)
-        notificationCenter?.deliver(notificationEvents)
-        isRefreshing = false
-    }
-
-    func reloadAntigravityQuota() async {
-        guard let provider = antigravityProvider else { return }
-        antigravityGeneration += 1
-        let generation = antigravityGeneration
-        var next: ProviderUsageSnapshot?
-        if isProviderEnabled(provider.id), !isScanPaused {
-            next = await provider.cachedSnapshot(failure: antigravityConnectionError ?? antigravityQueryError?.errorDescription)
-        } else if isProviderEnabled(provider.id) { return }
-        guard generation == antigravityGeneration else { return }
-        let snapshotsWithoutGoogle = providerSnapshots.filter { $0.providerId != provider.id }
-        let updated = snapshotsWithoutGoogle + (next.map { [$0] } ?? [])
-        guard updated != providerSnapshots else { return }
-        providerSnapshots = updated
-        snapshots = updated.map(\.legacySnapshot)
-    }
-
-    func antigravityDidReceiveQuota() async {
-        antigravityQueryError = nil
-        await reloadAntigravityQuota()
-    }
-
-    func stopAntigravityRefresh() {
-        antigravityRefreshTask?.cancel()
-        antigravityLastAttempt = nil
-        antigravityQueryError = nil
-    }
-
-    @discardableResult
-    func refreshAntigravityIfNeeded(force: Bool = false) -> Task<Void, Never>? {
-        guard let provider = antigravityProvider, isProviderEnabled(provider.id), !isScanPaused else { return nil }
-        if force { antigravityForceRequested = true }
-        if let antigravityRefreshTask { return antigravityRefreshTask }
-        let task = Task {
-            defer {
-                antigravityRefreshTask = nil
-                antigravityForceRequested = false
-                if isRefreshingAntigravity { isRefreshingAntigravity = false }
-            }
-            await reloadAntigravityQuota()
-            guard !Task.isCancelled, antigravityConnectionError == nil else { return }
-            let current = providerSnapshots.first { $0.providerId == provider.id }
-            let started = Date()
-            if !antigravityForceRequested {
-                if antigravityQueryError == .signIn { return }
-                if let last = antigravityLastAttempt, started.timeIntervalSince(last) < 300 { return }
-                if let current, current.status == .ok, !current.groups.isEmpty,
-                   started.timeIntervalSince(current.fetchedAt) < 300 { return }
-            }
-            antigravityLastAttempt = started
-            isRefreshingAntigravity = true
-            do {
-                try await queryAntigravity(provider)
-                antigravityQueryError = nil
-            } catch is CancellationError {
-                antigravityLastAttempt = nil
-                return
-            } catch {
-                guard !Task.isCancelled else { return }
-                if let fresh = providerSnapshots.first(where: { $0.providerId == provider.id && !$0.groups.isEmpty }),
-                   fresh.fetchedAt != current?.fetchedAt,
-                   fresh.fetchedAt.timeIntervalSince1970 >= floor(started.timeIntervalSince1970) { return }
-                antigravityQueryError = (error as? AntigravityQueryError) ?? .unavailable
-            }
-            guard !Task.isCancelled else { return }
-            await reloadAntigravityQuota()
-        }
-        antigravityRefreshTask = task
-        return task
+        providerSnapshots = current
+        if !events.isEmpty { notificationCenter?.deliver(events) }
     }
 
     func retryQuota(for providerID: String) async {
-        if providerID == antigravityConfig?.id {
-            await refreshAntigravityIfNeeded(force: true)?.value
-        } else {
-            await refresh()
+        do {
+            try await refreshNow(providerID: providerID)
+        } catch is CancellationError {
+        } catch {
+            refreshErrors[providerID] = error.localizedDescription
         }
     }
 
-    /// 绕过节流立即刷新一次：设置页完成 OpenCode Go 登录后调用，登录态
-    /// 写盘即可见，不用等 5 分钟轮询窗口。
-    func refreshNow() async {
-        refreshGate = RefreshGate(minimumInterval: refreshGate.minimumInterval)
-        refreshAntigravityIfNeeded(force: true)
-        await refresh()
-        await antigravityRefreshTask?.value
+    func refreshNow(providerID: String? = nil) async throws {
+        while let running = pendingRefresh {
+            if running.providerID == nil || running.providerID == providerID {
+                return try await running.task.value
+            }
+            _ = try? await running.task.value
+        }
+        guard !isScanPaused, providerID.map(isProviderEnabled) ?? true else { throw CancellationError() }
+
+        let task = Task {
+            defer { pendingRefresh = nil }
+            try await accountFeed.refresh(providerID)
+            if let providerID { refreshErrors[providerID] = nil } else { refreshErrors.removeAll() }
+            await reloadAccountSnapshots()
+        }
+        pendingRefresh = PendingRefresh(providerID: providerID, task: task)
+        try await task.value
     }
 
     func refreshNotificationAuthorizationState() async {
@@ -395,47 +309,16 @@ final class ProviderStore: ObservableObject {
             throw ProviderStoreError.settingsVersionBehind(expected: expectedVersion, actual: snapshot.version)
         }
         settingsSnapshot = snapshot
-        if let source = antigravityConfig, !isProviderEnabled(source.id) { stopAntigravityRefresh() }
-        if !shouldAutomaticallyRedeemCodexCredits { stopCodexResetAutomation() }
-        refreshGate = RefreshGate(minimumInterval: max(300, TimeInterval(snapshot.autoRefreshSeconds)))
+        if let providerID = pendingRefresh?.providerID, !isProviderEnabled(providerID) {
+            pendingRefresh?.task.cancel()
+        }
     }
 
-    var shouldAutomaticallyRedeemCodexCredits: Bool {
-        settingsSnapshot?.codexResetAutoRedeemEnabled == true
-            && isProviderEnabled("codex") && !isScanPaused
-            && providers.contains { $0.id == "codex" }
-    }
-
-    var codexResetAutomationMessage: String {
+    func codexResetAutomationMessage() async -> String {
         guard settingsSnapshot?.codexResetAutoRedeemEnabled == true else { return "自动使用已关闭" }
         guard isProviderEnabled("codex"), !isScanPaused else { return "已暂停自动使用" }
-        return codexResetAutomation?.status.message ?? "自动使用暂不可用"
-    }
-
-    func stopCodexResetAutomation() { codexResetTask?.cancel() }
-
-    func checkCodexResetAutomation() {
-        guard shouldAutomaticallyRedeemCodexCredits else { stopCodexResetAutomation(); return }
-        guard codexResetTask == nil, !isRefreshing, let codexResetAutomation else { return }
-        codexResetTask = Task { [weak self] in
-            guard let self else { return }
-            defer { self.codexResetTask = nil }
-            let consumed = await codexResetAutomation.check { self.shouldAutomaticallyRedeemCodexCredits }
-            guard consumed else { return }
-            // 成功已持久化。显示刷新失败只保留旧显示，绝不再次消费。
-            guard let account = try? await self.codexAccountClient.read(),
-                  let snapshot = try? account.snapshot(
-                    providerId: "codex", displayName: self.config.providers.first { $0.id == "codex" }?.displayName ?? "Codex"
-                  ) else { return }
-            let refreshed = ProviderSnapshotCache.merge(previous: self.providerSnapshots, refreshed: [snapshot]).first ?? snapshot
-            if let index = self.providerSnapshots.firstIndex(where: { $0.providerId == "codex" }) {
-                self.providerSnapshots[index] = refreshed
-            } else {
-                self.providerSnapshots.append(refreshed)
-            }
-            self.snapshots = self.providerSnapshots.map(\.legacySnapshot)
-            try? ProviderSnapshotDiskCache.write(self.providerSnapshots, to: self.snapshotCacheURL)
-        }
+        let feed = accountFeed
+        return await Task.detached(priority: .utility) { feed.resetStatusMessage() }.value
     }
 
     /// hooks 上报入口（IPC agent.sessionEvent）：写 live_sessions 表，
@@ -464,28 +347,126 @@ final class ProviderStore: ObservableObject {
     /// 避免几分钟的扫描占住 MainActor 冻结菜单栏。
     var localAgentScanner: LocalAgentScanner? { scanner }
 
-    func reloadTodaySummary() async {
-        guard let databaseURL else { return }
-        summaryGeneration += 1
-        let generation = summaryGeneration
-        let snapshot = await Task.detached(priority: .utility) { () -> (MenuBarTodaySummary, [DayActivity], OverviewStats)? in
-            guard let reader = try? SQLiteDatabase(path: databaseURL.path, readOnly: true) else { return nil }
-            guard (try? reader.execute("BEGIN")) != nil else { return nil }
-            defer { try? reader.execute("ROLLBACK") }
-            let now = Date()
-            return (MenuBarTodaySummaryRepository.load(from: reader, now: now), MonthActivityRepository.load(from: reader, now: now),
-                    OverviewStatsRepository.load(from: reader, now: now))
-        }.value
-        guard generation == summaryGeneration, let (today, month, overview) = snapshot else { return }
-        if todaySummary != today { todaySummary = today }
-        if monthActivity != month { monthActivity = month }
-        if overviewStats != overview { overviewStats = overview }
+    func refreshScheduledLocalIndex() async {
+        guard !isScanPaused else { return }
+        if let status = await Task.detached(priority: .utility, operation: { DesktopNode.indexStatus() }).value {
+            localIndexUpdatedAt = Date(timeIntervalSince1970: Double(status.at))
+            localIndexStatusText = status.failures == 0 ? "已更新 \(status.scanned) 个本地数据源" : "\(status.failures) 个来源索引失败"
+            await reloadTodaySummary()
+        } else {
+            await refreshLocalAgentIndex()
+        }
     }
 
-    /// 热力图悬浮详情的当天模型明细（同步查库，行数 ≤6，悬浮时调用一次）。
-    func modelBreakdown(for date: String) -> [DayModelUsage] {
-        guard let database else { return [] }
-        return DayModelBreakdownRepository.load(from: database, date: date)
+    func reloadTodaySummary() async {
+        summaryGeneration += 1
+        let generation = summaryGeneration
+        nodeSummaryGeneration += 1
+        let nodeGeneration = nodeSummaryGeneration
+        let now = Date()
+        let databaseURL = self.databaseURL
+        let nodeDirectory = self.nodeDirectory
+        let (nodes, snapshot) = await Task.detached(priority: .utility) { () -> (NodeDailySummary?, LocalUsageSummary?) in
+            let nodes = nodeDirectory.flatMap { DesktopNode.dailySummary(now: now, directory: $0) }
+            guard let url = databaseURL, let reader = try? SQLiteDatabase(path: url.path, readOnly: true),
+                  (try? reader.execute("BEGIN")) != nil else { return (nodes, nil) }
+            defer { try? reader.execute("ROLLBACK") }
+            return (nodes, LocalUsageSummary(
+                date: now,
+                today: MenuBarTodaySummaryRepository.load(from: reader, now: now),
+                month: MonthActivityRepository.load(from: reader, now: now),
+                overview: OverviewStatsRepository.load(from: reader, now: now)
+            ))
+        }.value
+        guard generation == summaryGeneration else { return }
+        if let snapshot { localUsage = snapshot }
+        applyDailyNodeSummary(nodes, generation: nodeGeneration)
+    }
+
+    func reloadDailyNodeSummary() async {
+        guard let nodeDirectory else { return }
+        nodeSummaryGeneration += 1
+        let generation = nodeSummaryGeneration
+        let nodes = await Task.detached(priority: .utility) { DesktopNode.dailySummary(directory: nodeDirectory) }.value
+        guard generation == nodeSummaryGeneration, dailyNodeSummary != nodes else { return }
+        applyDailyNodeSummary(nodes, generation: generation)
+    }
+
+    private func applyDailyNodeSummary(_ nodes: NodeDailySummary?, generation: Int) {
+        if generation == nodeSummaryGeneration, dailyNodeSummary != nodes { dailyNodeSummary = nodes }
+        let node = dailyNodeSummary
+        let local = localUsage.flatMap { Calendar.current.isDateInToday($0.date) ? $0 : nil }
+        let localToday = local?.today ?? .empty
+        let today = MenuTodayUsage.from(node: node, local: localToday)
+        if todaySummary != today { todaySummary = today }
+
+        let overview: MenuUsagePeriods?
+        let month: [DayActivity]
+        let localPeriods = MenuUsagePeriods.local(local?.overview ?? .empty)
+        if let node, let history = node.history {
+            overview = node.includesLocal ? history.periods : history.periods.adding(localPeriods)
+            month = history.monthActivity(local: local?.month ?? [], includesLocal: node.includesLocal) ?? []
+        } else if node?.includesRemote == true {
+            overview = nil
+            month = []
+        } else {
+            overview = localPeriods
+            month = local?.month ?? []
+        }
+        if overviewStats != overview { overviewStats = overview }
+        if monthActivity != month { monthActivity = month }
+
+        let agents = DailyAgentRow.rows(node: node, local: localToday.perProvider)
+        if dailyAgents != agents { dailyAgents = agents }
+        let models = DailyModelSummary.from(node: node, local: localToday.perModel)
+        if dailyModels != models { dailyModels = models }
+    }
+
+    func modelBreakdown(for date: String) -> [DailyModelSummary.Row] {
+        let history = dailyNodeSummary?.history
+        let cached = history?.days[date]?.models ?? []
+        var rows = cached
+        if let database, history == nil || dailyNodeSummary?.includesLocal != true {
+            // Apply the six-row limit after merging and filtering.
+            let local = DayModelBreakdownRepository.load(from: database, date: date, limit: -1)
+            rows += local.map { DailyModelSummary.Row(id: $0.model, usage: DailyUsage(local: $0), hasCredits: $0.hasCredits) }
+        }
+        return Array((DailyModelSummary.merging(rows)?.rows ?? []).prefix(6))
+    }
+
+    func deviceBreakdown(for date: String) -> [DayDeviceUsage] {
+        var rows: [DayDeviceUsage] = []
+        let node = dailyNodeSummary
+        if let node {
+            let day = node.history?.days[date]
+            if let usages = day?.devices {
+                rows = node.devices.compactMap { device in
+                    guard let amount = usages[device.id],
+                          amount.usage.hasUsage(hasCredits: amount.hasCredits) || (date == node.day && device.active) else { return nil }
+                    return DayDeviceUsage(id: device.id, name: device.name, usage: amount.usage)
+                }
+            } else if date == node.day {
+                rows = node.devices.filter(\.active).map {
+                    DayDeviceUsage(id: $0.id, name: $0.name, usage: $0.usage)
+                }
+            } else if day != nil {
+                // Older snapshots have historical totals and no device split for those dates.
+                return []
+            }
+        }
+
+        if node?.includesLocal != true, let localUsage, Calendar.current.isDateInToday(localUsage.date),
+           let day = localUsage.month.first(where: { $0.date == date }) {
+            let usage = DailyUsage(activity: day)
+            if usage.hasUsage(hasCredits: day.hasCredits) {
+                rows.append(DayDeviceUsage(id: "local", name: "本机", usage: usage))
+            }
+        }
+        return rows.sorted {
+            if $0.usage.tokens != $1.usage.tokens { return $0.usage.tokens > $1.usage.tokens }
+            if $0.name != $1.name { return $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            return $0.id < $1.id
+        }
     }
 
     @discardableResult
@@ -507,24 +488,20 @@ final class ProviderStore: ObservableObject {
             return LocalIndexRefreshResult(scanned: 0, failures: 0, status: .unavailable, message: localIndexStatusText)
         }
 
-        let roots: [SQLiteRow]
+        let enabledRoots: [SQLiteRow]
         do {
-            roots = try database.query(
-                "SELECT id, kind, display_name FROM scan_roots WHERE enabled = 1 AND scan_mode != 'disabled' ORDER BY display_name ASC"
-            )
+            enabledRoots = try LocalAgentScanner.enabledRoots(in: database, settings: settingsSnapshot)
         } catch {
             localIndexStatusText = "本地会话索引不可用"
             return LocalIndexRefreshResult(scanned: 0, failures: 0, status: .unavailable, message: localIndexStatusText)
-        }
-
-        let enabledKinds = enabledSourceKinds()
-        let enabledRoots = roots.filter { row in
-            row.string("kind").flatMap(SourceKind.init(rawValue:)).map(enabledKinds.contains) == true
         }
         let ids = enabledRoots.compactMap { $0.int("id") }
         let failedIDs: Set<Int64>
         do {
             failedIDs = Set(try await scanner.scanRoots(ids: ids).keys)
+        } catch LocalAgentScannerError.scanAlreadyInProgress {
+            await reloadTodaySummary()
+            return LocalIndexRefreshResult(scanned: 0, failures: 0, status: .ok, message: "扫描已在进行")
         } catch {
             failedIDs = Set(ids)
         }
@@ -558,70 +535,7 @@ final class ProviderStore: ObservableObject {
         return LocalIndexRefreshResult(scanned: scanned, failures: failures, status: status, message: localIndexStatusText)
     }
 
-    private func enabledSourceKinds() -> Set<SourceKind> {
-        guard let settingsSnapshot else {
-            return Set(SourceKind.allCases)
-        }
-        let enabledAgentKinds = settingsSnapshot.enabledAgentKinds.compactMap(LocalAgentKind.init(rawValue:))
-        guard !enabledAgentKinds.isEmpty else { return [] }
-        return Set(enabledAgentKinds.map(\.sourceKind))
-    }
 
-    nonisolated private static func loadConfig() -> TokenMeterConfig {
-        let environment = ProcessInfo.processInfo.environment
-
-        if let path = environment["TOKENMETER_CONFIG"],
-           let config = try? ProviderConfigLoader.load(from: URL(fileURLWithPath: path)) {
-            return config
-        }
-
-        let homeConfigURL = FileManager.default
-            .homeDirectoryForCurrentUser
-            .appendingPathComponent(".token-meter/config.json")
-
-        if let config = try? ProviderConfigLoader.load(from: homeConfigURL) {
-            return config
-        }
-
-        return ProviderConfigLoader.defaultConfig()
-    }
-
-    nonisolated private static func snapshotCacheURL() -> URL {
-        FileManager.default
-            .homeDirectoryForCurrentUser
-            .appendingPathComponent(".token-meter/cache/provider-snapshots.json")
-    }
-}
-
-private extension LocalAgentKind {
-    var sourceKind: SourceKind {
-        switch self {
-        case .claudeCode:
-            .claudeJSONL
-        case .codex:
-            .codexJSONL
-        case .opencode:
-            .opencodeSQLite
-        case .omp:
-            .ompJSONL
-        case .reasonix:
-            .reasonixStats
-        case .dsh:
-            .dshJSONL
-        case .grok:
-            .grokJSONL
-        case .qwenCode:
-            .qwenJSONL
-        case .qoder:
-            .qoderJSONL
-        case .workbuddy:
-            .workbuddyJSONL
-        case .antigravityCLI:
-            .antigravitySQLite
-        case .geminiCLI:
-            .geminiChat
-        }
-    }
 }
 
 enum ProviderStoreError: Error {

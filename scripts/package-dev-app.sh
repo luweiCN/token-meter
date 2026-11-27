@@ -16,6 +16,8 @@ npm run build --prefix "$ROOT_DIR/Electron"
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$SWIFT_BIN_DIR/TokenMeterApp" "$MACOS_DIR/TokenMeterApp"
+cp "$SWIFT_BIN_DIR/TokenMeterIndex" "$MACOS_DIR/TokenMeterIndex"
+"$ROOT_DIR/scripts/build-cli.sh" "$MACOS_DIR/token-meter"
 cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp -R "$ROOT_DIR/Electron" "$RESOURCES_DIR/Electron"
 npm run rebuild:native --prefix "$RESOURCES_DIR/Electron" -- -f -w better-sqlite3 --build-from-source

@@ -2,7 +2,7 @@
 
 English | [简体中文](README.md)
 
-**A coding-agent usage dashboard that lives in your macOS menu bar** — real-time token usage, spend, and subscription quota tracking for Claude Code, Codex CLI, and friends. Fully local, nothing ever uploaded.
+**A coding-agent usage dashboard that lives in your macOS menu bar** — real-time token usage, spend, and subscription quota tracking for Claude Code, Codex CLI, and friends. Usage stays on the device until you pair it with another device.
 
 ![Menu bar](docs/screenshots/menubar.png)
 
@@ -72,28 +72,26 @@ Doubao Work is not integrated because no token/cost ledger could be validated re
 | Codex | `~/.codex/auth.json` |
 | Antigravity (AGY) | Enable in Settings to refresh quota automatically using the signed-in CLI. Expand the card for Gemini, Claude/GPT, and model-specific limits. [Setup and quota rules](docs/antigravity-quota.md) |
 | Zhipu GLM | In-app key (stored in Keychain) or `ZHIPU_API_KEY` |
-| OpenCode Go | In-app "Sign in with OpenCode Go" (WebView login, valid 1 year) |
+| OpenCode Go | Sign in with your OpenCode account in Settings, or use a Go API key |
 | Grok Build | `~/.grok/auth.json` (`grok login`) |
 | Qoder | Existing Qoder CLI login; Plan, Add-on, and shared organization Credits through the official `get_usage_info` control API |
 
 ## Architecture
 
-```
-┌─ Menu bar app (Swift / AppKit + SwiftUI)
-│   ├─ Incremental log scanning → derived SQLite DB (safe to delete anytime)
-│   ├─ Hooks-based live reporting (session start/heartbeat/stop)
-│   ├─ Quota API polling (≥5 min, rate-limit friendly)
-│   └─ Unix socket IPC
-└─ Main window (Electron + React)
-    └─ Reads the same SQLite, event-driven refresh
-```
+The cross-platform CLI owns account quota collection, OpenClaw and Hermes indexing, and peer replication. On macOS a bundled indexer reads other supported agent logs into the local SQLite database. The SwiftUI menu reads published snapshots and sends manual refresh requests to the CLI. Electron reads local session details and uses the CLI for device queries and pairing.
 
 - **Cost**: a daily GitHub Action generates and validates the LiteLLM pricing snapshot; the app checks the checksum hourly and downloads and atomically replaces the cache when prices change and falls back to its previous or bundled snapshot on failure. Local calculations support multiple context-length price tiers and preserve unknown prices; see the [pricing contract](docs/pricing.md)
-- **One source of truth**: menu bar "today", popover, and every main-window page all derive from the same message-level event table (`usage_events`)
+- **Multi-device usage**: the menu bar and popover use the synced device totals. [Usage scope](docs/device-sync.md)
+
+## Command line and device sync
+
+The same CLI collects OpenClaw and Hermes Agent usage on macOS, Windows and Linux. Any paired online device can serve the replicated usage history. In Devices, choose Add Device to share an invitation or enter a code across networks. The menu shows daily tokens, cost and weighted cache hit rate per machine when two or more machines have activity. See the [device and CLI guide](docs/device-sync.md) for installation, automatic updates and pairing.
 
 ## Install
 
-Build from source for now (macOS 13+, Xcode command line tools, Node.js LTS):
+Download the ZIP for your Mac from [GitHub Releases](https://github.com/luweiCN/token-meter/releases), extract it, and move TokenMeter into Applications. `arm64` is for Apple Silicon. See the [device and CLI guide](docs/device-sync.md) for CLI installation.
+
+Building from source requires macOS 13+, Xcode with the macOS 15 SDK or later, Node.js LTS, and the Go toolchain specified in `go.mod`.
 
 ```bash
 git clone https://github.com/luweiCN/token-meter.git
@@ -120,7 +118,7 @@ scripts/reconcile-with-ccusage.sh           # independent reconciliation vs ccus
 
 ## Privacy
 
-- **Fully local**: no accounts, no telemetry, nothing uploaded
+- Provider credentials and conversations stay on the device. Paired devices exchange signed usage summaries over an end-to-end encrypted connection.
 - **Read-only sources**: agent session logs are never written to or modified; the derived DB can be deleted and rebuilt at any time
 - **Metadata only**: token counts, model names, timestamps — prompts and responses never enter the database
 

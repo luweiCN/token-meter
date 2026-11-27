@@ -29,6 +29,7 @@ function snapshotWith(partial?: Partial<SettingsSnapshot['menubarAppearance']>):
       usage: 'tok',
       windowOrder: 'longFirst',
       showPeakBadge: true,
+      showPeakSection: true,
       peakBadgeStyle: 'dotWord',
       ...partial
     }
@@ -73,6 +74,19 @@ describe('MenubarAppearance', () => {
     expect((screen.getByRole('button', { name: '图形' }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: '剩余百分比数字' }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: '品牌短名' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('can enable the peak-hours panel while the menu bar badge is hidden', async () => {
+    const patch = vi.spyOn(settingsStore, 'applyPatch')
+      .mockResolvedValue({ requestedVersion: 4, status: 'pending' });
+    await mount({ showPeakBadge: false, showPeakSection: false });
+
+    const section = screen.getByRole('button', { name: '在菜单栏弹窗中显示峰谷时段' });
+    expect(section.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(section);
+    expect(patch).toHaveBeenCalledWith({ menubarShowPeakSection: true });
+    expect(screen.getByRole('button', { name: '在顶部菜单栏显示峰/谷标识' }).getAttribute('aria-pressed'))
+      .toBe('false');
   });
 
   it('disables the last remaining element switch', async () => {

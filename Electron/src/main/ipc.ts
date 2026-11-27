@@ -1,4 +1,6 @@
 import { BrowserWindow, ipcMain, session } from 'electron';
+import { queryDeviceUsage } from './deviceUsage.js';
+import { registerPairing } from './devicePairing.js';
 import { DashboardRepository } from './dashboardRepository.js';
 import { IndexStatusRepository } from './indexStatusRepository.js';
 import { ModelsRepository } from './modelsRepository.js';
@@ -13,6 +15,7 @@ import {
 } from './opencodeGoLogin.js';
 import { readUsdToCnyRate } from './exchangeRate.js';
 import { ProjectsRepository } from './projectsRepository.js';
+import { takeSettingsOpen } from './settingsNavigation.js';
 import { SettingsRepository } from './settingsRepository.js';
 import { notifySwift, requestFullRescan, subscribeEvents } from './tokenMeterSocketClient.js';
 
@@ -25,6 +28,7 @@ export function registerIpcHandlers() {
   const projects = new ProjectsRepository(db);
   const indexStatus = new IndexStatusRepository(db);
   const models = new ModelsRepository(db);
+  ipcMain.handle('settings:takeOpenRequest', () => takeSettingsOpen());
   ipcMain.handle('settings:get', async () => {
     const snapshot = settings.get();
     const status = snapshot.codexResetAutoRedeemEnabled
@@ -65,6 +69,8 @@ export function registerIpcHandlers() {
       };
     }
   });
+  registerPairing();
+  ipcMain.handle('devices:usage', (_event, host: string, from: string) => queryDeviceUsage(host, from));
   ipcMain.handle('dashboard:overview', async () => dashboard.overview());
   ipcMain.handle('overview:query', async () => overview.buildOverview());
   ipcMain.handle('overview:subagentBreakdown', async (_event, sessionId: number) => overview.subagentBreakdown(sessionId));

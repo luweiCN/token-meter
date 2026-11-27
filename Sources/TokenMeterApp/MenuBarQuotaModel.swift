@@ -237,7 +237,7 @@ enum MenuBarQuotaModel {
     static func projection(
         snapshots: [ProviderUsageSnapshot],
         settings: SettingsSnapshot?,
-        todaySummary: MenuBarTodaySummary,
+        todaySummary: MenuTodayUsage,
         peakTiers: [MenuBarProjection.PeakTierEntry] = [],
         displayCurrency: DisplayCurrency = .usd,
         usdToCny: Double = 1,
@@ -314,12 +314,12 @@ enum MenuBarQuotaModel {
         case .off:
             tail = .hidden
         case .tok:
-            tail = todaySummary.tokens > 0
-                ? .text(UsageFormatter.compactTokens(todaySummary.tokens))
+            tail = todaySummary.usage.tokens > 0
+                ? .text(todaySummary.usage.tokenAmount.dailyText)
                 : .hidden
         case .cost:
-            tail = todaySummary.costUsdMicros > 0
-                ? .text(MenuBarNumberFormat.money(todaySummary.costUsdMicros, currency: displayCurrency, usdToCny: usdToCny))
+            tail = todaySummary.usage.costMicros > 0
+                ? .text(todaySummary.usage.formattedCost(currency: displayCurrency, usdToCny: usdToCny))
                 : .hidden
         }
 

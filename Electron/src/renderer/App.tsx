@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import type { IndexStatusResult } from './api.js';
 import { Layout, type RouteName } from './components/Layout.js';
 import { parseUtcTimestamp } from './format.js';
+import { Devices } from './routes/Devices.js';
 import { Models } from './routes/Models.js';
 import { Overview } from './routes/Overview.js';
 import { Projects } from './routes/Projects.js';
@@ -32,6 +33,34 @@ export function AppShell() {
   const [route, setRoute] = useState<RouteName>('dashboard');
   const [indexStatusState, setIndexStatusState] = useState<IndexStatusState>({ kind: 'loading' });
   const [isScanning, setIsScanning] = useState(false);
+  const [pairInvitation, setPairInvitation] = useState<string | null>(null);
+  const handledInvitation = useCallback(() => setPairInvitation(null), []);
+  useEffect(() => {
+    let mounted = true;
+    const pairing = window.tokenMeter.pairing;
+    async function take() {
+      const invitation = await pairing.takeInvitation().catch(() => null);
+      if (mounted && invitation) {
+        setPairInvitation(invitation);
+        setRoute('devices');
+      }
+    }
+    const unsubscribe = pairing.onInvitation(() => void take());
+    void take();
+    return () => { mounted = false; unsubscribe(); };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    const settings = window.tokenMeter.settings;
+    async function take() {
+      const requested = await settings.takeOpenRequest().catch(() => false);
+      if (mounted && requested) setRoute('settings');
+    }
+    const unsubscribe = settings.onOpenRequested(() => void take());
+    void take();
+    return () => { mounted = false; unsubscribe(); };
+  }, []);
 
   // 启动即加载设置：金额显示币种/汇率要在首屏前就位，不能等用户逛到设置页。
   useEffect(() => {
@@ -122,6 +151,7 @@ export function AppShell() {
       {route === 'dashboard' && <Overview />}
       {route === 'projects' && <Projects />}
       {route === 'sessions' && <Sessions />}
+      {route === 'devices' && <Devices invitation={pairInvitation} onInvitationHandled={handledInvitation} />}
       {route === 'models' && <Models />}
       {route === 'settings' && <Settings />}
     </Layout>

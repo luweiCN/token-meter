@@ -17,9 +17,11 @@ public struct CostCalculator {
     /// 第三方托管键（azure_ai/、fireworks_ai/、cloudflare/ 等）保留斜杠、不撞官方名，
     /// 防托管价冒充官方价——azure_ai/deepseek-v4-pro 的 $1.74 曾把官方 $0.435 覆盖掉，
     /// 整月用量被按 4 倍计费。用量侧（事件模型名）仍走 ModelNameNormalizer 的通用规则。
+    /// `xai/` 是 LiteLLM 里 Grok 的官方前缀；`vertex_ai/` 写在前面，所以
+    /// `vertex_ai/xai/...` 会先剥宿主再剥 `xai/`。
     static let pricingKeyPrefixes = [
         "vertex_ai/", "bedrock/", "anthropic/", "openai/", "openai-codex/", "zai/",
-        "deepseek/", "gemini/", "meta/",
+        "deepseek/", "gemini/", "meta/", "xai/",
         "omniroute/", "9router/", "cx/", "opencode-go/", "ocg/",
         "glm-cn/", "glm/", "antigravity/", "google-antigravity/", "zhipu-coding-plan/",
     ]
@@ -47,6 +49,30 @@ public struct CostCalculator {
             break
         }
         return name.isEmpty ? "unknown" : name
+    }
+
+    /// 计价查找顺序。第一个键是用量侧 canonical，后面才是别名。
+    ///
+    /// Grok Build 把同一个模型写成末尾 `-build`（`grok-4.7-build`）。没有专属价时用基础模型，
+    /// 不再为每个版本登记一对相同的键。只剥这一个后缀：`grok-4.7-build-fast` 以 `-fast` 结尾，
+    /// 是另一档单价。`grok-build` 本身是产品名，不是「grok + Build」。
+    /// 不写进 `ModelNameNormalizer`：展示名和 `model_canonical` 仍分开。
+    static func pricingCandidates(for canonicalModel: String) -> [String] {
+        let suffix = "-build"
+        guard canonicalModel.hasPrefix("grok-"), canonicalModel.hasSuffix(suffix) else {
+            return [canonicalModel]
+        }
+        let base = String(canonicalModel.dropLast(suffix.count))
+        guard !base.isEmpty, base != "grok" else { return [canonicalModel] }
+        return [canonicalModel, base]
+    }
+
+    /// 价格指纹变了的计价键，要重算哪些用量键。`grok-4.7-build` 不在索引里，
+    /// 但它的价来自 `grok-4.7`，基础价变化时这两行都要重投影。
+    static func usageKeysAffected(by changedPricingKeys: Set<String>, usedKeys: Set<String>) -> Set<String> {
+        Set(usedKeys.filter { key in
+            pricingCandidates(for: key).contains(where: changedPricingKeys.contains)
+        })
     }
 
     public init(snapshot: PricingSnapshot, ignoreReportedModels: Set<String> = []) {
@@ -81,7 +107,7 @@ public struct CostCalculator {
 
     public func cost(for event: UsageEvent) -> (micros: Int64?, source: CostSource) {
         let canonicalModel = ModelNameNormalizer.canonical(event.modelName)
-        let pricing = canonicalIndex[canonicalModel]
+        let pricing = Self.pricingCandidates(for: canonicalModel).lazy.compactMap { canonicalIndex[$0] }.first
 
         // 峰谷价属于模型而不是供应商。只要本地定价表把模型标成 tiered，
         // 就必须按事件时间选本地档位；不能先采信供应商上报的固定金额，

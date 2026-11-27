@@ -1,19 +1,23 @@
 # Antigravity 订阅额度
 
-登录官方 `agy` 后，在 TokenMeter 设置中开启 Antigravity。菜单栏的「Agent」列表显示 **Antigravity CLI**，账户额度卡使用简称 **AGY**。TokenMeter 在后台短暂启动官方 CLI，从它的结构化状态栏读取本次返回的额度，读完即退出。刷新不打开窗口、创建对话或发送模型请求。你正在使用 CLI 时，其状态栏也会主动推送额度。[官方状态栏协议](https://antigravity.google/docs/cli/statusline/)
+先在官方 `agy` 登录，在 TokenMeter 设置中启用 Antigravity。账户额度卡显示 **AGY**，Agent 用量列表显示 **Antigravity CLI**。macOS、Linux 和 Windows 的 TokenMeter CLI 都从官方结构化状态栏读取额度。打开 Mac 菜单时直接显示后台的最近读数。[Google 状态栏协议](https://antigravity.google/docs/cli/statusline/)
 
-开启、定时检查和 Mac 唤醒时都会检查快照，距离成功观测满 5 分钟才发起后台查询。自动尝试至少间隔 5 分钟。暂停扫描会暂停查询。
+## 刷新
 
-右键 AGY 标题可立即刷新。失败时，展开卡片可看到具体原因以及「重试」按钮。Google 只返回余量时，窗口显示百分比，倒计时留空。已知重置时间确实过去的窗口，等下一次成功查询再显示。
+常驻的 TokenMeter CLI 按账户刷新间隔采集。最近五分钟已有读数时会复用它。在额度卡点击刷新，或运行 `token-meter quota-refresh antigravity`，可以立即查询。正在使用的 Antigravity CLI 也会推送状态变化。暂停采集会暂停定时查询。
 
-手动刷新和定时刷新都由官方 CLI 复用 macOS 钥匙串中的登录。访问令牌到期时，CLI 会自动续期。如果连接 Google 续期服务失败，TokenMeter 会等待重试。后台查询禁止打开浏览器。只有 Google 授权失效或首次使用时，才需要你在终端打开 `agy` 并完成登录。[官方登录说明](https://antigravity.google/docs/cli/install/)
+后台查询仅短暂启动 `agy`，在不可见终端读取额度，然后结束进程。查询复用当前用户已登录的会话，采用官方远程终端登录模式，并在 macOS 上限制系统浏览器启动。TokenMeter 不提供登录输入，也不发送模型请求。首次使用或 Google 已使登录失效时，需要自行在终端登录。地区、账号资格、网络续期与超时各有对应提示。[Google 登录及 SSH 说明](https://antigravity.google/docs/install?tab=cli)
 
-菜单内的「刷新额度」和「重试」均在后台执行。查询失败时保留有效期内的读数。收到新的额度数据后，卡片会立即清除之前的刷新错误。
+查询失败时，额度卡保留仍有效的窗口和上次观测时间。没有已知重置时间的窗口会显示余量。超过已知重置时间的窗口会在新数据到达后重新显示。官方会话报告正在认证时会清空上一个会话的额度。
 
-标题的 `5h` 和 `7d` 显示 Gemini 的 5 小时及每周剩余百分比。展开后的横条分别显示 Claude/GPT 共用的 5 小时及每周额度，以及 Google 单独返回的模型窗口（例如 Argon WTU 周额度）。不同窗口可能同时约束一次请求，各项余量不能相加。[官方 /usage 说明](https://antigravity.google/docs/cli/commands/usage)
+## 额度口径
 
-模型和任务工作量会影响额度消耗。套餐基础额度用完后，能否使用额外 Google AI 积分取决于账号的超额设置。积分余额可在 `agy` 输入 `/credits` 查看。账户额度卡显示窗口、余量、重置时间和观测时间。CLI 模型用量由本地扫描器采集，可在菜单栏的「AGENT」和主窗口查看。[套餐规则](https://antigravity.google/docs/plans) · [积分查询](https://antigravity.google/docs/cli/commands/credits)
+标题的 `5h` 和 `7d` 表示 Gemini 的 5 小时与每周剩余额度，展开后可查看 Claude/GPT 共用窗口和模型专属窗口。各项窗口并行约束请求，百分比不能相加。官方仅给出剩余数量时，卡片显示该数量。[官方 /usage 说明](https://antigravity.google/docs/cli/commands/usage)
 
-TokenMeter 将采集命令接入 `~/.gemini/antigravity-cli/settings.json` 的 `statusLine`。默认终端状态栏仍然显示。已有自定义命令会收到原始输入并继续输出。关闭接入后，TokenMeter 会还原原配置并清除本地额度快照。
+Token 用量单独从本地会话索引计算。模型和任务量影响订阅额度消耗，额外 Google AI 积分由 Google 账号的超额设置决定。`agy` 的 `/credits` 可查看上游提供的积分信息。[套餐规则](https://antigravity.google/docs/plans) · [积分查询](https://antigravity.google/docs/cli/commands/credits) · [本地数据源契约](data-source-contracts.md#antigravity-cli)
 
-CLI 的计数、去重与估价规则见[本地数据源契约](data-source-contracts.md#antigravity-cli)。
+## 终端状态栏
+
+TokenMeter 将采集入口写入 `~/.gemini/antigravity-cli/settings.json` 的 `statusLine`。默认状态栏继续显示。已有自定义命令会收到完整原始输入，终端显示它的输出。TokenMeter 的私有缓存仅保存额度窗口和观测时间。
+
+关闭接入会恢复原状态栏并清除该账户的本机额度快照。如果用户自行替换状态栏命令，关闭接入时保留用户新命令。

@@ -8,6 +8,8 @@ public enum ModelNameNormalizer {
     /// 只收数据里实际见过的档位后缀。-medium/-low 刻意不收：
     /// mistral-medium、whisper-medium 的 medium 是尺寸不是档位，剥了就错了。
     /// -fast 也不收：Codex/OpenCode 的 Fast 改单价；grok-4-fast 是独立产品。
+    /// -build 也不收：Grok Build 的末尾 `-build` 只在 `CostCalculator.pricingCandidates` 回退，
+    /// 放进这张表会改掉 `model_canonical`，并把非 Grok 的 `*-build` 并进基础名。
     private static let effortSuffixes = ["-xhigh", "-high"]
 
     public static func canonical(_ raw: String?) -> String {

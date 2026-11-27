@@ -355,6 +355,10 @@ class CanonicalTests(unittest.TestCase):
         self.assertEqual(canonical("mistral-medium"), "mistral-medium")  # medium 是尺寸不是档位，不剥
         self.assertEqual(canonical("gpt-5.6-sol-fast"), "gpt-5.6-sol-fast")  # Fast 不是 effort，不剥
         self.assertEqual(canonical("grok-4-fast"), "grok-4-fast")
+        self.assertEqual(canonical("xai/grok-4.7"), "grok-4.7")
+        self.assertEqual(canonical("vertex_ai/xai/grok-4.7"), "grok-4.7")
+        self.assertEqual(canonical("grok-4.7-build"), "grok-4.7-build")
+        self.assertEqual(canonical("grok-4.7-build-fast"), "grok-4.7-build-fast")
 
 
 class OverrideTests(unittest.TestCase):

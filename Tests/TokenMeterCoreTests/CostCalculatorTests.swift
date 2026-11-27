@@ -219,6 +219,11 @@ final class CostCalculatorTests: XCTestCase {
         XCTAssertEqual(CostCalculator.pricingKeyCanonical("gpt-5.5-xhigh"), "gpt-5.5")
         XCTAssertEqual(CostCalculator.pricingKeyCanonical("gpt-5.6-sol-fast"), "gpt-5.6-sol-fast")
         XCTAssertEqual(CostCalculator.pricingKeyCanonical("grok-4-fast"), "grok-4-fast")
+        XCTAssertEqual(CostCalculator.pricingKeyCanonical("xai/grok-4.7"), "grok-4.7")
+        XCTAssertEqual(CostCalculator.pricingKeyCanonical("vertex_ai/xai/grok-4.7"), "grok-4.7")
+        // -build 不在索引归一里剥。专属价要留在自己的键上，查价时才回退。
+        XCTAssertEqual(CostCalculator.pricingKeyCanonical("xai/grok-4.7-build"), "grok-4.7-build")
+        XCTAssertEqual(CostCalculator.pricingKeyCanonical("grok-4.7-build-fast"), "grok-4.7-build-fast")
     }
 
     func testCacheTiersArePricedSeparately() {
@@ -494,5 +499,82 @@ final class CostCalculatorTests: XCTestCase {
         let result = calculator.cost(for: event(model: "grok-4.6-build", input: 1_000_000, output: 1_000_000))
         XCTAssertEqual(result.source, .computed)
         XCTAssertEqual(result.micros, 8_000_000)
+    }
+
+    func testGrok47BuildUsesSameFlatPriceAsGrok47() throws {
+        let snapshot = try PricingSnapshot.loadBundled()
+        let calculator = CostCalculator(snapshot: snapshot)
+        let build = calculator.cost(for: event(model: "grok-4.7-build", input: 1_000_000, output: 1_000_000))
+        let base = calculator.cost(for: event(model: "grok-4.7", input: 1_000_000, output: 1_000_000))
+        XCTAssertEqual(build.source, .computed)
+        XCTAssertEqual(base.source, .computed)
+        XCTAssertEqual(build.micros, 8_000_000)
+        XCTAssertEqual(base.micros, build.micros)
+        // 超过 200K 仍用这份平价，不改走上游 xai/grok-4.7 的长上下文档。
+        let longPrompt = calculator.cost(for: event(model: "grok-4.7-build", input: 300_000))
+        XCTAssertEqual(longPrompt.source, .computed)
+        XCTAssertEqual(longPrompt.micros, 600_000)
+    }
+
+    func testGrokBuildSuffixUsesBaseCatalogPriceWithoutADedicatedKey() {
+        let long = LongContextPricing(
+            thresholdTokens: 200_000,
+            rate: RateCard(inputPerMTok: 4, outputPerMTok: 12, cacheReadPerMTok: 1, cacheWrite5mPerMTok: nil, cacheWrite1hPerMTok: nil)
+        )
+        let snapshot = PricingSnapshot(
+            snapshotVersion: "test",
+            source: "litellm",
+            models: [
+                "xai/grok-4.9": ModelPricing(
+                    inputPerMTok: 2, outputPerMTok: 6, cacheReadPerMTok: 0.5,
+                    cacheWrite5mPerMTok: nil, cacheWrite1hPerMTok: nil, longContext: [long]
+                ),
+                "xai/grok": ModelPricing(
+                    inputPerMTok: 1, outputPerMTok: 1, cacheReadPerMTok: 0,
+                    cacheWrite5mPerMTok: 0, cacheWrite1hPerMTok: 0
+                ),
+            ]
+        )
+        let calculator = CostCalculator(snapshot: snapshot)
+        let build = calculator.cost(for: event(model: "grok-4.9-build", input: 1_000_000, output: 1_000_000))
+        let base = calculator.cost(for: event(model: "xai/grok-4.9", input: 1_000_000, output: 1_000_000))
+        XCTAssertEqual(build.source, .computed)
+        XCTAssertEqual(base.source, .computed)
+        XCTAssertEqual(build.micros, base.micros)
+        XCTAssertEqual(build.micros, 16_000_000)
+
+        let fast = calculator.cost(for: event(model: "grok-4.9-build-fast", input: 1_000_000))
+        XCTAssertEqual(fast.source, .unknown)
+        let product = calculator.cost(for: event(model: "grok-build", input: 1_000_000))
+        XCTAssertEqual(product.source, .unknown)
+    }
+
+    func testDedicatedGrokBuildPriceWinsOverTheBaseCard() {
+        let snapshot = PricingSnapshot(
+            snapshotVersion: "test",
+            source: "litellm",
+            models: [
+                "xai/grok-4.9": ModelPricing(
+                    inputPerMTok: 2, outputPerMTok: 6, cacheReadPerMTok: 0.5,
+                    cacheWrite5mPerMTok: 0, cacheWrite1hPerMTok: 0
+                ),
+                "grok-4.9-build": ModelPricing(
+                    inputPerMTok: 9, outputPerMTok: 9, cacheReadPerMTok: 0,
+                    cacheWrite5mPerMTok: 0, cacheWrite1hPerMTok: 0
+                ),
+            ]
+        )
+        let calculator = CostCalculator(snapshot: snapshot)
+        let result = calculator.cost(for: event(model: "grok-4.9-build", input: 1_000_000))
+        XCTAssertEqual(result.source, .computed)
+        XCTAssertEqual(result.micros, 9_000_000)
+    }
+
+    func testGrokBuildUsageIsRepricedWhenTheBaseKeyChanges() {
+        let affected = CostCalculator.usageKeysAffected(
+            by: ["grok-4.7"],
+            usedKeys: ["grok-4.7", "grok-4.7-build", "grok-4.7-build-fast", "grok-build", "claude-opus-4-8"]
+        )
+        XCTAssertEqual(affected, ["grok-4.7", "grok-4.7-build"])
     }
 }

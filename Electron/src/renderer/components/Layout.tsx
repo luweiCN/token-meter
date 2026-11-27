@@ -5,7 +5,7 @@ import { applyThemePref, storedThemePref, watchSystemTheme } from '../theme.js';
 import { ToastHost } from './toast.js';
 import { TrafficLightHover } from './TrafficLightHover.js';
 
-export type RouteName = 'dashboard' | 'projects' | 'sessions' | 'models' | 'settings';
+export type RouteName = 'dashboard' | 'projects' | 'sessions' | 'models' | 'devices' | 'settings';
 
 /// 侧栏导航。索引状态已并入设置页「数据」区，不再单列。
 const NAV: Array<{ route: RouteName; label: string; icon: ReactNode }> = [
@@ -46,6 +46,10 @@ const NAV: Array<{ route: RouteName; label: string; icon: ReactNode }> = [
         <path d="M1.5 4.5 7 7.5l5.5-3M7 7.5v5" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
       </svg>
     )
+  },
+  {
+    route: 'devices', label: '设备',
+    icon: <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><rect x="1" y="2" width="12" height="8" rx="1.5" stroke="currentColor"/><path d="M7 10v2m-3 0h6" stroke="currentColor"/></svg>
   },
   {
     route: 'settings',

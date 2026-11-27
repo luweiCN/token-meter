@@ -6,6 +6,7 @@ import TokenMeterCore
 @MainActor
 protocol MainInterfaceLaunching: AnyObject {
     func openMainInterface()
+    func openSettings()
 }
 
 struct MainInterfaceLaunchCommand: Equatable {
@@ -18,13 +19,27 @@ struct MainInterfaceLaunchCommand: Equatable {
 final class ElectronMainInterfaceLauncher: MainInterfaceLaunching {
     private var process: Process?
 
-    func openMainInterface() {
+    func openMainInterface() { launch() }
+
+    func openSettings() { launch(openSettings: true) }
+
+    static func isPairingInvitation(_ url: URL) -> Bool {
+        guard url.absoluteString.utf8.count <= 2048, let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return false
+        }
+        return parts.scheme?.lowercased() == "tokenmeter" && parts.host?.lowercased() == "pair"
+            && parts.user == nil && parts.password == nil && parts.port == nil
+    }
+
+    func openPairingInvitation(_ url: URL) { launch(invitation: url) }
+
+    private func launch(invitation: URL? = nil, openSettings: Bool = false) {
         guard let electronDirectory = Self.electronDirectory() else {
             NSSound.beep()
             return
         }
 
-        let command = Self.launchCommand(electronDirectory: electronDirectory)
+        let command = Self.launchCommand(electronDirectory: electronDirectory, openSettings: openSettings)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: command.executablePath)
         process.arguments = command.arguments
@@ -32,6 +47,7 @@ final class ElectronMainInterfaceLauncher: MainInterfaceLaunching {
         command.environment.forEach { key, value in
             environment[key] = value
         }
+        environment["TOKENMETER_PAIR_INVITATION"] = invitation?.absoluteString
         process.environment = environment
         process.standardOutput = nil
         process.standardError = nil
@@ -44,7 +60,7 @@ final class ElectronMainInterfaceLauncher: MainInterfaceLaunching {
         }
     }
 
-    static func launchCommand(electronDirectory: URL) -> MainInterfaceLaunchCommand {
+    static func launchCommand(electronDirectory: URL, openSettings: Bool = false) -> MainInterfaceLaunchCommand {
         let path = [
             URL(fileURLWithPath: ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory())
                 .appendingPathComponent(".volta/bin").path,
@@ -62,7 +78,7 @@ final class ElectronMainInterfaceLauncher: MainInterfaceLaunching {
                 "node",
                 electronDirectory.appendingPathComponent("node_modules/electron/cli.js").path,
                 electronDirectory.path
-            ],
+            ] + (openSettings ? ["--open-settings"] : []),
             environment: ["PATH": path]
         )
     }
@@ -432,9 +448,7 @@ final class StatusBarController: NSObject {
     }
 
     private func bindStore() {
-        // 三源合并重投影：providerSnapshots（额度刷新）/ settingsSnapshot
-        // （启停/别名/菜单栏外观）/ todaySummary（今日尾巴）任一变化即重建，
-        // 与弹窗的展示口径同步。尾巴文本同步进透明 title（宽度/a11y 镜像层）。
+        // 额度、外观、今日用量或汇率变化时重建。透明 title 用于宽度和辅助功能。
         store.$providerSnapshots
             .combineLatest(store.$settingsSnapshot, store.$todaySummary, store.$exchangeRate)
             .receive(on: RunLoop.main)
@@ -488,6 +502,7 @@ final class StatusBarController: NSObject {
         } else {
             updatePopoverContent(relativeTo: button)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            Task { [weak store] in await store?.reloadDailyNodeSummary() }
             // 主动激活一次，让「失活即收起」的主路径可靠（见 installGlobalClickMonitor 注）。
             NSApp.activate(ignoringOtherApps: true)
             installGlobalClickMonitor()
@@ -594,7 +609,7 @@ final class StatusBarController: NSObject {
         let maxHeight = max(360, screenHeight - 96)
         guard configuredMaxHeight != maxHeight else { return }
         configuredMaxHeight = maxHeight
-        let size = (width: CGFloat(378), initialHeight: min(maxHeight, estimatedCollapsedContentHeight()), maxHeight: maxHeight)
+        let size = (width: CGFloat(378), initialHeight: min(maxHeight, estimatedContentHeight()), maxHeight: maxHeight)
         popover.contentSize = NSSize(width: size.width, height: size.initialHeight)
         let hosting = NSHostingController(
             rootView: PopoverView(
@@ -607,6 +622,10 @@ final class StatusBarController: NSObject {
                 onOpenMainInterface: { [weak self] in
                     self?.closePopover()
                     self?.mainInterfaceLauncher.openMainInterface()
+                },
+                onOpenSettings: { [weak self] in
+                    self?.closePopover()
+                    self?.mainInterfaceLauncher.openSettings()
                 },
                 onThemeChange: { [weak self] in
                     self?.applyPopoverAppearance()
@@ -643,20 +662,27 @@ final class StatusBarController: NSObject {
 
     /// 打开瞬间的初始高度估值——只求接近，弹窗渲染后 readHeight 的实测值
     /// 立刻修正（PopoverView.panelHeight 跟随内容）。估得越准，首帧跳变越小。
-    private func estimatedCollapsedContentHeight() -> CGFloat {
+    private func estimatedContentHeight() -> CGFloat {
         let chrome: CGFloat = 192 + 50   // 吸顶头部（PanelHead+Today+SourceLine）+ 底栏
         var height = chrome + 18         // 滚动区上下留白
 
-        // 今日 Agent / 模型两个列表块：SectionBlock 铺垫约 45，一行约 27。
-        let summary = store.todaySummary
-        if !summary.perProvider.isEmpty {
-            height += 45 + CGFloat(summary.perProvider.count) * 27
+        if store.settingsSnapshot?.menuBarAppearance.showPeakSection != false {
+            let rows = store.peakPricingRows.filter { $0.tier.phase(at: Date()) != .notYetEffective }
+            if !rows.isEmpty { height += 45 + CGFloat(rows.count) * 27 }
         }
-        if !summary.perModel.isEmpty {
-            height += 45 + CGFloat(min(5, summary.perModel.count)) * 27
-            if summary.perModel.count > 5 {
-                height += 26   // 「展开全部」按钮行
-            }
+        let machines = store.dailyNodeSummary?.visibleMachines.count ?? 0
+        let agents = PopoverUsageList.agents.savedRowCount(store.dailyAgents.count)
+        let models = PopoverUsageList.models.savedRowCount(store.dailyModels?.rows.count ?? 0)
+        let sections = [machines, agents, models].filter { $0 > 0 }
+        if !sections.isEmpty {
+            height += 17 + CGFloat(machines + agents + models + sections.count) * 19
+            height += CGFloat(sections.count - 1) * 4
+        }
+        if models > 0 {
+            height += 25   // 合计行和分隔线
+        }
+        if (store.dailyModels?.total.unknownCost ?? 0) > 0 {
+            height += 22
         }
 
         let snapshots = store.displayProviderSnapshots

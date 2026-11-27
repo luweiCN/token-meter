@@ -1,3 +1,4 @@
+import type { PairingAPI } from '../shared/pairing.js';
 import type { DayModelRow, DayProjectRow, OverviewPayload, SubagentRow } from '../main/overviewRepository.js';
 
 export type { OverviewPayload, OverviewReady, OverviewEmpty } from '../main/overviewRepository.js';
@@ -58,6 +59,7 @@ export interface MenubarAppearance {
   usage: MenubarUsageTail;
   windowOrder: MenubarWindowOrder;
   showPeakBadge: boolean;
+  showPeakSection: boolean;
   peakBadgeStyle: PeakBadgeStyle;
   pinnedBalanceProviderId?: string;
 }
@@ -97,6 +99,7 @@ export interface SettingsPatch {
   menubarUsage?: MenubarUsageTail;
   menubarWindowOrder?: MenubarWindowOrder;
   menubarShowPeakBadge?: boolean;
+  menubarShowPeakSection?: boolean;
   menubarPeakBadgeStyle?: PeakBadgeStyle;
   displayCurrency?: 'usd' | 'cny';
   /// providerId → 菜单栏显示（show_in_menu_bar；独立于 enabled 的数据启停）。
@@ -115,6 +118,7 @@ export const MENUBAR_APPEARANCE_DEFAULT: MenubarAppearance = {
   usage: 'tok',
   windowOrder: 'longFirst',
   showPeakBadge: true,
+  showPeakSection: true,
   peakBadgeStyle: 'dotWord'
 };
 
@@ -379,10 +383,33 @@ export interface IndexStatusResult {
   failedFiles: FailedFileSummary[];
 }
 
+export interface DeviceQuotaWindow {
+  label: string;
+  remainingPercent?: number;
+  remainingAmount?: string;
+  usedAmount?: string;
+  totalAmount?: string;
+  unit?: string;
+}
+
+export interface DeviceReport {
+  devices: Array<{ id: string; name: string; local: boolean; os: string; tokens: number; unknownTokens: number; observed: number; partialSources?: number }>;
+  agents: Array<{ agent: string; model: string; input: number; output: number; cacheRead: number; cacheWrite: number; costMicros: number; unknownCost: number; unknownTokens: number; creditsPicos?: string }>;
+  quotas: Array<{ provider: string; account: string; observedAt: string; balance?: string; balanceUnit?: string; windows?: DeviceQuotaWindow[] }>;
+  tokens: number;
+  unknownTokens: number;
+  unknownCost: number;
+  costMicros: number;
+}
+
 declare global {
   interface Window {
     tokenMeter: {
+      devices: { query(host: string, from: string): Promise<DeviceReport> };
+      pairing: PairingAPI;
       settings: {
+        takeOpenRequest(): Promise<boolean>;
+        onOpenRequested(callback: () => void): () => void;
         get(): Promise<SettingsSnapshot>;
         update(patch: SettingsPatch, expectedVersion: number): Promise<SettingsApplyRequest>;
       };

@@ -7,7 +7,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var store: ProviderStore?
     private var statusBarController: StatusBarController?
     private var refreshTimer: Timer?
-    private var codexResetTimer: Timer?
+    private var accountWatcher: SnapshotWatcher?
+    private var usageWatcher: SnapshotWatcher?
+    private let mainInterface = ElectronMainInterfaceLauncher()
     private var exchangeRateTimer: Timer?
     private var pricingRefreshTimer: Timer?
     private var startupTask: Task<Void, Never>?
@@ -32,10 +34,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         isTerminating = false
+        Task.detached(priority: .utility) { DesktopNode.installIfNeeded() }
         let store = ProviderStore(notificationCenter: usageNotificationCenter)
         store.seedDefaultScanRoots()
         self.store = store
-        self.statusBarController = StatusBarController(store: store)
+        self.statusBarController = StatusBarController(store: store, mainInterfaceLauncher: mainInterface)
+        accountWatcher = SnapshotWatcher(file: store.accountFeed.snapshotURL) { [weak store] in
+            Task { @MainActor in await store?.reloadAccountSnapshots() }
+        }
+        usageWatcher = SnapshotWatcher(file: DesktopNode.summaryURL(in: DesktopNode.directory)) { [weak store] in
+            Task { @MainActor in await store?.reloadDailyNodeSummary() }
+        }
         let ipcServer = TokenMeterIPCServer(store: store)
         try? ipcServer.start()
         self.ipcServer = ipcServer
@@ -45,12 +54,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, !Task.isCancelled,
                   let store = self.store,
                   let ipcServer = self.ipcServer else { return }
+            await store.reloadAccountSnapshots()
+            guard !Task.isCancelled else { return }
             await store.reloadTodaySummary()
             guard !Task.isCancelled else { return }
             self.statusBarController?.preparePopover()
             await store.refreshNotificationAuthorizationState()
-            guard !Task.isCancelled else { return }
-            await store.refresh()
             guard !Task.isCancelled else { return }
             let pricingOutcome = await self.refreshPricingSnapshot()
             guard !Task.isCancelled, !self.isTerminating else { return }
@@ -59,7 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             self.schedulePricingRefreshTimer(after: self.nextPricingRefreshDelay(for: pricingOutcome))
             guard !Task.isCancelled else { return }
-            await store.refreshLocalAgentIndex()
+            await store.refreshScheduledLocalIndex()
             guard !Task.isCancelled else { return }
             await store.refreshExchangeRate()
             guard !Task.isCancelled else { return }
@@ -74,9 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
         bindSettingsTimer(to: store)
-        bindCodexResetAutomation(to: store)
         bindHooksInstaller(to: store)
-        bindAntigravity(to: store)
         // 静默更新检查（24h 节流）：有新版发系统通知；手动入口在右键菜单。
         UpdateChecker.autoCheckIfDue()
     }
@@ -94,34 +101,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
     }
 
-    private func bindAntigravity(to store: ProviderStore) {
-        guard let config = store.antigravityConfig, let executable = Bundle.main.executableURL else { return }
-        let installer = AntigravityStatusLine(executable: executable)
-        store.$settingsSnapshot.compactMap { $0 }.map { settings in
-            settings.providerOverrides.first { $0.providerId == config.id }?.enabled ?? config.enabled
-        }
-        .removeDuplicates()
-        .receive(on: DispatchQueue(label: "TokenMeter.AntigravityStatusLine", qos: .utility))
-        .sink { [weak store] enabled in
-            let result = Result { try installer.setEnabled(enabled) }
-            Task { @MainActor in
-                guard let store, store.isProviderEnabled(config.id) == enabled else { return }
-                if case .failure(let error) = result {
-                    store.antigravityConnectionError = "无法配置 Antigravity 状态栏：\(error.localizedDescription)"
-                } else {
-                    store.antigravityConnectionError = nil
-                }
-                if enabled { store.refreshAntigravityIfNeeded() }
-                else { store.stopAntigravityRefresh(); await store.reloadAntigravityQuota() }
-            }
-        }.store(in: &cancellables)
-        DistributedNotificationCenter.default().publisher(for: AntigravityQuota.changed)
-            .debounce(for: .milliseconds(200), scheduler: RunLoop.main)
-            .sink { [weak store] _ in Task { @MainActor in await store?.antigravityDidReceiveQuota() } }
-            .store(in: &cancellables)
-        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
-            .sink { [weak store] _ in Task { @MainActor in store?.refreshAntigravityIfNeeded() } }
-            .store(in: &cancellables)
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard urls.count == 1, let url = urls.first, ElectronMainInterfaceLauncher.isPairingInvitation(url) else { return }
+        mainInterface.openPairingInvitation(url)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -130,40 +112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startupTask = nil
         ipcServer?.stop()
         refreshTimer?.invalidate()
-        codexResetTimer?.invalidate()
-        store?.stopCodexResetAutomation()
-        store?.stopAntigravityRefresh()
+        accountWatcher = nil
+        usageWatcher = nil
         exchangeRateTimer?.invalidate()
         pricingRefreshTimer?.invalidate()
         cancellables.removeAll()
-    }
-
-    private func bindCodexResetAutomation(to store: ProviderStore) {
-        store.$settingsSnapshot.combineLatest(store.$isScanPaused)
-            .sink { [weak self, weak store] _, _ in
-                // @Published 在赋值前发事件；下一次主线程调度读取最终设置。
-                Task { @MainActor [weak self, weak store] in
-                    guard let self, let store, !self.isTerminating else { return }
-                    self.codexResetTimer?.invalidate()
-                    self.codexResetTimer = nil
-                    guard store.shouldAutomaticallyRedeemCodexCredits else {
-                        store.stopCodexResetAutomation()
-                        return
-                    }
-                    store.checkCodexResetAutomation()
-                    let timer = Timer(timeInterval: 60, repeats: true) { [weak store] _ in
-                        Task { @MainActor in store?.checkCodexResetAutomation() }
-                    }
-                    RunLoop.main.add(timer, forMode: .common)
-                    self.codexResetTimer = timer
-                }
-            }
-            .store(in: &cancellables)
-        NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
-            .sink { [weak store] _ in
-                Task { @MainActor in store?.checkCodexResetAutomation() }
-            }
-            .store(in: &cancellables)
     }
 
     private func bindSettingsTimer(to store: ProviderStore) {
@@ -183,8 +136,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshTimer?.invalidate()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                await self?.store?.refresh()
-                await self?.store?.refreshLocalAgentIndex()
+                await self?.store?.reloadAccountSnapshots()
+                await self?.store?.refreshScheduledLocalIndex()
                 // 扫描是数据更新的唯一定时来源（hooks 事件不再触发扫描），
                 // 扫完必须广播，Electron 页面才知道该重取了。
                 self?.ipcServer?.broadcastDataChanged()
@@ -215,7 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard !Task.isCancelled, !self.isTerminating else { return }
                 if outcome == .updated {
                     self.store?.reloadPricingMetadata()
-                    await self.store?.refreshLocalAgentIndex()
+                    await self.store?.refreshScheduledLocalIndex()
                     self.ipcServer?.broadcastDataChanged()
                 }
                 self.schedulePricingRefreshTimer(after: self.nextPricingRefreshDelay(for: outcome))

@@ -95,6 +95,7 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
     public let windowOrder: MenuBarWindowOrder
     /// 是否在菜单栏显示峰/谷标识（有峰谷价服务商可见时）。
     public let showPeakBadge: Bool
+    public let showPeakSection: Bool
     /// 峰/谷标识样式。
     public let peakBadgeStyle: PeakBadgeStyle
     public let pinnedBalanceProviderId: String?
@@ -107,6 +108,7 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
         usage: .tok,
         windowOrder: .longFirst,
         showPeakBadge: true,
+        showPeakSection: true,
         peakBadgeStyle: .dotWord
     )
 
@@ -118,6 +120,7 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
         usage: MenuBarUsageTail,
         windowOrder: MenuBarWindowOrder,
         showPeakBadge: Bool = true,
+        showPeakSection: Bool = true,
         peakBadgeStyle: PeakBadgeStyle = .dotWord,
         pinnedBalanceProviderId: String? = nil
     ) {
@@ -128,6 +131,7 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
         self.usage = usage
         self.windowOrder = windowOrder
         self.showPeakBadge = showPeakBadge
+        self.showPeakSection = showPeakSection
         self.peakBadgeStyle = peakBadgeStyle
         self.pinnedBalanceProviderId = pinnedBalanceProviderId
     }
@@ -141,6 +145,7 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
         case usage
         case windowOrder
         case showPeakBadge
+        case showPeakSection
         case peakBadgeStyle
         case pinnedBalanceProviderId
     }
@@ -154,6 +159,7 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
         usage = try container.decodeIfPresent(MenuBarUsageTail.self, forKey: .usage) ?? .tok
         windowOrder = try container.decodeIfPresent(MenuBarWindowOrder.self, forKey: .windowOrder) ?? .longFirst
         showPeakBadge = try container.decodeIfPresent(Bool.self, forKey: .showPeakBadge) ?? true
+        showPeakSection = try container.decodeIfPresent(Bool.self, forKey: .showPeakSection) ?? true
         peakBadgeStyle = try container.decodeIfPresent(PeakBadgeStyle.self, forKey: .peakBadgeStyle) ?? .dotWord
         pinnedBalanceProviderId = try container.decodeIfPresent(String.self, forKey: .pinnedBalanceProviderId)
     }
@@ -167,6 +173,7 @@ public struct MenuBarAppearanceSettings: Codable, Equatable {
         try container.encode(usage, forKey: .usage)
         try container.encode(windowOrder, forKey: .windowOrder)
         try container.encode(showPeakBadge, forKey: .showPeakBadge)
+        try container.encode(showPeakSection, forKey: .showPeakSection)
         try container.encode(peakBadgeStyle, forKey: .peakBadgeStyle)
         try container.encodeIfPresent(pinnedBalanceProviderId, forKey: .pinnedBalanceProviderId)
     }

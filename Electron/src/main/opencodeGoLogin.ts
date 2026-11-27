@@ -1,20 +1,14 @@
 import { BrowserWindow, session } from 'electron';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-/// OpenCode Go 登录态管理与登录窗口。
-///
-/// 用量数据只能从控制台（opencode.ai）读取，认证是 httpOnly 的 iron-session
-/// cookie（一年有效）。浏览器安全模型下脚本无法读 httpOnly cookie，这里改用
-/// Electron 自带的持久化 WebView：用户在主界面点「登录」→ 弹窗加载
-/// opencode.ai（partition: persist:opencode-go，登录态持久化）→ 登录后跳转到
-/// workspace 页 → 主进程通过 session.cookies API 捕获 auth cookie + workspaceId
-/// → 写入 ~/.config/opencode/opencode-quota/opencode-go.json（Swift 侧读取）。
-export interface OpenCodeGoCredentials {
-  workspaceId: string;
-  authCookie: string;
-}
+type SessionCookies =
+  | { consoleSession: string; authCookie?: string }
+  | { authCookie: string; consoleSession?: string };
+
+export type OpenCodeGoCredentials = { workspaceId: string } & SessionCookies;
 
 export const CREDENTIALS_FILE = () =>
   path.join(os.homedir(), '.config', 'opencode', 'opencode-quota', 'opencode-go.json');
@@ -25,14 +19,9 @@ export function readCredentials(file = CREDENTIALS_FILE()): OpenCodeGoCredential
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return null;
     const object = parsed as Record<string, unknown>;
-    if (
-      typeof object.workspaceId === 'string' &&
-      object.workspaceId.length > 0 &&
-      typeof object.authCookie === 'string' &&
-      object.authCookie.length > 0
-    ) {
-      return { workspaceId: object.workspaceId, authCookie: object.authCookie };
-    }
+    if (typeof object.workspaceId !== 'string' || !object.workspaceId.trim()) return null;
+    const cookies = sessionCookies(object.authCookie, object.consoleSession);
+    if (cookies) return { workspaceId: object.workspaceId, ...cookies };
     return null;
   } catch {
     return null;
@@ -40,8 +29,14 @@ export function readCredentials(file = CREDENTIALS_FILE()): OpenCodeGoCredential
 }
 
 export function writeCredentials(credentials: OpenCodeGoCredentials, file = CREDENTIALS_FILE()): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(credentials, null, 2)}\n`, { mode: 0o600 });
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const temp = file + '.' + randomUUID();
+  try {
+    fs.writeFileSync(temp, JSON.stringify(credentials) + '\n', { flag: 'wx', mode: 0o600 });
+    fs.renameSync(temp, file);
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
 }
 
 export function clearCredentials(file = CREDENTIALS_FILE()): void {
@@ -53,25 +48,36 @@ export function clearCredentials(file = CREDENTIALS_FILE()): void {
 }
 
 const PARTITION = 'persist:opencode-go';
-const AUTH_COOKIE_PREFIX = 'Fe26.2';
+const ORIGIN = 'https://opencode.ai';
 
-const WORKSPACE_URL_PATTERN = /\/workspace\/([^/?#]+)/;
-
-export function extractWorkspaceId(url: string): string | null {
-  const match = url.match(WORKSPACE_URL_PATTERN);
-  if (!match) return null;
+export function extractWorkspaceId(input: string): string | null {
   try {
-    return decodeURIComponent(match[1]);
+    const url = new URL(input);
+    if (url.origin !== ORIGIN) return null;
+    const workspace = url.pathname.match(/^\/workspace\/([A-Za-z0-9_-]+)(?:\/|$)/);
+    const org = url.pathname.match(/^\/console\/((?:org|wrk)_[A-Za-z0-9_-]+)(?:\/|$)/);
+    return (workspace ?? org)?.[1] ?? null;
   } catch {
-    return match[1];
+    return null;
   }
 }
 
-/// 从持久 session 里抓 auth cookie（httpOnly 也能读，这就是用 WebView 的原因）。
-async function captureAuthCookie(): Promise<string | null> {
-  const cookies = await session.fromPartition(PARTITION).cookies.get({ url: 'https://opencode.ai' });
-  const auth = cookies.find((cookie) => cookie.name === 'auth' && cookie.value.startsWith(AUTH_COOKIE_PREFIX));
-  return auth?.value ?? null;
+function sessionCookies(auth: unknown, console: unknown): SessionCookies | null {
+  if (typeof console === 'string' && console) {
+    return typeof auth === 'string' && auth
+      ? { authCookie: auth, consoleSession: console }
+      : { consoleSession: console };
+  }
+  if (typeof auth === 'string' && auth) return { authCookie: auth };
+  return null;
+}
+
+async function captureSession(): Promise<SessionCookies | null> {
+  const cookies = await session.fromPartition(PARTITION).cookies.get({ url: ORIGIN + '/console/api/go/status' });
+  return sessionCookies(
+    cookies.find(c => c.name === 'auth')?.value,
+    cookies.find(c => c.name === '__Host-console_session')?.value
+  );
 }
 
 export interface OpenCodeGoLoginResult {
@@ -109,13 +115,14 @@ export function openLoginWindow(): Promise<OpenCodeGoLoginResult> {
       lastURL = url;
       const workspaceId = extractWorkspaceId(url);
       if (!workspaceId) return;
-      const authCookie = await captureAuthCookie();
-      if (!authCookie) {
-        finish({ ok: false, reason: 'missing-cookie' });
-        return;
+      try {
+        const cookies = await captureSession();
+        if (!cookies || settled || window.isDestroyed() || lastURL !== url) return;
+        writeCredentials({ workspaceId, ...cookies });
+        finish({ ok: true, reason: 'captured' });
+      } catch {
+        // Keep the login dialog usable. On close the caller reports that no session was saved.
       }
-      writeCredentials({ workspaceId, authCookie });
-      finish({ ok: true, reason: 'captured' });
     };
 
     // did-navigate 覆盖整页导航，did-navigate-in-page 覆盖 SPA 路由跳转。
@@ -125,10 +132,11 @@ export function openLoginWindow(): Promise<OpenCodeGoLoginResult> {
     window.on('closed', () => {
       if (settled) return;
       // 用户关窗：若已在 workspace 页（说明已登录）但 cookie 没抓到，给个明确原因。
+      settled = true;
       const workspaceId = extractWorkspaceId(lastURL);
       resolve({ ok: false, reason: workspaceId ? 'missing-cookie' : 'cancelled' });
     });
 
-    void window.loadURL('https://opencode.ai/');
+    void window.loadURL(ORIGIN + '/console');
   });
 }
