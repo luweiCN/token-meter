@@ -23,7 +23,7 @@ import (
 	"github.com/luweiCN/token-meter/internal/device"
 )
 
-var version = "1.15.0-dev"
+var version = "1.15.1-dev"
 
 const releaseAPI = "https://api.github.com/repos/luweiCN/token-meter/releases/latest"
 

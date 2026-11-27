@@ -14,7 +14,7 @@ BUNDLE_ID="com.luwei.tokenmeter"
 cd "$ROOT_DIR"
 swift build -c release
 SWIFT_BIN_DIR="$(swift build -c release --show-bin-path)"
-npm install --prefix "$ROOT_DIR/Electron"
+(cd "$ROOT_DIR/Electron" && npm ci)
 # CI 的 npm（allow-scripts 机制）会拦 electron 的 postinstall，二进制 dist
 # 不落地（本地因早有缓存从未暴露，CI 实测炸在拷 electron.icns）。缺了就补跑。
 if [ ! -d "$ROOT_DIR/Electron/node_modules/electron/dist" ]; then
